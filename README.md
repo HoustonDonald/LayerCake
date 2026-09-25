@@ -12,6 +12,7 @@ Windows is the first-class target.
 npm install
 npm run app        # build if stale, serve, and open a chromeless app window
 npm start          # same without the window: http://127.0.0.1:5178
+npm run build:exe  # one-file Windows app, no Node needed to run it: dist\LayerCake.exe
 ```
 
 Open the app, type a project directory, press Scan.
@@ -313,6 +314,14 @@ because it genuinely is config the tool tracks, and hiding a tracked file would 
   Guarding the HTML refuses the app itself. The HTML sends `X-Frame-Options: DENY`.
 - None of this defends against a hostile process already running as you. It can write these files
   directly and does not need this app. The guard closes the browser path only.
+- **The app window runs with `--disable-extensions --disable-sync`.** A browser extension is not a
+  page and is not bound by "a cross-origin page cannot read our HTML": a content script reads the
+  DOM, token included. A separate browser profile does not keep extensions out on its own. On a
+  machine signed in to Windows with a Microsoft account, Edge signs a new profile in to that account
+  and turns sync on, and sync installs your extensions into it. That happened here: four synced
+  extensions, one a shopping extension with access to every URL. With both flags, no extension runs
+  and nothing syncs. What they do not stop is Edge attaching the Windows account identity to the
+  profile, which is the browser talking to Microsoft, not LayerCake talking to anything.
 
 ## Failure handling
 
@@ -333,7 +342,8 @@ Configurable via env: `PORT` (default 5178), `CLAUDE_EXPLORER_DIR_TIMEOUT_MS` (d
 
 ```
 server/
-  index.js       express app, localhost bind, per-scan allowlist, routes
+  app.js         express app, localhost bind, per-scan allowlist, routes; never listens on import
+  index.js       entry for npm start and the launcher: serves public/ from disk
   security.js    localhost CSRF guard and per-start session token
   scan.js        lineage resolver
   paths.js       platform paths, the scan manifest, snapshot root
@@ -350,6 +360,10 @@ scripts/
   launch.js           build, serve, wait for ready, open an app-mode window
   install-shortcut.ps1  per-user Start Menu shortcut (-Desktop, -Uninstall)
   smoke.mjs           end to end test over the real HTTP API
+desktop/
+  window.js      the app window: browser, profile, isolation flags, error page
+  main.js        entry of the single executable
+  build.mjs      npm run build:exe
 layercake.cmd    double-clickable entry point for the shortcut
 ```
 
@@ -361,8 +375,9 @@ code that enforces them, so what the app claims can be checked against what it d
 `npm run app` (or `layercake.cmd`, or the Start Menu shortcut) builds if stale, starts the server,
 waits until it actually answers, then opens it in Edge or Chrome **app mode**: a chromeless window
 with its own taskbar entry that looks like a desktop app and costs no extra dependency. The browser
-gets a dedicated profile under `%LOCALAPPDATA%\LayerCake\browser`, so it neither inherits nor
-disturbs your normal browsing session.
+gets a profile of its own under `%LOCALAPPDATA%\LayerCake\browser`, so the window does not join your
+running browser or its session, and it runs with extensions and sync switched off (see
+[Network posture](#network-posture) for why the profile alone was not enough).
 
 If the port is already answering, it opens a window against the running instance instead of starting
 a second server.
@@ -376,12 +391,47 @@ powershell -ExecutionPolicy Bypass -File scripts\install-shortcut.ps1 -Uninstall
 Per-user, so no elevation. Electron and Tauri were rejected: about 150 MB and a build story for the
 first, a Rust toolchain for the second, to gain a window this already provides.
 
+### Single executable
+
+```
+npm run build:exe      # -> dist\LayerCake.exe, about 87 MB
+```
+
+One file holding a Node runtime, the server and the client, built with Node's single executable
+application (SEA) support. Copy it anywhere and double-click it: no Node install, no source folder,
+no console window. It opens the same app-mode window as `npm run app`, and **closing the last
+LayerCake window stops it**. A second double-click while it is running opens another window on the
+same server rather than starting a new one.
+
+The build runs `vite build`, bundles the server into one script with esbuild, embeds `public/` as
+assets, injects the result into a copy of the `node.exe` that ran the build, and marks the copy a
+Windows GUI program so no console appears. Rebuild after any change, including to `client/`.
+
+What to know:
+
+- **It prints nothing.** A GUI program has no console. A failure to start (usually the port) opens
+  an error window saying what to do; an unexpected crash opens one with the stack. For anything
+  deeper, run `npm run app` from a terminal, which is the same server with its output visible.
+- **Another port:** `$env:PORT = 5200; & 'C:\path\to\LayerCake.exe'`. The browser keeps the
+  remembered directory per port, so a different port starts without it.
+- **It is unsigned.** Fine on the machine that built it. Downloaded onto another machine (so marked
+  as coming from the internet), SmartScreen will warn on first run.
+- **The CLI is not in it.** `layercake here` still runs from source (`npm run cli -- here`).
+- **One case keeps it running after the window closes.** If an Edge for the LayerCake profile is
+  already running (a window left open after the server was killed, say), Edge takes the new window
+  itself and the exe can no longer see it, so it stays up rather than leave that window without a
+  server. The next launch finds it and reuses it; Task Manager ends it.
+- Its taskbar entry and toasts belong to Edge, not LayerCake, as with `npm run app`. The exe keeps
+  node.exe's icon and version resource, so Task Manager describes it as "Node.js JavaScript
+  Runtime"; look for `LayerCake.exe` by name.
+
 ## Development
 
 ```
 npm run dev:server     # API on 5178
 npm run dev:client     # Vite with HMR on 5179, proxying /api
 npm run smoke          # end to end test over the real HTTP API
+npm run build:exe      # the single executable, see above
 ```
 
 `npm run smoke` creates its own fixture tree, starts a server on its own port with its own snapshot

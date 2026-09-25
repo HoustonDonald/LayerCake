@@ -18,8 +18,9 @@ Two surfaces, deliberately split by job:
 A TUI was considered and rejected: the level tree and the provenance tables are wide, high density
 comparison surfaces that degrade badly at 80 columns.
 
-Not a git repository. No test framework and no linter. Verification is manual and must happen at the
-consumer boundary, which for the API means HTTP and for the UI means a browser. `README.md` is the
+No test framework and no linter. Verification is manual and must happen at the consumer boundary,
+which for the API means HTTP, for the UI means a browser, and for the exe means launching it the way
+a double-click does. `README.md` is the
 user-facing spec and is unusually complete, so read it before changing scan or write behavior, and
 update it in the same change.
 
@@ -35,12 +36,19 @@ npm run cli -- here    # effective environment for the current directory
 npm run dev:server # API only on 5178
 npm run dev:client # Vite HMR on 5179, proxying /api to 5178
 npm run smoke      # end to end over the real HTTP API
+npm run build:exe  # dist\LayerCake.exe, the single executable (Windows only)
 ```
 
 **Run `npm run smoke` before calling any change to `server/` done.** It is the only regression net.
 It builds its own fixture, port and snapshot store, and cleans up after itself, so it is safe to run
 while you are working. A green run is necessary and not sufficient: it cannot see the UI, and the
 one bug it missed was found by opening a browser.
+
+**Smoke never runs the exe.** It starts `server/index.js`, which serves `public/` from disk; the exe
+serves an embedded copy through `desktop/main.js`. After touching `server/app.js`, `desktop/` or
+`client/`, rebuild and launch the exe the way Explorer does (`Start-Process`, not from a console,
+which would lend it one), then check that a window opens, the UI loads, and closing the window ends
+`LayerCake.exe`. The exe prints nothing, so a failure there shows as an error window or as silence.
 
 Env knobs: `PORT` (default 5178), `CLAUDE_EXPLORER_DIR_TIMEOUT_MS` (default 3000), and
 `LAYERCAKE_SNAPSHOT_DIR` (default `%LOCALAPPDATA%\LayerCake\snapshots`).
@@ -60,10 +68,14 @@ server/watch.js     directory watches over a scanned lineage; read-only, never o
 server/snapshot.js  capture, compare, restore, and the atomic write primitive
 server/writefile.js the ONLY edit path; depends on snapshot.js by design
 server/security.js  localhost CSRF guard and session token
-server/index.js     express app, 127.0.0.1 bind, per-scan allowlist
+server/app.js       express app, 127.0.0.1 bind, per-scan allowlist; builds, never listens on import
+server/index.js     terminal entry: app.js serving public/ from disk, listens on load
 client/             React 18 + Vite, two-pane explorer plus editor, snapshots and watch bar
 cli/                layercake CLI, imports server modules directly
 scripts/launch.js   build, serve, then open an app-mode browser window
+desktop/window.js   the app window (browser, profile, isolation flags), shared by launch.js and main.js
+desktop/main.js     single-executable entry: embedded client, exits when its window's browser does
+desktop/build.mjs   vite + esbuild + SEA blob + postject + GUI subsystem -> dist\LayerCake.exe
 ```
 
 The lineage is an ordered array of levels, weakest precedence first: `managed`, `user`, `plugins`,
@@ -78,7 +90,9 @@ These are the product, not implementation details. Breaking one silently is the 
 **Writes are confined to two modules.** `server/snapshot.js` and `server/writefile.js` are the only
 places a mutating `fs` call may appear. Everything else in `server/` stays on `readFile`, `readdir`,
 `stat`, `lstat`, and `fs.open(path, 'r')`. Audit with the command in README "Write posture", and
-note it also matches the identifier `truncated`, so read the hits rather than counting them.
+note it also matches the identifier `truncated`, so read the hits rather than counting them. The exe
+adds no write site: `desktop/main.js` and `desktop/window.js` write nothing, and only the build tool
+`desktop/build.mjs` writes, to `public/` and `dist/`.
 
 **Every write snapshots first, and that is structural.** `writefile.js` imports `snapshot.js`, not
 the reverse, so a new route cannot skip the snapshot by forgetting to call it. Keep that direction.
@@ -119,6 +133,14 @@ what actually gates state change, and a hostile page cannot read our HTML to ste
 
 **Localhost only.** `HOST` is hardcoded `127.0.0.1`. No outbound requests exist anywhere; keep it
 that way, including in the client.
+
+**The app window runs with `--disable-extensions --disable-sync`** (`APP_FLAGS` in
+`desktop/window.js`). The session token sits in our DOM, and the CSRF design rests on "a hostile page
+cannot read our HTML". An extension is not a page, and a separate `--user-data-dir` profile does NOT
+keep extensions out: Edge signs a new profile in to the Windows Microsoft account, turns sync on, and
+sync installs the user's extensions. That was measured on this machine, including a shopping extension
+with access to every URL. Removing either flag reopens it silently: nothing breaks, the UI works, and
+a third party can read the token.
 
 **Errors are values, never throws.** `readForDisplay` and the scan functions return an error object
 so one unreadable level degrades to a badge and the rest of the scan completes. A dead UNC share must
@@ -168,6 +190,12 @@ partially. A truncated file restored is silent data loss.
   Note the MCP key is `samePathKey(path)` **plus scope**, not path alone: `~/.claude.json` defines a
   server in both its global block and its per-project block, and that is a genuine shadow. Deduping
   on path alone there would hide a real one.
+- **The app window's profile is still signed in to the Windows Microsoft account.** The isolation
+  flags stop sync and extensions; no flag found stops Edge attaching the account identity.
+- **The exe stops with its window only when it launched the browser process.** If an Edge for the
+  LayerCake profile is already running, Edge takes the window and the exe cannot see it, so it stays
+  up (the safe side: a live window with a server) until the next launch reuses it or Task Manager
+  ends it. The hand-off is recognised as a browser exit within 5 s of launch (`HANDOFF_MS`).
 
 ## When adding scan coverage
 
