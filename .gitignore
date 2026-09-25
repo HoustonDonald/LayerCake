@@ -1,0 +1,5 @@
+node_modules/
+# Vite build output, rebuilt by npm start / npm run app when client/ is newer.
+public/
+# Single-executable build output and its intermediates (npm run build:exe).
+dist/
