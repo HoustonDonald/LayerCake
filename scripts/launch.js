@@ -9,26 +9,24 @@
  * second server when one is already listening, and own the child process so
  * Ctrl+C shuts it down.
  *
- * Windows first. It degrades on other platforms to "open the default browser",
- * because app mode and the install paths below are Windows-specific.
+ * The window itself (which browser, which profile, which flags) lives in
+ * desktop/window.js, shared with the single executable in desktop/main.js.
  */
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import http from 'node:http';
-import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+
+import { HOST, openWindow, probe } from '../desktop/window.js';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const bundle = path.join(root, 'public', 'index.html');
 const serverEntry = path.join(root, 'server', 'index.js');
 
-const HOST = '127.0.0.1';
 const READY_TIMEOUT_MS = 15000;
 const PROBE_INTERVAL_MS = 250;
-const PROBE_TIMEOUT_MS = 1000;
 
 /* ---------------------------------------------------------------- arguments */
 
@@ -138,37 +136,7 @@ async function buildIfStale() {
   }
 }
 
-/* -------------------------------------------------------------- readiness probe */
-
-/**
- * True when something answers HTTP on the port.
- *
- * Any status counts, including the 503 the server returns when the bundle is
- * missing: the question here is "is it listening and speaking HTTP", not "is
- * it healthy". A dedicated health route would be a nicer signal, but adding an
- * endpoint to server/ for the launcher's convenience is not worth widening the
- * API surface of a tool whose API surface is a stated invariant.
- *
- * The GET carries no Origin header, so it passes the server's CSRF origin
- * guard the same way curl does. It hits "/" rather than "/api/...", which
- * would need the per-start session token the launcher has no way to know.
- */
-function probe() {
-  return new Promise((resolve) => {
-    const req = http.get(
-      { host: HOST, port: PORT, path: '/', timeout: PROBE_TIMEOUT_MS },
-      (res) => {
-        res.resume();
-        resolve(true);
-      }
-    );
-    req.on('timeout', () => {
-      req.destroy();
-      resolve(false);
-    });
-    req.on('error', () => resolve(false));
-  });
-}
+/* -------------------------------------------------------------- readiness wait */
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -183,110 +151,20 @@ async function waitForServer(isDead) {
   const deadline = Date.now() + READY_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (isDead && isDead()) return false;
-    if (await probe()) return true;
+    if (await probe(PORT)) return true;
     await sleep(PROBE_INTERVAL_MS);
   }
   return false;
 }
 
-/* ------------------------------------------------------------ browser location */
-
-/**
- * The usual per-machine and per-user install locations, in the order we prefer
- * them. Edge first because it is present on every Windows 11 box, so the common
- * case needs no fallback at all. Chrome second. Both are Chromium, so both
- * understand --app.
- *
- * ProgramFiles(x86) has to be read off process.env by name: the parentheses
- * make it an invalid identifier, so the usual property access does not exist.
- */
-function browserCandidates() {
-  const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
-  const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
-  const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
-
-  return [
-    { name: 'Microsoft Edge', exe: path.join(programFilesX86, 'Microsoft', 'Edge', 'Application', 'msedge.exe') },
-    { name: 'Microsoft Edge', exe: path.join(programFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe') },
-    { name: 'Microsoft Edge', exe: path.join(localAppData, 'Microsoft', 'Edge', 'Application', 'msedge.exe') },
-    { name: 'Google Chrome', exe: path.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe') },
-    { name: 'Google Chrome', exe: path.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe') },
-    { name: 'Google Chrome', exe: path.join(localAppData, 'Google', 'Chrome', 'Application', 'chrome.exe') },
-  ];
-}
-
-function findBrowser() {
-  for (const candidate of browserCandidates()) {
-    try {
-      if (fs.statSync(candidate.exe).isFile()) return candidate;
-    } catch {
-      /* not installed at this location, try the next one */
-    }
-  }
-  return null;
-}
-
-/**
- * A profile directory of our own, under %LOCALAPPDATA%\LayerCake\browser.
- *
- * Two reasons, both user-visible. Without it the app window joins the user's
- * running browser process, so it inherits their extensions and session and
- * closing their last normal window can take the app window with it. And a
- * separate profile gets a separate taskbar identity, so LayerCake pins and
- * alt-tabs as its own thing rather than as another browser window.
- *
- * The directory is not created here. The browser creates it on first run, and
- * this launcher has no reason to be the thing that writes to disk.
- */
-function userDataDir() {
-  const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
-  return path.join(localAppData, 'LayerCake', 'browser');
-}
-
-/**
- * Opens the app window and returns a description of how it was opened.
- *
- * Detached and unref'd on purpose: the browser window outlives this process
- * only in the already-running case, but in both cases it must not be killed
- * just because the launcher's console closed.
- */
-function openWindow() {
-  const browser = findBrowser();
-
-  if (browser) {
-    const args = [
-      `--app=${appUrl}`,
-      `--user-data-dir=${userDataDir()}`,
-      '--no-first-run',
-      '--no-default-browser-check',
-    ];
-    const child = spawn(browser.exe, args, { detached: true, stdio: 'ignore' });
-    child.unref();
-    return `${browser.name} (app mode)`;
-  }
-
-  if (process.platform === 'win32') {
-    // cmd's "start" builtin, with an empty title so a quoted URL is not eaten
-    // as the window title. No shell:true, so nothing here needs escaping.
-    const child = spawn('cmd', ['/c', 'start', '', appUrl], { detached: true, stdio: 'ignore' });
-    child.unref();
-    return 'default browser (no app mode: neither Edge nor Chrome was found)';
-  }
-
-  const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
-  const child = spawn(opener, [appUrl], { detached: true, stdio: 'ignore' });
-  child.unref();
-  return `default browser via ${opener}`;
-}
-
 /* ------------------------------------------------------------------------ main */
 
 /** Already serving: attach to it rather than fighting it for the port. */
-if (await probe()) {
+if (await probe(PORT)) {
   process.stdout.write(
     `\nLayerCake is already running on ${appUrl}. Not starting a second server.\n`
   );
-  process.stdout.write(`Opening the running instance in ${openWindow()}.\n\n`);
+  process.stdout.write(`Opening the running instance in ${openWindow(appUrl).description}.\n\n`);
   process.stdout.write(
     `  To restart it instead, stop the other one first:\n` +
       `    Stop-Process -Id (Get-NetTCPConnection -LocalPort ${PORT} -State Listen).OwningProcess -Force\n\n`
@@ -366,5 +244,5 @@ if (!ready) {
 }
 
 serving = true;
-process.stdout.write(`Opening LayerCake in ${openWindow()}.\n`);
+process.stdout.write(`Opening LayerCake in ${openWindow(appUrl).description}.\n`);
 process.stdout.write('Close this window or press Ctrl+C to stop the server.\n\n');
