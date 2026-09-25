@@ -16,6 +16,7 @@
     "cli": "node cli/index.js",
     "smoke": "node scripts/smoke.mjs",
     "build": "vite build",
+    "build:exe": "node desktop/build.mjs",
     "server": "node server/index.js",
     "dev:client": "vite",
     "dev:server": "node server/index.js"
@@ -29,6 +30,8 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
+    "esbuild": "^0.21.5",
+    "postject": "^1.0.0-alpha.6",
     "vite": "^5.4.11"
   }
 }
