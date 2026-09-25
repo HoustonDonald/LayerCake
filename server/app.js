@@ -3,6 +3,8 @@
  *
  * Security posture:
  *  - Binds 127.0.0.1. Never 0.0.0.0.
+ *  - Answers only to its own Host header, on every route, so a DNS rebinding
+ *    page cannot read the HTML and the token in it as same-origin.
  *  - /api/file and /api/write only touch a path that a prior scan discovered.
  *    The scan result is the allowlist, so neither is a general purpose file
  *    reader or writer even though scan input is a directory the user typed.
@@ -38,7 +40,7 @@ import {
   restoreFiles,
 } from './snapshot.js';
 import { isSecret, describeError, writePolicy } from './safety.js';
-import { injectToken, originGuard, requireToken } from './security.js';
+import { hostGuard, injectToken, originGuard, requireToken } from './security.js';
 import {
   CLAUDE_DIR_FILE_TARGETS,
   CLAUDE_DIR_TREES,
@@ -109,6 +111,9 @@ function registerScan(lineage) {
  */
 export function createApp({ port, staticFiles }) {
   const app = express();
+  // First, and on every route including the HTML: see hostGuard for why this
+  // one, unlike the origin guard below, must not be scoped to /api.
+  app.use(hostGuard(port));
   // Must clear MAX_WRITE_BYTES with room for JSON escaping, or a write inside the
   // documented 2 MB cap would be rejected by the body parser instead.
   app.use(express.json({ limit: '8mb' }));

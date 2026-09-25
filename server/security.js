@@ -55,6 +55,38 @@ export function originGuard(port) {
 }
 
 /**
+ * Refuses any request whose Host header is not this server's own name.
+ *
+ * DNS rebinding: a hostile site re-points its own hostname at 127.0.0.1 after
+ * its page has loaded. The browser then treats this server as that site's
+ * origin, so the page can read "/" (token included) as same-origin, and a
+ * same-origin GET carries no Origin header and passes originGuard. What the
+ * page cannot change is the Host header, which still names the hostile site.
+ *
+ * Unlike originGuard this belongs on EVERY route, the HTML included, because
+ * the HTML is what a rebinding page reads to get the token. It cannot repeat
+ * the mistake that rule warns about: however the user arrives at
+ * http://127.0.0.1:PORT, from a bookmark or a link, the Host header says so.
+ *
+ * [::1] is not listed because the server binds 127.0.0.1 only. Port 80 is the
+ * one case where a browser omits the port from Host.
+ */
+export function hostGuard(port) {
+  const allowed = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
+  if (port === 80) {
+    allowed.add('127.0.0.1');
+    allowed.add('localhost');
+  }
+  return (req, res, next) => {
+    if (allowed.has(String(req.headers.host || '').toLowerCase())) return next();
+    return res
+      .status(403)
+      .type('text')
+      .send(`Refused: this server answers only as http://127.0.0.1:${port} or http://localhost:${port}.`);
+  };
+}
+
+/**
  * Requires the per-start token, which is served only inside our own HTML.
  * Compared in constant time out of habit rather than need: a timing oracle on
  * localhost is not the realistic attack, but the correct comparison is free.

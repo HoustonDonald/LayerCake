@@ -18,6 +18,7 @@
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -85,6 +86,22 @@ async function makeFixture() {
   return { proj, snaps: path.join(smokeDir, 'snaps') };
 }
 
+/**
+ * A GET with a Host header of our choosing. node:http rather than fetch,
+ * because the Fetch spec lists Host as a header a caller may not set.
+ */
+function getWithHost(pathname, host, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.get({ host: '127.0.0.1', port: PORT, path: pathname, headers: { ...headers, Host: host } }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => (body += chunk));
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    });
+    req.on('error', reject);
+  });
+}
+
 async function waitForServer(timeoutMs = 20000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -148,6 +165,23 @@ try {
     'API refuses a cross-site fetch even with a valid token',
     (await fetch(`${BASE}/api/manifest`, { headers: { ...H, 'Sec-Fetch-Site': 'cross-site' } })).status === 403
   );
+
+  // --- DNS rebinding: the Host guard, on the HTML as well as the API ------
+  const rebound = `rebind.example:${PORT}`;
+  const reboundHtml = await getWithHost('/', rebound);
+  check('HTML refuses a foreign Host header', reboundHtml.status === 403, `got ${reboundHtml.status}`);
+  check('a refused HTML response carries no token', !/layercake-token/.test(reboundHtml.body));
+  check(
+    'API refuses a rebinding request shaped exactly like one (same-origin, valid token, foreign Host)',
+    (await getWithHost('/api/manifest', rebound, { 'X-LayerCake-Token': token, 'Sec-Fetch-Site': 'same-origin' }))
+      .status === 403
+  );
+  check(
+    'positive control: the same request with our own Host is accepted',
+    (await getWithHost('/api/manifest', `127.0.0.1:${PORT}`, { 'X-LayerCake-Token': token, 'Sec-Fetch-Site': 'same-origin' }))
+      .status === 200
+  );
+  check('localhost is an accepted Host too', (await getWithHost('/', `localhost:${PORT}`)).status === 200);
 
   const manifestRes = await fetch(`${BASE}/api/manifest`, { headers: H });
   check('API accepts a valid token', manifestRes.status === 200);
