@@ -102,6 +102,11 @@ await esbuild({
   target: `node${process.versions.node.split('.')[0]}`,
   define: { __LAYERCAKE_ASSETS__: JSON.stringify(assets) },
   logLevel: 'warning',
+  // In CommonJS output esbuild replaces import.meta with {} and only warns, so
+  // fileURLToPath(import.meta.url) moved into a bundled module would throw at
+  // startup in a program with no console. server/index.js uses exactly that and
+  // is one refactor away from the bundle; make it a build failure instead.
+  logOverride: { 'empty-import-meta': 'error' },
 });
 process.stdout.write(`${bundlePath} (${fs.statSync(bundlePath).size} bytes)\n`);
 

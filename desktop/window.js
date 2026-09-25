@@ -163,10 +163,32 @@ export function openWindow(url) {
 
 /* ------------------------------------------------------------------ error page */
 
-const ERROR_DETAIL_MAX = 4000;
+/**
+ * The page rides on a command line, which Windows caps at 32767 characters, so
+ * the detail is capped in code points and the bound is arithmetic: after HTML
+ * escaping and percent-encoding no code point costs more than 12 characters
+ * ("<" becomes &#60;, which encodes to 11; a 4-byte character encodes to 12).
+ * 2000 of them come to at most 24,000, which leaves room for the rest.
+ *
+ * Code points rather than String#slice, which counts UTF-16 units and can cut
+ * a surrogate pair in half; encodeURIComponent throws on the orphan.
+ */
+const ERROR_DETAIL_MAX = 2000;
 
 function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
+
+/** The error page as a data: URL. Exported so its length bound can be checked. */
+export function errorPageUrl(title, detail) {
+  const body = Array.from(String(detail || '')).slice(0, ERROR_DETAIL_MAX).join('');
+  const html =
+    '<!doctype html><meta charset="utf-8">' +
+    `<title>LayerCake: ${escapeHtml(title)}</title>` +
+    '<body style="font:14px/1.5 system-ui,sans-serif;margin:24px;max-width:60em">' +
+    `<h2 style="margin-top:0">${escapeHtml(title)}</h2>` +
+    `<pre style="white-space:pre-wrap;background:#f4f4f4;padding:12px">${escapeHtml(body)}</pre>`;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
 /**
@@ -175,16 +197,14 @@ function escapeHtml(text) {
  * this is how a server that failed to start says so.
  *
  * Escaped because the detail can carry a path or an error message, and neither
- * is ours to trust as markup. Truncated because the whole page rides on a
- * command line, and Windows caps those at 32767 characters.
+ * is ours to trust as markup. Never throws: it is called from the last-resort
+ * exception handler, and a throw there would end the process with nothing
+ * shown at all. Returns null when no window could be opened.
  */
 export function showError(title, detail) {
-  const body = String(detail || '').slice(0, ERROR_DETAIL_MAX);
-  const html =
-    '<!doctype html><meta charset="utf-8">' +
-    `<title>LayerCake: ${escapeHtml(title)}</title>` +
-    '<body style="font:14px/1.5 system-ui,sans-serif;margin:24px;max-width:60em">' +
-    `<h2 style="margin-top:0">${escapeHtml(title)}</h2>` +
-    `<pre style="white-space:pre-wrap;background:#f4f4f4;padding:12px">${escapeHtml(body)}</pre>`;
-  return openWindow(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  try {
+    return openWindow(errorPageUrl(title, detail));
+  } catch {
+    return null;
+  }
 }
