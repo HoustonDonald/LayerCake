@@ -312,6 +312,12 @@ because it genuinely is config the tool tracks, and hiding a tracked file would 
 - The token and origin checks are scoped to `/api` and **not** to the HTML routes, because a
   top-level navigation from a bookmark or a link legitimately carries `Sec-Fetch-Site: cross-site`.
   Guarding the HTML refuses the app itself. The HTML sends `X-Frame-Options: DENY`.
+- **Every route, HTML included, refuses a `Host` header other than `127.0.0.1:<port>` or
+  `localhost:<port>`.** That closes DNS rebinding: a hostile site re-points its own hostname at
+  127.0.0.1, after which the browser treats this server as that site and would let its page read the
+  HTML and the token in it. The Host header still names the hostile site, so the request is refused.
+  Nothing legitimate is affected: the only HTTP client is the LayerCake page itself (the CLI calls the
+  server modules directly), and a bookmark to `http://127.0.0.1:5178` sends the right Host.
 - None of this defends against a hostile process already running as you. It can write these files
   directly and does not need this app. The guard closes the browser path only.
 - **The app window runs with `--disable-extensions --disable-sync`.** A browser extension is not a
@@ -319,9 +325,11 @@ because it genuinely is config the tool tracks, and hiding a tracked file would 
   DOM, token included. A separate browser profile does not keep extensions out on its own. On a
   machine signed in to Windows with a Microsoft account, Edge signs a new profile in to that account
   and turns sync on, and sync installs your extensions into it. That happened here: four synced
-  extensions, one a shopping extension with access to every URL. With both flags, no extension runs
-  and nothing syncs. What they do not stop is Edge attaching the Windows account identity to the
-  profile, which is the browser talking to Microsoft, not LayerCake talking to anything.
+  extensions, one a shopping extension with access to every URL. With both flags, no installed
+  extension runs and nothing syncs. Edge's own built-in components (PDF viewer, WebRTC and the like)
+  still load, as part of the browser. What the flags do not stop is Edge attaching the Windows
+  account identity to the profile, which is the browser talking to Microsoft, not LayerCake talking
+  to anything.
 
 ## Failure handling
 

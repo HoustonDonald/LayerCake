@@ -56,12 +56,20 @@ New endpoints: `POST /api/write`, `POST /api/snapshot`, `GET /api/snapshots`,
 | Single exe | `desktop/main.js`, `desktop/build.mjs` | `npm run build:exe` -> `dist\LayerCake.exe` (86.5 MB, Node 24.3.0). No console; exits when its window's Edge exits. |
 | App window | `desktop/window.js` | Moved out of `scripts/launch.js`, now shared. Adds `--disable-extensions --disable-sync`. |
 | Server split | `server/app.js`, `server/index.js` | `app.js` builds the app without listening; `index.js` is the terminal entry, unchanged in behavior. |
-| Git | `.gitignore` | Local repository created 2026-09-25, baseline commit first. No remote. |
+| Git | `.gitignore` | Created 2026-09-25, baseline commit first. Private remote: `github.com/HoustonDonald/LayerCake`. |
+| Host guard | `hostGuard` in `server/security.js` | Refuses a foreign `Host` on every route: closes DNS rebinding. |
 
 **Why the flags:** Edge signed the "separate" LayerCake profile in to the Windows Microsoft account
 and synced four extensions into it, one a shopping extension with access to every URL and content
 scripts on every page, able to read the session token in our DOM. Measured before and after: 3
-extension processes, then 0.
+extension processes, then 0. A fresh profile later showed 6 extension processes with the flags on:
+all Edge component extensions (location 5, shipped inside Edge, no all-sites access), which
+`--disable-extensions` does not cover. Nothing installed runs.
+
+**Owner decisions, 2026-09-25** ("Go with your recommendations"): the old synced profile at
+`%LOCALAPPDATA%\LayerCake\browser` was deleted (2,236 files, 595 MB; Edge recreates it on the next
+launch, now without sync), the repository went to a private GitHub remote, and the Host guard was
+added (smoke asserts the rebinding request shape; a no-op mutant fails 3 assertions).
 
 Verified on the built exe (commands in the commit message of `Add a single-executable build`):
 no console host (control gets one; a console-subsystem copy gets one); UI served from the embedded
@@ -146,26 +154,16 @@ Nothing blocks progress. These were flagged and not answered.
    `withTimeout` precisely because that was a known failure. They are reported in the bar's
    "not watched" list rather than silently dropped. A project on a network share therefore gets a
    scan but no live events for the share-side levels.
-8. **The existing app-window profile still holds what sync put there** (2026-09-25).
-   `%LOCALAPPDATA%\LayerCake\browser` is signed in to the user's Microsoft account and has four
-   installed extensions plus synced data (sync had passwords, typed URLs, tabs and more enabled). The
-   new flags stop the extensions running and stop further sync, but the stored copies remain.
-   Deleting the folder removes them; Edge recreates it on the next launch. Cost: the remembered
-   directory and the notification toggle. Recommended, not done: it is the user's data.
-9. **No GitHub repository yet.** Local git only. Private was recommended (the docs name local paths
-   and the machine's config layout); awaiting the visibility decision.
-10. **`npm audit` lists 6 advisories, all present at the baseline commit** (express, body-parser and
-    qs moderate; js-yaml high; vite high; esbuild moderate, dev-server only). Not addressed.
-11. **The exe carries node.exe's icon and version resource**, so Task Manager calls it "Node.js
-    JavaScript Runtime". Setting both at build time needs one dev dependency (e.g. `resedit`). Not
-    built: nobody asked, and the process is findable as `LayerCake.exe`.
-12. **No `Host` header check, so DNS rebinding is open** (pre-existing, found in the 2026-09-25
-    review). A rebinding page reads `/` as same-origin, takes the token, and can call the GET routes,
-    including `/api/snapshot/:id/file`, which serves snapshotted `~/.claude.json`. POSTs stay blocked
-    by the Origin check. Current Chromium's Local Network Access prompts before such a request;
-    Firefox and older browsers do not. The fix is a `Host` allowlist (`127.0.0.1:<port>`,
-    `localhost:<port>`) on every route, HTML included, which unlike the CSRF guard does not refuse
-    bookmark navigations. About 20 lines plus smoke assertions. Recommended; offered, not built.
+8. **`npm audit` lists 6 advisories, all present at the baseline commit** (express, body-parser and
+   qs moderate; js-yaml high; vite high; esbuild moderate, dev-server only). Not addressed.
+9. **The exe carries node.exe's icon and version resource**, so Task Manager calls it "Node.js
+   JavaScript Runtime". Setting both at build time needs one dev dependency (e.g. `resedit`). Not
+   built: nobody asked, and the process is findable as `LayerCake.exe`.
+10. **`npm run dev:client` cannot call the API**, and could not before 2026-09-25 either: Vite
+    serves `client/index.html` without the session token, so every `/api` call is refused (reasoned
+    from the code, not run). The Host guard is not a factor: Vite's string-shorthand proxy sets
+    `changeOrigin: true`, so the server sees `Host: 127.0.0.1:5178` (checked in Vite's source).
+    Fixing dev mode means getting the token into Vite's page, e.g. a dev-only proxy of `/`.
 
 ---
 

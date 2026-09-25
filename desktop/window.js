@@ -112,8 +112,14 @@ function userDataDir() {
  * real profile: 4 synced extensions and 3 extension processes, one of them a
  * shopping extension with host access to every URL and <all_urls> content
  * scripts.
- * With both flags: 0 extension processes, and a fresh profile shows no sync
- * prompt and pulls no extensions.
+ * With both flags on that profile: 0 extension processes. On a fresh profile:
+ * no sync prompt and nothing installed.
+ *
+ * --disable-extensions covers installed extensions only. Edge's own component
+ * extensions (PDF viewer, WebRTC, Clipboard, Copilot bridge and so on, all
+ * location 5 in Secure Preferences) still load, and a fresh profile showed 6
+ * extension processes from them. They ship inside Edge, carry no all-sites
+ * host access, and are the browser itself rather than third-party code.
  *
  * That matters more here than on an ordinary page. A content script can read
  * our DOM, and the DOM carries the session token that gates every write route
@@ -121,7 +127,8 @@ function userDataDir() {
  * HTML"; an extension is not a page and is not bound by that.
  *
  * What the flags do NOT stop: Edge still attaches the Windows account identity
- * to the profile. Nothing syncs and no extension runs, but it is signed in.
+ * to the profile. Nothing syncs and no installed extension runs, but it is
+ * signed in.
  */
 const APP_FLAGS = ['--no-first-run', '--no-default-browser-check', '--disable-sync', '--disable-extensions'];
 

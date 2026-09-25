@@ -132,6 +132,14 @@ Guarding the HTML refuses the app itself; this was shipped once and broke the wh
 test suite stayed green, because Node's `fetch` sends no `Sec-Fetch-*` headers. The session token is
 what actually gates state change, and a hostile page cannot read our HTML to steal it.
 
+**The Host guard is the opposite: every route, the HTML included, and first** (`hostGuard` in
+`security.js`). A DNS rebinding page is same-origin with us as far as the browser knows, so it can
+read the HTML and the token unless the server refuses a Host that is not `127.0.0.1:<port>` or
+`localhost:<port>`. It does not repeat the CSRF-guard mistake, because a bookmark or link to this
+server carries our own Host however the user arrived. The only HTTP consumers are the LayerCake UI
+and the readiness probe of `/` in `desktop/window.js`; the CLI imports modules and never calls the
+API. Anything new that calls the server must address it by one of those two names.
+
 **Localhost only.** `HOST` is hardcoded `127.0.0.1`. No outbound requests exist anywhere; keep it
 that way, including in the client.
 
