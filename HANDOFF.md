@@ -68,6 +68,31 @@ no console host (control gets one; a console-subsystem copy gets one); UI served
 bundle; token and origin guards; scan; exit on window close; second launch reuses the server; port
 squatter gives the error window; mutant with exit-on-close as a no-op stays running.
 
+An independent review then found four real defects in that first cut, all fixed and re-verified on
+the exe, each with a mutant that went red:
+
+- **Shutdown cut off running saves.** `server.close()` waits on connections, and the window's died
+  with Edge. Now `desktop/inflight.js` waits for handlers. Test: a 3,000-file snapshot whose client
+  disconnects as the window closes completes (manifest written, exe exits about 8.7 s later); the
+  mutant exits in 0.6 s and leaves a snapshot with no manifest.
+- **Two simultaneous launches showed a false "another program" error**, and the survivor then never
+  exited. Now a failed listen re-probes for 3 s. Test: two launches at once give two windows, one
+  server, no error window; the mutant gives one error window and a stranded process.
+- **The relaunch command broke on a path containing an apostrophe.** Now quoted by doubling the
+  same quote character (PowerShell's parser confirmed; the ASCII-pair fix the review suggested would
+  have corrupted a curly apostrophe).
+- **A future `import.meta` in a bundled module would crash the exe silently.** Now a build error,
+  and `server/app.js` is imported lazily so any init-time throw reaches the error window.
+
+Class (b) findings recorded, not fixed: `diskStatic` serves `/index.html` raw (pre-existing, fails
+closed), `memoryStatic` does not URL-decode `req.path` (Vite's names are ASCII).
+
+**A test-harness slip wrote two test snapshots into the real store**
+(`%LOCALAPPDATA%\LayerCake\snapshots`) when a mutant left a process running that the next test
+attached to. The store had not
+existed before that run; it was deleted, and the harness now refuses to run if the port is held by
+anything but the process it launched.
+
 ---
 
 ## Decisions already made, so they do not get relitigated
@@ -134,6 +159,13 @@ Nothing blocks progress. These were flagged and not answered.
 11. **The exe carries node.exe's icon and version resource**, so Task Manager calls it "Node.js
     JavaScript Runtime". Setting both at build time needs one dev dependency (e.g. `resedit`). Not
     built: nobody asked, and the process is findable as `LayerCake.exe`.
+12. **No `Host` header check, so DNS rebinding is open** (pre-existing, found in the 2026-09-25
+    review). A rebinding page reads `/` as same-origin, takes the token, and can call the GET routes,
+    including `/api/snapshot/:id/file`, which serves snapshotted `~/.claude.json`. POSTs stay blocked
+    by the Origin check. Current Chromium's Local Network Access prompts before such a request;
+    Firefox and older browsers do not. The fix is a `Host` allowlist (`127.0.0.1:<port>`,
+    `localhost:<port>`) on every route, HTML included, which unlike the CSRF guard does not refuse
+    bookmark navigations. About 20 lines plus smoke assertions. Recommended; offered, not built.
 
 ---
 

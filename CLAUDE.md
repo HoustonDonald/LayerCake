@@ -75,6 +75,7 @@ cli/                layercake CLI, imports server modules directly
 scripts/launch.js   build, serve, then open an app-mode browser window
 desktop/window.js   the app window (browser, profile, isolation flags), shared by launch.js and main.js
 desktop/main.js     single-executable entry: embedded client, exits when its window's browser does
+desktop/inflight.js counts running handlers so the exe's shutdown can wait for them
 desktop/build.mjs   vite + esbuild + SEA blob + postject + GUI subsystem -> dist\LayerCake.exe
 ```
 
@@ -196,6 +197,14 @@ partially. A truncated file restored is silent data loss.
   LayerCake profile is already running, Edge takes the window and the exe cannot see it, so it stays
   up (the safe side: a live window with a server) until the next launch reuses it or Task Manager
   ends it. The hand-off is recognised as a browser exit within 5 s of launch (`HANDOFF_MS`).
+  Relaunching within about 0.5 s of closing the last window can attach to the server that is about
+  to exit, leaving the new window without one (reasoned, not measured).
+- **With no Edge or Chrome installed, the window falls back to the default browser**, in the user's
+  own profile, so the `APP_FLAGS` invariant cannot hold there and the exe never sees the window
+  close. Stated in the README rather than refused, because the alternative is no app at all.
+- **The exe's shutdown waits for handlers, not connections** (`desktop/inflight.js`). `server.close()`
+  alone returned while a snapshot was still running, because the browser's sockets die with it; a
+  save, snapshot or multi-file restore was then cut off. The wait is capped at 30 s (`DRAIN_MS`).
 
 ## When adding scan coverage
 

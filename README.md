@@ -363,6 +363,7 @@ scripts/
 desktop/
   window.js      the app window: browser, profile, isolation flags, error page
   main.js        entry of the single executable
+  inflight.js    running-request count, so shutdown waits for a save to finish
   build.mjs      npm run build:exe
 layercake.cmd    double-clickable entry point for the shortcut
 ```
@@ -400,8 +401,9 @@ npm run build:exe      # -> dist\LayerCake.exe, about 87 MB
 One file holding a Node runtime, the server and the client, built with Node's single executable
 application (SEA) support. Copy it anywhere and double-click it: no Node install, no source folder,
 no console window. It opens the same app-mode window as `npm run app`, and **closing the last
-LayerCake window stops it**. A second double-click while it is running opens another window on the
-same server rather than starting a new one.
+LayerCake window stops it**, after letting a save or restore that was still running finish. A second
+double-click while it is running, or at the same moment, opens another window on the same server
+rather than starting a new one.
 
 The build runs `vite build`, bundles the server into one script with esbuild, embeds `public/` as
 assets, injects the result into a copy of the `node.exe` that ran the build, and marks the copy a
@@ -421,6 +423,9 @@ What to know:
   already running (a window left open after the server was killed, say), Edge takes the new window
   itself and the exe can no longer see it, so it stays up rather than leave that window without a
   server. The next launch finds it and reuses it; Task Manager ends it.
+- **Without Edge or Chrome** (Edge can be uninstalled in the EEA), it falls back to your default
+  browser: a normal window in your normal profile, where your extensions run and can read the page,
+  including the session token. It also cannot tell when that window closes, so it keeps running.
 - Its taskbar entry and toasts belong to Edge, not LayerCake, as with `npm run app`. The exe keeps
   node.exe's icon and version resource, so Task Manager describes it as "Node.js JavaScript
   Runtime"; look for `LayerCake.exe` by name.
