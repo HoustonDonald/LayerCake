@@ -147,6 +147,9 @@ export function writePolicy() {
 /**
  * Races a promise against a timer so an unresponsive network path degrades to
  * an error badge on one level instead of stalling the whole scan.
+ *
+ * It stops waiting; it cannot cancel. The call it gave up on still holds a
+ * threadpool thread, which is why calls to a share go through sharegate.js.
  */
 export function withTimeout(promise, ms, label) {
   let timer;
@@ -172,6 +175,8 @@ export function describeError(err) {
     EBUSY: 'Resource busy or locked',
     ELOOP: 'Symlink loop',
     ETIMEDOUT: 'Timed out (unresponsive path)',
+    // Not an errno: sharegate.js refused the call without making it.
+    ESHARESTUCK: 'Not tried: an earlier call to this network share timed out and has not returned yet',
     ENETUNREACH: 'Network unreachable',
     EHOSTUNREACH: 'Host unreachable',
     ENAMETOOLONG: 'Path too long',

@@ -31,13 +31,16 @@ import {
   samePathKey,
 } from './paths.js';
 import {
-  DIR_TIMEOUT_MS,
   describeError,
   isNonConfigDir,
   isSecret,
   isSensitive,
-  withTimeout,
 } from './safety.js';
+// Call the filesystem through timedFsCall, never a bare withTimeout: besides the
+// timeout, it sends a network share one call at a time and none while an
+// earlier one is stranded. Without that, a deep project on a dead share strands
+// a threadpool thread per level and starves every other call (#55).
+import { timedFsCall } from './sharegate.js';
 
 let entrySeq = 0;
 function nextId(prefix) {
@@ -47,7 +50,7 @@ function nextId(prefix) {
 
 async function statOf(target) {
   try {
-    const st = await withTimeout(fs.stat(target), DIR_TIMEOUT_MS, target);
+    const st = await timedFsCall(target, () => fs.stat(target));
     return { st, error: null };
   } catch (err) {
     return { st: null, error: err };
@@ -96,11 +99,7 @@ async function probeFile(absPath, category, level, note) {
 async function walkTree(root, { maxDepth, exts, category, level, depth = 0, seen = new Set() }) {
   let dirents;
   try {
-    dirents = await withTimeout(
-      fs.readdir(root, { withFileTypes: true }),
-      DIR_TIMEOUT_MS,
-      root
-    );
+    dirents = await timedFsCall(root, () => fs.readdir(root, { withFileTypes: true }));
   } catch (err) {
     level.errors.push({ path: root, ...describeError(err) });
     level.entries.push(
@@ -298,11 +297,7 @@ async function scanPlugins() {
   // cache/<marketplace>/<plugin>/<version>/{agents,skills,commands,hooks}
   let marketplaces = [];
   try {
-    marketplaces = await withTimeout(
-      fs.readdir(cacheDir, { withFileTypes: true }),
-      DIR_TIMEOUT_MS,
-      cacheDir
-    );
+    marketplaces = await timedFsCall(cacheDir, () => fs.readdir(cacheDir, { withFileTypes: true }));
   } catch (err) {
     level.errors.push({ path: cacheDir, ...describeError(err) });
     return finalizeLevel(level);
@@ -312,11 +307,7 @@ async function scanPlugins() {
     const marketPath = path.join(cacheDir, market.name);
     let plugins = [];
     try {
-      plugins = await withTimeout(
-        fs.readdir(marketPath, { withFileTypes: true }),
-        DIR_TIMEOUT_MS,
-        marketPath
-      );
+      plugins = await timedFsCall(marketPath, () => fs.readdir(marketPath, { withFileTypes: true }));
     } catch (err) {
       level.errors.push({ path: marketPath, ...describeError(err) });
       continue;
@@ -325,11 +316,7 @@ async function scanPlugins() {
       const pluginPath = path.join(marketPath, plugin.name);
       let versions = [];
       try {
-        versions = await withTimeout(
-          fs.readdir(pluginPath, { withFileTypes: true }),
-          DIR_TIMEOUT_MS,
-          pluginPath
-        );
+        versions = await timedFsCall(pluginPath, () => fs.readdir(pluginPath, { withFileTypes: true }));
       } catch (err) {
         level.errors.push({ path: pluginPath, ...describeError(err) });
         continue;
@@ -453,11 +440,7 @@ async function scanDirectory(dir, label) {
   // Anything else inside .claude/ gets listed, never parsed. Surfacing it is how
   // a non-standard layout becomes visible instead of silently ignored.
   try {
-    const dirents = await withTimeout(
-      fs.readdir(claudeDir, { withFileTypes: true }),
-      DIR_TIMEOUT_MS,
-      claudeDir
-    );
+    const dirents = await timedFsCall(claudeDir, () => fs.readdir(claudeDir, { withFileTypes: true }));
     const knownFiles = new Set(CLAUDE_DIR_FILE_TARGETS.map((t) => t.name));
     for (const dirent of dirents) {
       if (known.has(dirent.name) || knownFiles.has(dirent.name)) continue;
