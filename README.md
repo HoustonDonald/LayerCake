@@ -514,11 +514,13 @@ scripts/
   install-shortcut.ps1  per-user Start Menu shortcut (-Desktop, -Uninstall)
   smoke.mjs           end to end test over the real HTTP API
   smoke-sessions.mjs  its session part: a synthetic Claude data folder and checks
+  make-icon.mjs       draws desktop/layercake.ico; run by hand, the .ico is committed
 desktop/
   window.js      the app window: browser, profile, isolation flags, error page
   main.js        entry of the single executable
   inflight.js    running-request count, so shutdown waits for a save to finish
   build.mjs      npm run build:exe
+  layercake.ico  the exe's icon
 layercake.cmd    double-clickable entry point for the shortcut
 ```
 
@@ -559,9 +561,12 @@ LayerCake window stops it**, after letting a save or restore that was still runn
 double-click while it is running, or at the same moment, opens another window on the same server
 rather than starting a new one.
 
-The build runs `vite build`, bundles the server into one script with esbuild, embeds `public/` as
-assets, injects the result into a copy of the `node.exe` that ran the build, and marks the copy a
-Windows GUI program so no console appears. Rebuild after any change, including to `client/`.
+The build runs `vite build`, bundles the server into one script with esbuild, and embeds `public/` as
+assets. It then copies the `node.exe` that ran the build, gives the copy LayerCake's icon and version
+information (with `resedit`, a build-only dependency that nothing at runtime loads), injects the
+bundle into it, and marks it a Windows GUI program so no console appears. Last, it reads the finished
+file back and fails the build if the name, the icon or the injected bundle is not there. Rebuild after
+any change, including to `client/`.
 
 What to know:
 
@@ -580,9 +585,14 @@ What to know:
 - **Without Edge or Chrome** (Edge can be uninstalled in the EEA), it falls back to your default
   browser: a normal window in your normal profile, where your extensions run and can read the page,
   including the session token. It also cannot tell when that window closes, so it keeps running.
-- Its taskbar entry and toasts belong to Edge, not LayerCake, as with `npm run app`. The exe keeps
-  node.exe's icon and version resource, so Task Manager describes it as "Node.js JavaScript
-  Runtime"; look for `LayerCake.exe` by name.
+- **It is named LayerCake, with its own icon.** Task Manager's Processes tab lists it as
+  "LayerCake", Explorer's Properties > Details shows that name with the version in `package.json`,
+  and Explorer shows the cake icon.
+  The icon is `desktop/layercake.ico`, drawn by `node scripts/make-icon.mjs`, which only needs
+  running again to change the drawing. The copyright line is still Node's, since most of the file
+  is Node.
+- Its taskbar entry and toasts belong to Edge, not LayerCake, as with `npm run app`. The window's
+  title bar shows Edge's generic page icon rather than the cake.
 
 ## Development
 

@@ -102,7 +102,7 @@ scripts/launch.js   build, serve, then open an app-mode browser window
 desktop/window.js   the app window (browser, profile, isolation flags), shared by launch.js and main.js
 desktop/main.js     single-executable entry: embedded client, exits when its window's browser does
 desktop/inflight.js counts running handlers so the exe's shutdown can wait for them
-desktop/build.mjs   vite + esbuild + SEA blob + postject + GUI subsystem -> dist\LayerCake.exe
+desktop/build.mjs   vite + esbuild + SEA blob + icon/version (resedit) + postject + GUI subsystem -> dist\LayerCake.exe
 ```
 
 The lineage is an ordered array of levels, weakest precedence first: `managed`, `user`, `plugins`,
@@ -278,7 +278,10 @@ partially. A truncated file restored is silent data loss.
   Windows-specific behavior (case folding, `UNKNOWN` errno on a dead share, ProgramData variants)
   gets a comment naming the quirk.
 - Dependencies are deliberately few: express, js-yaml, react, react-markdown. Adding one needs a
-  reason, and anything that could reach the network needs a strong one.
+  reason, and anything that could reach the network needs a strong one. Build-only dev dependencies
+  follow the same rule; `resedit` (the exe's icon and version resource) was admitted because it and
+  its one dependency import no Node builtin (no filesystem, no network), run no install script, and
+  stay out of the exe's bundle.
 - Windows is the first-class target; POSIX paths are handled but secondary. Nothing may assume a
   drive letter or a backslash.
 
