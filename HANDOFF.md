@@ -166,6 +166,23 @@ empty hook answers, waiting, running tools, exact context, restart persistence, 
 mutants caught: JSON hook answer, Origin check off, notification discarded, secret check always
 true, exact context ignored. Headless Edge rendered the wrapped panel and the live waiting banner.
 
+### 2026-09-26: Phase 1 review fixes (commit 30eb174)
+
+An independent review of 8c3084c's range found eight user-reachable defects, all fixed; the commit
+message lists each. The two with the largest blast radius: a `claude` that exits without reading
+stdin (any digest over about 64 KB, 11 of 44 real sessions) killed the whole server through an
+unhandled EPIPE; and the Explorer overlay badged every memory file "not loaded" for sessions that
+predate Claude Code recording its loads (28 of 44), which reads as the opposite of the truth.
+
+Smoke now drives `summaries.js` through a stand-in `claude` (`scripts/smoke-claude-stub.mjs`, chosen
+by `LAYERCAKE_CLAUDE_CMD`), so the stripped-down argv and the digest are asserted, not assumed.
+Verified: smoke 153 passed; five review-fix mutants caught; the reviewer's stream-leak reproduction
+gets 200; overlay checked in headless Edge on three real projects; exe rebuilt, launch suite passes.
+
+Named limits, not fixed: `child.kill` on the summary timeout does not reach grandchildren; a reused
+PID can make a dead session read as live until its pid file goes; an exe shutdown mid-summary leaves
+that run out of the ledger (stated in CLAUDE.md).
+
 ---
 
 ## Decisions already made, so they do not get relitigated
