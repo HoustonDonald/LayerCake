@@ -1,13 +1,14 @@
 /**
  * Filesystem watcher for a resolved lineage.
  *
- * Read-only by construction: `fs.watch` observes, it does not mutate, so this
- * module stays on the right side of the "writes live in snapshot.js and
- * writefile.js only" invariant. Nothing here opens a file body either. The
- * signal it emits is a path and a verb, never content, which keeps it far away
- * from becoming a second file reader that skips the scan allowlist.
+ * Read-only by construction: `fs.watch` observes and the poller below only
+ * lists directories and stats files, so this module stays on the right side of
+ * the "writes live in snapshot.js and writefile.js only" invariant. Nothing here
+ * opens a file body either. The signal it emits is a path and a verb, never
+ * content, which keeps it far away from becoming a second file reader that skips
+ * the scan allowlist.
  *
- * Three decisions worth knowing before changing anything here:
+ * Four decisions worth knowing before changing anything here:
  *
  * DIRECTORIES ARE WATCHED, NOT FILES. Watching a file binds the watch to the
  * inode behind it, and an atomic save replaces that inode. LayerCake's own
@@ -22,18 +23,27 @@
  * `projects/`, `sessions/` and the rest of the runtime state the scan is
  * careful to skip.
  *
- * UNC PATHS ARE NOT WATCHED. `fs.watch` opens its directory handle eagerly and
- * takes no timeout, so binding one against a disconnected share can block the
- * event loop with no way to race it. Every other filesystem call in this server
- * goes through `withTimeout` for exactly that reason; this one cannot, so it
- * declines instead. The paths are reported as unwatched rather than dropped.
+ * UNC PATHS ARE POLLED, NOT WATCHED. `fs.watch` opens its directory handle
+ * eagerly, inside the synchronous call (that is why it can throw ENOENT on the
+ * spot), and takes no timeout, so binding one against a disconnected share can
+ * block the event loop with no way to race it: 21 s, measured, for a share on
+ * an unroutable address. A directory on a share is polled
+ * instead: a listing, plus a stat per config file in it, every POLL_MS. Those
+ * calls run on libuv's threadpool and each goes through `withTimeout` like every
+ * other filesystem call in this server, so a dead share costs a timeout and a
+ * reported state, never a stalled server. See pollShare for why one share never
+ * has two calls outstanding.
+ *
+ * ONE FILTER FOR BOTH. Native events and polled differences go through the same
+ * `isReportable`, read from the scan result and the manifest, so a share-side
+ * level is filtered exactly as the same level on a local disk would be.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 
 import { CLAUDE_DIR_TREES, isUncPath, samePathKey } from './paths.js';
-import { describeError } from './safety.js';
+import { DIR_TIMEOUT_MS, describeError, isSecret, withTimeout } from './safety.js';
 
 /** agents, skills, commands, hooks, rules, memory. Read from the manifest, never retyped. */
 const TREE_NAMES = new Set(CLAUDE_DIR_TREES.map((t) => t.name.toLowerCase()));
@@ -62,6 +72,24 @@ function inConfigTree(absPath) {
  * enough that the banner still feels immediate.
  */
 export const DEBOUNCE_MS = 250;
+
+/**
+ * How often a directory on a network share is polled.
+ *
+ * 5 s is the trade between how soon a share-side change shows and how much a
+ * LayerCake window costs the file server while it sits open. One round is a
+ * stat of the share root, a listing per polled directory and a stat per config
+ * file present in it, repeated for as long as the window is open, over what may
+ * be a VPN. Faster buys little: the bar's only action is "rescan", nobody waits
+ * on it the way they wait on a build, and through `\\localhost\C$` a local
+ * change was visible through the share within 5 ms, so here the interval alone
+ * sets the delay (a remote server's client-side metadata caching can add to it;
+ * not measured). Slower starts to read as "the bar missed it".
+ *
+ * Rounds never overlap: the next is armed only when the last has finished, so
+ * a slow share stretches the interval instead of stacking calls behind it.
+ */
+export const POLL_MS = 5000;
 
 /**
  * Scratch files produced BY a write rather than being a config file.
@@ -94,14 +122,16 @@ export function isTransientArtifact(name) {
 }
 
 /**
- * Upper bound on directory handles per stream. A deep project under a deep home
- * directory lands around sixty; the cap exists so a pathological ancestor chain
- * cannot open hundreds. Truncation is reported, never silent.
+ * Upper bound on directories per stream, watched and polled together. A deep
+ * project under a deep home directory lands around sixty; the cap exists so a
+ * pathological ancestor chain cannot open hundreds of handles or poll hundreds
+ * of share folders. Truncation is reported, never silent.
  */
 export const MAX_WATCHED_DIRS = 256;
 
 /**
- * The directories that cover a lineage, plus the ones deliberately left out.
+ * The directories that cover a lineage, split by how they are covered, plus the
+ * ones deliberately left out.
  *
  * Both files and absences contribute their PARENT: absence is data in this
  * tool, so a CLAUDE.md that does not exist yet still has to raise an event the
@@ -111,23 +141,24 @@ export const MAX_WATCHED_DIRS = 256;
  * Deduped with samePathKey because a project under the home directory makes the
  * walk pass through home a second time and re-find everything the user level
  * already reported. Watching those twice would double every event.
+ *
+ * `polled` entries carry `scanError` when the directory is there only because
+ * the scan could not read it; see the level loop below.
  */
 export function watchTargets(lineage) {
   const dirs = new Map();
+  const polled = new Map();
   const skipped = new Map();
 
-  const consider = (target) => {
+  const consider = (target, scanError = null) => {
     const key = samePathKey(target);
-    if (dirs.has(key) || skipped.has(key)) return;
-    if (isUncPath(target)) {
-      skipped.set(key, { absPath: target, reason: 'Network path, not watched' });
-      return;
-    }
-    if (dirs.size >= MAX_WATCHED_DIRS) {
+    if (dirs.has(key) || polled.has(key) || skipped.has(key)) return;
+    if (dirs.size + polled.size >= MAX_WATCHED_DIRS) {
       skipped.set(key, { absPath: target, reason: `Over the ${MAX_WATCHED_DIRS} directory cap` });
       return;
     }
-    dirs.set(key, target);
+    if (isUncPath(target)) polled.set(key, { absPath: target, scanError });
+    else dirs.set(key, target);
   };
 
   for (const level of lineage.levels) {
@@ -140,9 +171,90 @@ export function watchTargets(lineage) {
     for (const missing of level.absent) {
       consider(path.dirname(missing.absPath));
     }
+
+    // A share-side level the scan could not reach at all has no entries and no
+    // absences, so nothing above lists its directory, and the bar would say
+    // "watching" with no gap while the project's share is down. Polling that
+    // directory is what lets the bar name the share as unreachable, and raise
+    // an event when it answers again. ENOENT is left out: that is a folder
+    // missing from a share that did answer, which is no different from a
+    // missing local ancestor, and those are not watched either.
+    if (level.dir && isUncPath(level.dir)) {
+      const levelKey = samePathKey(level.dir);
+      const unread = level.errors.find(
+        (e) => e.code !== 'ENOENT' && e.path && samePathKey(e.path) === levelKey
+      );
+      if (unread) consider(level.dir, { code: unread.code, message: unread.message });
+    }
   }
 
-  return { dirs: [...dirs.values()], skipped: [...skipped.values()] };
+  return { dirs: [...dirs.values()], polled: [...polled.values()], skipped: [...skipped.values()] };
+}
+
+/**
+ * Shares with a timed-out call that has not come back yet, across every open
+ * stream: share key -> the set of those calls.
+ *
+ * `withTimeout` stops WAITING for a call; it cannot cancel it. The call keeps a
+ * libuv threadpool thread (four by default, shared with every other filesystem
+ * call in this server) until the OS gives up, which took 21 s here for a share
+ * on an unroutable address. A share listed here gets no new calls from any
+ * stream until those settle, so the poller holds at most one thread per dead
+ * share, never the pool that scans and file reads also need.
+ */
+const stuckCalls = new Map();
+
+function isStuck(shareKey) {
+  return (stuckCalls.get(shareKey)?.size || 0) > 0;
+}
+
+/**
+ * Each share's queue of poll rounds, across every open stream: share key -> the
+ * settled tail of the queue.
+ *
+ * stuckCalls only knows about a call once it has timed out. Streams whose
+ * rounds start inside the same 3 s each send a call to a share that has just
+ * died, and each strands a thread: three streams opened together on a dead
+ * share, plus the scan's own two stranded calls, left a local stat waiting
+ * 14 s for a thread. Taking turns means a share has at most one poll call
+ * outstanding in the whole process: the next round starts after the last has
+ * given up, and by then the share is on stuckCalls. The same test with turns
+ * kept that stat under 1 ms.
+ */
+const shareTurns = new Map();
+
+function onShareTurn(shareKey, round) {
+  const before = shareTurns.get(shareKey) || Promise.resolve();
+  const turn = before.then(round);
+  const settled = turn.then(
+    () => {},
+    () => {}
+  );
+  shareTurns.set(shareKey, settled);
+  settled.then(() => {
+    if (shareTurns.get(shareKey) === settled) shareTurns.delete(shareKey);
+  });
+  return turn;
+}
+
+/** Races one share-bound call against DIR_TIMEOUT_MS, and remembers it if it loses. */
+function callShare(shareKey, raw, label) {
+  const timed = withTimeout(raw, DIR_TIMEOUT_MS, label);
+  timed.catch((err) => {
+    if (err?.code !== 'ETIMEDOUT') return;
+    let calls = stuckCalls.get(shareKey);
+    if (!calls) {
+      calls = new Set();
+      stuckCalls.set(shareKey, calls);
+    }
+    calls.add(raw);
+    const release = () => {
+      calls.delete(raw);
+      if (calls.size === 0 && stuckCalls.get(shareKey) === calls) stuckCalls.delete(shareKey);
+    };
+    raw.then(release, release);
+  });
+  return timed;
 }
 
 /**
@@ -152,12 +264,18 @@ export function watchTargets(lineage) {
  * called on a timer, never synchronously from inside a filesystem event, so a
  * slow consumer cannot stall the watcher.
  *
+ * `onCoverage` receives a new `coverage()` whenever it has moved since the last
+ * one sent: after the first poll round, when a share drops or comes back, and
+ * when a native watch fails after it started. The caller sends `coverage()`
+ * itself once, as its ready frame; this is everything after that.
+ *
  * Errors are values here as everywhere else: a directory that cannot be watched
  * lands in `errors` and the rest still start. One unreadable ancestor must not
- * cost you the watch on your own project.
+ * cost you the watch on your own project, and one dead share must not cost you
+ * the watch on anything else.
  */
-export function watchLineage(lineage, onChange) {
-  const { dirs, skipped } = watchTargets(lineage);
+export function watchLineage(lineage, onChange, onCoverage) {
+  const { dirs, polled, skipped } = watchTargets(lineage);
   const watchers = [];
   const watched = [];
   const errors = [];
@@ -175,6 +293,28 @@ export function watchLineage(lineage, onChange) {
   for (const level of lineage.levels) {
     for (const entry of level.entries) known.add(samePathKey(entry.absPath));
     for (const missing of level.absent) known.add(samePathKey(missing.absPath));
+  }
+
+  /**
+   * Whether a child of `dir` is worth an event.
+   *
+   * Watching a directory subscribes you to everything in it, and `~/.claude`
+   * holds `history.jsonl`, `daemon.log`, `backups/` and the session store
+   * alongside the config. Those rewrite continuously while Claude Code runs,
+   * so an unfiltered banner is lit permanently and says nothing.
+   *
+   * The scan already decided what counts as config, absences included, and
+   * the manifest already says which subtrees are open-ended. Asking those two
+   * is the whole filter: no second list to keep in step, and a target added
+   * to the manifest starts being watched without anything here changing.
+   */
+  function isReportable(dir, filename) {
+    // macOS can omit the filename, and a share folder that could not be read
+    // is reported whole. "Something under here moved" is still actionable.
+    if (!filename) return true;
+    if (isTransientArtifact(filename)) return false;
+    const absPath = path.join(dir, filename);
+    return known.has(samePathKey(absPath)) || inConfigTree(absPath);
   }
 
   /** key -> change, so repeated events on one path collapse to the last one. */
@@ -196,21 +336,8 @@ export function watchLineage(lineage, onChange) {
 
   function record(dir, filename, eventType) {
     if (closed) return;
-    if (isTransientArtifact(filename)) return;
-    // macOS can omit the filename. Falling back to the directory keeps the
-    // event useful: "something under here moved" is still actionable.
+    if (!isReportable(dir, filename)) return;
     const absPath = filename ? path.join(dir, filename) : dir;
-
-    // Watching a directory subscribes you to everything in it, and `~/.claude`
-    // holds `history.jsonl`, `daemon.log`, `backups/` and the session store
-    // alongside the config. Those rewrite continuously while Claude Code runs,
-    // so an unfiltered banner is lit permanently and says nothing.
-    //
-    // The scan already decided what counts as config, absences included, and
-    // the manifest already says which subtrees are open-ended. Asking those two
-    // is the whole filter: no second list to keep in step, and a target added
-    // to the manifest starts being watched without anything here changing.
-    if (filename && !known.has(samePathKey(absPath)) && !inConfigTree(absPath)) return;
     pending.set(samePathKey(absPath), {
       dir,
       name: filename || null,
@@ -231,16 +358,21 @@ export function watchLineage(lineage, onChange) {
       const watcher = fs.watch(dir, { persistent: false, recursive: false }, (eventType, filename) =>
         record(dir, filename, eventType)
       );
-      // An error after start (the directory is deleted out from under us, a
-      // share drops) arrives here. Recording and closing that one watcher beats
-      // an unhandled 'error' event taking down the server.
+      // An error after start (the directory is deleted out from under us)
+      // arrives here. Recording and closing that one watcher beats an unhandled
+      // 'error' event taking down the server. It stops counting as watched and
+      // the client is told, or the bar would go on claiming a folder nobody is
+      // looking at.
       watcher.on('error', (err) => {
         errors.push({ path: dir, ...describeError(err) });
+        const at = watched.indexOf(dir);
+        if (at !== -1) watched.splice(at, 1);
         try {
           watcher.close();
         } catch {
           /* already gone */
         }
+        sendCoverage();
       });
       watchers.push(watcher);
       watched.push(dir);
@@ -255,17 +387,252 @@ export function watchLineage(lineage, onChange) {
     }
   }
 
+  // --- share-side folders: polled -------------------------------------------
+
+  /**
+   * share key -> { key, root, targets }. Grouped by share because a share is
+   * what goes down: when its root does not answer, every folder on it is
+   * unreachable, and asking each of them separately would only queue more
+   * calls behind the one already stuck.
+   *
+   * A target's `snapshot` is null until its first good read, then a map of
+   * reportable child -> { name, isDir, mtimeMs, size }. `failed` means it has
+   * not been read since it last could not be, which decides what that next
+   * good read reports.
+   */
+  const shares = new Map();
+  for (const { absPath, scanError } of polled) {
+    // path.parse knows the UNC form: the root of \\server\share\x is \\server\share\.
+    const root = path.parse(path.resolve(absPath)).root;
+    const key = samePathKey(root);
+    if (!shares.has(key)) shares.set(key, { key, root, targets: [] });
+    shares.get(key).targets.push({
+      absPath,
+      snapshot: null,
+      failed: Boolean(scanError),
+      down: false,
+      error: scanError ? { code: scanError.code, message: `Not read at scan time: ${scanError.message}` } : null,
+    });
+  }
+
+  /**
+   * Every folder on a share moves to the gap list at once. A folder already
+   * marked down keeps the reason it was first given: a dead share alternates
+   * between a timeout and the OS's own quick failure, and re-sending coverage
+   * every time the wording of why changed would say nothing new.
+   */
+  function shareDown(share, detail) {
+    for (const target of share.targets) {
+      if (target.down) continue;
+      target.failed = true;
+      target.down = true;
+      target.error = { code: detail.code, message: `Share not reachable: ${detail.message}` };
+    }
+  }
+
+  /**
+   * Compares one good read with the last, and records the difference through
+   * the same `record` a native event goes through.
+   */
+  function settle(target, next) {
+    const before = target.snapshot;
+    if (before === null) {
+      // The first good read has nothing to compare with. A folder that could
+      // not be read before it (at scan time, or since this stream opened) is
+      // reported whole, because what is in it now was never seen.
+      if (target.failed) record(target.absPath, null, 'rename');
+    } else {
+      for (const [key, now] of next) {
+        const was = before.get(key);
+        if (!was || was.isDir !== now.isDir) {
+          record(target.absPath, now.name, 'rename');
+        } else if (!now.isDir && (now.mtimeMs !== was.mtimeMs || now.size !== was.size)) {
+          // Directories are compared by presence only: a directory's mtime moves
+          // whenever anything inside it does, so comparing it would report the
+          // folder on every edit to a file that is already reported by name.
+          record(target.absPath, now.name, 'change');
+        }
+      }
+      for (const [key, was] of before) {
+        if (!next.has(key)) record(target.absPath, was.name, 'rename');
+      }
+    }
+    target.snapshot = next;
+    target.failed = false;
+    target.down = false;
+    target.error = null;
+  }
+
+  /** One folder. Returns false when the share stopped answering mid-round. */
+  async function pollDir(share, target) {
+    let names;
+    try {
+      names = await callShare(share.key, fs.promises.readdir(target.absPath), target.absPath);
+    } catch (err) {
+      if (err?.code === 'ETIMEDOUT') {
+        shareDown(share, describeError(err));
+        return false;
+      }
+      if (err?.code !== 'ENOENT') {
+        target.failed = true;
+        target.down = false;
+        target.error = describeError(err);
+        return true;
+      }
+      // A folder that does not exist yet reads as an empty one: everything the
+      // scan expected in it is absent, which is what it was at scan time, and
+      // its creation shows up as those files appearing.
+      names = [];
+    }
+
+    const next = new Map();
+    for (const name of names) {
+      if (closed) return false;
+      if (!isReportable(target.absPath, name)) continue;
+      const absPath = path.join(target.absPath, name);
+      // Never stat'ed, the same as in the scan, which records a credential
+      // file's name in `redacted` without touching the file itself.
+      if (isSecret(absPath)) continue;
+      const key = samePathKey(absPath);
+      try {
+        const st = await callShare(share.key, fs.promises.stat(absPath), absPath);
+        next.set(key, { name, isDir: st.isDirectory(), mtimeMs: st.mtimeMs, size: st.size });
+      } catch (err) {
+        if (err?.code === 'ETIMEDOUT') {
+          shareDown(share, describeError(err));
+          return false;
+        }
+        // Gone since the listing (ENOENT) drops out and reads as a delete.
+        // Anything else keeps what was last seen, so a passing error is never
+        // reported as a deletion; a file that really went is missing from the
+        // next listing.
+        const was = target.snapshot?.get(key);
+        if (was && err?.code !== 'ENOENT') next.set(key, was);
+      }
+    }
+    if (closed) return false;
+    settle(target, next);
+    return true;
+  }
+
+  /**
+   * One round for one share, one call at a time.
+   *
+   * Sequential on purpose. Calls in parallel would finish a round sooner, but a
+   * share that dies mid-round would then strand one threadpool thread per call
+   * in flight instead of one. The round stops at the first timeout, and a share
+   * with a call still outstanding from an earlier round (or another stream)
+   * gets none this round.
+   */
+  async function pollShare(share) {
+    // A turn can come up after the stream closed while it waited in the queue.
+    if (closed) return;
+    if (isStuck(share.key)) {
+      shareDown(share, { code: 'ETIMEDOUT', message: 'an earlier call to it has not returned yet' });
+      return;
+    }
+    try {
+      await callShare(share.key, fs.promises.stat(share.root), share.root);
+    } catch (err) {
+      shareDown(share, describeError(err));
+      return;
+    }
+    for (const target of share.targets) {
+      if (closed) return;
+      if (!(await pollDir(share, target))) return;
+    }
+  }
+
+  let pollTimer = null;
+  let firstRound = true;
+  /** The last coverage sent, serialized, so an unchanged one is not sent again. */
+  let sentCoverage = null;
+
+  /**
+   * `always` is for the end of the first round, which is sent even unchanged:
+   * until then a share's reachability is unknown, and it is also the moment a
+   * change on the share can first be told apart from the baseline.
+   */
+  function sendCoverage(always = false) {
+    if (closed) return;
+    const now = coverage();
+    const serialized = JSON.stringify(now);
+    if (serialized === sentCoverage && !always) return;
+    sentCoverage = serialized;
+    try {
+      onCoverage?.(now);
+    } catch {
+      /* same as onChange: a throwing consumer must not stop the watcher */
+    }
+  }
+
+  async function pollRound() {
+    pollTimer = null;
+    await Promise.all(
+      [...shares.values()].map((share) =>
+        onShareTurn(share.key, () => pollShare(share)).catch((err) => {
+          // Every call above is caught already; this is for a bug, and an
+          // unhandled rejection here would take the whole server down.
+          for (const target of share.targets) {
+            target.failed = true;
+            target.error = describeError(err);
+          }
+        })
+      )
+    );
+    if (closed) return;
+    sendCoverage(firstRound);
+    firstRound = false;
+    pollTimer = setTimeout(pollRound, POLL_MS);
+    // Like persistent:false on the native watchers: polling alone must never
+    // keep the process alive.
+    pollTimer.unref();
+  }
+
+  /**
+   * What is covered right now, and what is not. The shape of the ready frame.
+   *
+   * A polled folder counts as watched until a round finds it unreadable, then
+   * moves to `errors` with the reason, so "watching N folders" never includes a
+   * share that is not answering.
+   */
+  function coverage() {
+    const pollErrors = [];
+    let polling = 0;
+    for (const share of shares.values()) {
+      for (const target of share.targets) {
+        if (target.error) pollErrors.push({ path: target.absPath, ...target.error });
+        else polling += 1;
+      }
+    }
+    return {
+      watchedCount: watched.length + polling,
+      polled: [...shares.values()].flatMap((share) => share.targets.map((t) => t.absPath)),
+      pollMs: POLL_MS,
+      skipped,
+      errors: [...errors, ...pollErrors],
+    };
+  }
+
+  // On a timer rather than inline, so the caller has sent its ready frame
+  // before any coverage can follow it.
+  if (shares.size > 0) {
+    pollTimer = setTimeout(pollRound, 0);
+    pollTimer.unref();
+  }
+
   return {
-    watchedCount: watched.length,
-    watched,
-    skipped,
-    errors,
+    coverage,
     close() {
       if (closed) return;
       closed = true;
       if (timer !== null) {
         clearTimeout(timer);
         timer = null;
+      }
+      if (pollTimer !== null) {
+        clearTimeout(pollTimer);
+        pollTimer = null;
       }
       pending = new Map();
       for (const watcher of watchers) {

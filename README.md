@@ -244,7 +244,7 @@ something changes underneath you. A thin bar under the header carries the state 
 | Bar | Meaning |
 |---|---|
 | `Watching 65 folders` | Live. The count is directories, not files. |
-| `Watching 65 folders (6 not watched)` | Live with gaps. Hover for the list and the reason. |
+| `Watching 65 folders (6 not watched)` | Live with gaps. Hover for the list and the reason, which includes a network share that is not answering. |
 | `4 files changed on disk` | Something changed. Offers **Rescan** and **Dismiss**. |
 | `Not watching for changes` | The stream is down, with the reason. |
 
@@ -284,9 +284,30 @@ Implementation notes that matter if you change this:
   an atomic save replaces that inode, so it would go deaf on exactly the event it exists to catch.
 - **Non-recursive.** The scan already reports every directory that holds something, so a recursive
   watch would only subscribe to the runtime state the scan is careful to skip.
-- **UNC paths are not watched.** `fs.watch` opens its handle eagerly and takes no timeout, so
-  binding one against a dead share can block the event loop. Every other filesystem call here is
-  wrapped in `withTimeout`; this one cannot be, so it declines and says so in the gap list.
+- **Folders on a network share are polled, not watched.** `fs.watch` opens its handle eagerly,
+  inside a synchronous call, and takes no timeout: binding one to a share on an unroutable address
+  blocked the event loop for 21 s here. A UNC folder (`\\server\share\...`) is instead listed, and
+  each config file in it stat'ed, every 5 s, through `withTimeout` like every other filesystem call.
+  The same filter decides what raises an event, so a share-side level reports what the same level
+  would on a local disk, only up to about 5 s later: `change` when a file's modified time or size
+  moves, `rename` when a name appears or goes. A rewrite that keeps both the modified time and the
+  size is not seen. A folder that does not exist yet reads as empty rather than being skipped, so
+  creating one shows up as its files appearing.
+- **A share that stops answering is named, not waited on.** Each round first stats the share root.
+  If that fails or times out (3 s), every folder on that share moves from the count to the gap list
+  as `Share not reachable: ...`, and the bar updates without a rescan. A timed-out call cannot be
+  cancelled and keeps a thread until the OS gives up, so that share gets no further calls until it
+  does: the watcher holds one thread for a dead share, and every other level's events carry on.
+  When it answers again the next round compares against what it last saw and reports the
+  difference. A share-side level the scan itself could not reach is polled too, so the bar says the
+  share is down instead of saying nothing, and when it comes back the folder is reported as changed,
+  because nothing in it has been seen yet: rescan to read it.
+- Rounds do not overlap: the next starts 5 s after the last one finishes. Calls to one share are
+  made one at a time, across every open tab, so a share that dies strands one call, not one per
+  folder or per tab.
+- A mapped drive letter (`Z:` pointing at a share) is not recognised as a network path and is
+  watched natively, so it keeps the blocking risk the polling avoids (by the same mechanism; not
+  measured).
 - Events carry a path and a verb, never file content. Reading a body still goes through `/api/file`
   and its allowlist check.
 - The client reads the stream with `fetch` and a stream reader, not `EventSource`, because
@@ -471,7 +492,7 @@ Unreadable paths degrade to an error badge on the affected level; the rest of th
 | Case | Behavior |
 |---|---|
 | Nonexistent directory | Each missing ancestor gets an `ENOENT` error badge, scan still returns |
-| Dead UNC share | 3 s per-operation timeout, level marked unreachable, no hang |
+| Dead UNC share | 3 s per-operation timeout, level marked unreachable, no hang; the watch bar lists its folders as `Share not reachable` |
 | Permission denied | `EACCES` / `EPERM` badge on the level, other levels unaffected |
 | Malformed JSON | Parse error banner plus the raw text |
 | Malformed YAML frontmatter | Parse error banner plus the raw block, markdown body still renders |
