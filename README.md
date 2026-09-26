@@ -306,15 +306,16 @@ Implementation notes that matter if you change this:
 - **A share that stops answering is named, not waited on.** Each round first stats the share root.
   If that fails or times out (3 s), every folder on that share moves from the count to the gap list
   as `Share not reachable: ...`, and the bar updates without a rescan. A timed-out call cannot be
-  cancelled and keeps a thread until the OS gives up, so that share gets no further calls until it
-  does: the watcher holds one thread for a dead share, and every other level's events carry on.
+  cancelled and keeps a thread until the OS gives up, so that share gets no further calls, from the
+  watcher or a scan, until it does: a dead share holds one thread, and every other level's events
+  carry on.
   When it answers again the next round compares against what it last saw and reports the
   difference. A share-side level the scan itself could not reach is polled too, so the bar says the
   share is down instead of saying nothing, and when it comes back the folder is reported as changed,
   because nothing in it has been seen yet: rescan to read it.
 - Rounds do not overlap: the next starts 5 s after the last one finishes. Calls to one share are
-  made one at a time, across every open tab, so a share that dies strands one call, not one per
-  folder or per tab.
+  made one at a time, across every open tab and any scan, so a share that dies strands one call,
+  not one per folder, per tab or per scanned level.
 - A mapped drive letter (`Z:` pointing at a share) is not recognised as a network path and is
   watched natively, so it keeps the blocking risk the polling avoids (by the same mechanism; not
   measured).
@@ -508,7 +509,7 @@ Unreadable paths degrade to an error badge on the affected level; the rest of th
 | Case | Behavior |
 |---|---|
 | Nonexistent directory | Each missing ancestor gets an `ENOENT` error badge, scan still returns |
-| Dead UNC share | 3 s per-operation timeout, level marked unreachable, no hang; the watch bar lists its folders as `Share not reachable` |
+| Dead UNC share | 3 s per-operation timeout, level marked unreachable, no hang; the watch bar lists its folders as `Share not reachable`. After one call to the share times out it gets no other until that one returns, so its remaining levels fail at once as `ESHARESTUCK` (not tried) and a dead share holds one threadpool thread, not all four (see "Watching for changes" for why a timed-out call holds one). A mapped drive letter is not recognised as a share and does not get this |
 | Permission denied | `EACCES` / `EPERM` badge on the level, other levels unaffected |
 | Malformed JSON | Parse error banner plus the raw text |
 | Malformed YAML frontmatter | Parse error banner plus the raw block, markdown body still renders |
@@ -533,6 +534,7 @@ server/
   flatten.js     the four flattened views
   watch.js       filesystem watcher: directory watches, debounce, config filter
   safety.js      denylists, editable categories, size caps, timeouts, errors
+  sharegate.js   one filesystem call per network share at a time, for the scan and the watcher
   transcript.js  the only transcript reader: records to a normalized session model
   jsonl.js       follows an append-only JSON Lines file by byte offset
   sessions.js    session discovery (the allowlist), running sessions, retention

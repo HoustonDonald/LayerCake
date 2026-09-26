@@ -29,10 +29,9 @@
  * block the event loop with no way to race it: 21 s, measured, for a share on
  * an unroutable address. A directory on a share is polled
  * instead: a listing, plus a stat per config file in it, every POLL_MS. Those
- * calls run on libuv's threadpool and each goes through `withTimeout` like every
- * other filesystem call in this server, so a dead share costs a timeout and a
- * reported state, never a stalled server. See pollShare for why one share never
- * has two calls outstanding.
+ * calls run on libuv's threadpool and each goes through `timedFsCall`, the same
+ * per-share gate the scan uses (sharegate.js), so a dead share costs a timeout,
+ * one thread and a reported state, never a stalled server.
  *
  * ONE FILTER FOR BOTH. Native events and polled differences go through the same
  * `isReportable`, read from the scan result and the manifest, so a share-side
@@ -43,7 +42,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { CLAUDE_DIR_TREES, isUncPath, samePathKey } from './paths.js';
-import { DIR_TIMEOUT_MS, describeError, isSecret, withTimeout } from './safety.js';
+import { describeError, isSecret } from './safety.js';
+import { SHARE_STUCK, shareKeyOf, timedFsCall } from './sharegate.js';
 
 /** agents, skills, commands, hooks, rules, memory. Read from the manifest, never retyped. */
 const TREE_NAMES = new Set(CLAUDE_DIR_TREES.map((t) => t.name.toLowerCase()));
@@ -192,69 +192,13 @@ export function watchTargets(lineage) {
 }
 
 /**
- * Shares with a timed-out call that has not come back yet, across every open
- * stream: share key -> the set of those calls.
- *
- * `withTimeout` stops WAITING for a call; it cannot cancel it. The call keeps a
- * libuv threadpool thread (four by default, shared with every other filesystem
- * call in this server) until the OS gives up, which took 21 s here for a share
- * on an unroutable address. A share listed here gets no new calls from any
- * stream until those settle, so the poller holds at most one thread per dead
- * share, never the pool that scans and file reads also need.
+ * True when a share-side call failed because the share is not answering: it
+ * timed out, or sharegate.js refused it because an earlier call (from this
+ * stream, another stream, or a scan) timed out and has not come back. Either
+ * way the rest of the round would only be refused too.
  */
-const stuckCalls = new Map();
-
-function isStuck(shareKey) {
-  return (stuckCalls.get(shareKey)?.size || 0) > 0;
-}
-
-/**
- * Each share's queue of poll rounds, across every open stream: share key -> the
- * settled tail of the queue.
- *
- * stuckCalls only knows about a call once it has timed out. Streams whose
- * rounds start inside the same 3 s each send a call to a share that has just
- * died, and each strands a thread: three streams opened together on a dead
- * share, plus the scan's own two stranded calls, left a local stat waiting
- * 14 s for a thread. Taking turns means a share has at most one poll call
- * outstanding in the whole process: the next round starts after the last has
- * given up, and by then the share is on stuckCalls. The same test with turns
- * kept that stat under 1 ms.
- */
-const shareTurns = new Map();
-
-function onShareTurn(shareKey, round) {
-  const before = shareTurns.get(shareKey) || Promise.resolve();
-  const turn = before.then(round);
-  const settled = turn.then(
-    () => {},
-    () => {}
-  );
-  shareTurns.set(shareKey, settled);
-  settled.then(() => {
-    if (shareTurns.get(shareKey) === settled) shareTurns.delete(shareKey);
-  });
-  return turn;
-}
-
-/** Races one share-bound call against DIR_TIMEOUT_MS, and remembers it if it loses. */
-function callShare(shareKey, raw, label) {
-  const timed = withTimeout(raw, DIR_TIMEOUT_MS, label);
-  timed.catch((err) => {
-    if (err?.code !== 'ETIMEDOUT') return;
-    let calls = stuckCalls.get(shareKey);
-    if (!calls) {
-      calls = new Set();
-      stuckCalls.set(shareKey, calls);
-    }
-    calls.add(raw);
-    const release = () => {
-      calls.delete(raw);
-      if (calls.size === 0 && stuckCalls.get(shareKey) === calls) stuckCalls.delete(shareKey);
-    };
-    raw.then(release, release);
-  });
-  return timed;
+function shareUnresponsive(err) {
+  return err?.code === 'ETIMEDOUT' || err?.code === SHARE_STUCK;
 }
 
 /**
@@ -404,7 +348,9 @@ export function watchLineage(lineage, onChange, onCoverage) {
   for (const { absPath, scanError } of polled) {
     // path.parse knows the UNC form: the root of \\server\share\x is \\server\share\.
     const root = path.parse(path.resolve(absPath)).root;
-    const key = samePathKey(root);
+    // The gate's own key, so what counts as one share here is what sharegate.js
+    // counts as one.
+    const key = shareKeyOf(absPath);
     if (!shares.has(key)) shares.set(key, { key, root, targets: [] });
     shares.get(key).targets.push({
       absPath,
@@ -467,9 +413,9 @@ export function watchLineage(lineage, onChange, onCoverage) {
   async function pollDir(share, target) {
     let names;
     try {
-      names = await callShare(share.key, fs.promises.readdir(target.absPath), target.absPath);
+      names = await timedFsCall(target.absPath, () => fs.promises.readdir(target.absPath));
     } catch (err) {
-      if (err?.code === 'ETIMEDOUT') {
+      if (shareUnresponsive(err)) {
         shareDown(share, describeError(err));
         return false;
       }
@@ -495,10 +441,10 @@ export function watchLineage(lineage, onChange, onCoverage) {
       if (isSecret(absPath)) continue;
       const key = samePathKey(absPath);
       try {
-        const st = await callShare(share.key, fs.promises.stat(absPath), absPath);
+        const st = await timedFsCall(absPath, () => fs.promises.stat(absPath));
         next.set(key, { name, isDir: st.isDirectory(), mtimeMs: st.mtimeMs, size: st.size });
       } catch (err) {
-        if (err?.code === 'ETIMEDOUT') {
+        if (shareUnresponsive(err)) {
           shareDown(share, describeError(err));
           return false;
         }
@@ -520,19 +466,15 @@ export function watchLineage(lineage, onChange, onCoverage) {
    *
    * Sequential on purpose. Calls in parallel would finish a round sooner, but a
    * share that dies mid-round would then strand one threadpool thread per call
-   * in flight instead of one. The round stops at the first timeout, and a share
-   * with a call still outstanding from an earlier round (or another stream)
-   * gets none this round.
+   * in flight instead of one. Each call also waits its turn at the share in
+   * sharegate.js, behind other streams and any scan, so the share never has
+   * two calls outstanding in the process. The round stops at the first call
+   * that times out or is refused because an earlier one is still out.
    */
   async function pollShare(share) {
-    // A turn can come up after the stream closed while it waited in the queue.
     if (closed) return;
-    if (isStuck(share.key)) {
-      shareDown(share, { code: 'ETIMEDOUT', message: 'an earlier call to it has not returned yet' });
-      return;
-    }
     try {
-      await callShare(share.key, fs.promises.stat(share.root), share.root);
+      await timedFsCall(share.root, () => fs.promises.stat(share.root));
     } catch (err) {
       shareDown(share, describeError(err));
       return;
@@ -570,7 +512,7 @@ export function watchLineage(lineage, onChange, onCoverage) {
     pollTimer = null;
     await Promise.all(
       [...shares.values()].map((share) =>
-        onShareTurn(share.key, () => pollShare(share)).catch((err) => {
+        pollShare(share).catch((err) => {
           // Every call above is caught already; this is for a bug, and an
           // unhandled rejection here would take the whole server down.
           for (const target of share.targets) {

@@ -757,6 +757,63 @@ try {
     skip('a share that does not answer is named as not reachable', 'UNC paths are a Windows form');
   }
 
+  // --- one call at a time per network share (#55) --------------------------
+  //
+  // A timed-out call is abandoned, not cancelled: it keeps a threadpool thread
+  // until the OS gives up, 21 s for a share on an unroutable address. A scan
+  // that went on calling such a share stranded a thread per level and starved
+  // every other filesystem call in the server. A real hang needs a share that
+  // does not answer, which smoke cannot count on without a network, so this
+  // strands a call that never settles in this process's own gate, then runs the
+  // real scan code against that share. The share is on the loopback, so a call
+  // that got past the gate would fail fast instead of going anywhere. The
+  // measured version, a real dead share through the HTTP API, is in the commit
+  // that fixed #55.
+  if (process.platform !== 'win32') {
+    skip('one call at a time per network share (5 checks)', 'UNC paths are a Windows form');
+  } else {
+    const { timedFsCall } = await import('../server/sharegate.js');
+    const { resolveLineage } = await import('../server/scan.js');
+    const stuckShare = `\\\\127.0.0.1\\layercake-smoke-stuck-${crypto.randomBytes(3).toString('hex')}`;
+    let started = 0;
+    let answer = null;
+    const neverAnswers = () => {
+      started += 1;
+      return new Promise((resolve) => (answer = resolve));
+    };
+    const first = timedFsCall(`${stuckShare}\\a`, neverAnswers).then(() => 'answered', (e) => e.code);
+    const second = timedFsCall(`${stuckShare}\\b`, neverAnswers).then(() => 'answered', (e) => e.code);
+    await new Promise((r) => setTimeout(r, 100));
+    check('a second call to a share waits while the first is out', started === 1, `${started} started`);
+    const [firstCode, secondCode] = await Promise.all([first, second]);
+    check(
+      'a share whose call timed out gets no new call until that one returns',
+      firstCode === 'ETIMEDOUT' && secondCode === 'ESHARESTUCK' && started === 1,
+      `${firstCode}, ${secondCode}, ${started} started`
+    );
+
+    const blocked = await resolveLineage(`${stuckShare}\\a\\b\\proj`);
+    const shareLevels = blocked.levels.filter((l) => String(l.dir).toLowerCase().startsWith(stuckShare.toLowerCase()));
+    check(
+      'the scan sends that share nothing: every share-side level is refused, none timed out',
+      shareLevels.length === 4 &&
+        shareLevels.every((l) => l.status === 'error' && l.errors.length > 0 && l.errors.every((e) => e.code === 'ESHARESTUCK')),
+      JSON.stringify(shareLevels.map((l) => l.errors.map((e) => e.code)))
+    );
+    check(
+      'positive control: another share is not held up by it',
+      (await timedFsCall('\\\\127.0.0.1\\layercake-smoke-other\\x', async () => 'answered').catch((e) => e.code)) === 'answered'
+    );
+
+    answer();
+    await new Promise((r) => setTimeout(r, 0));
+    const again = await timedFsCall(`${stuckShare}\\c`, async () => {
+      started += 1;
+      return 'answered';
+    }).catch((e) => e.code);
+    check('once the stranded call returns, the share is tried again', again === 'answered' && started === 2, `${again}, ${started} started`);
+  }
+
   // --- session history -----------------------------------------------------
   await runSessionChecks({ base: BASE, token, check, proj, appData });
 

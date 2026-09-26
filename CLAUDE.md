@@ -77,6 +77,7 @@ change to `server/` alone does not trigger a rebuild and does not need one.
 ```
 server/paths.js     platform paths, the scan manifest, snapshot root
 server/safety.js    denylists, editable categories, size cap, timeout, errors
+server/sharegate.js one filesystem call per network share at a time, process-wide; scan and watch use it
 server/scan.js      lineage resolver -> ordered levels
 server/readfile.js  the ONLY producer of a file body
 server/flatten.js   the four flattened views
@@ -267,7 +268,12 @@ not hang a scan: every filesystem call goes through `withTimeout`. That is why `
 folder instead of binding `fs.watch` to it (#14): `fs.watch` opens its handle inside a synchronous
 call with no timeout, and on a share at an unroutable address that blocked the event loop for 21 s.
 A timed-out call is abandoned, not cancelled, and keeps a threadpool thread until the OS gives up, so
-the poller sends a share one call at a time and none while an earlier one is still out.
+the scan and the watcher make their calls through `timedFsCall` in `sharegate.js`, one gate for the
+whole process: a UNC share gets one call at a time, and none while an earlier one is still out (#55).
+Before that, one scan of a project four folders deep on a dead share stranded all four threads, took
+21 s, and left local calls waiting 11.8 s and failing as timeouts. Use it for any new call that can
+reach a share, never a bare `withTimeout`. Raising `UV_THREADPOOL_SIZE` instead only moves the cliff:
+every further level, and every scan running alongside, strands one more thread.
 
 **Merge rules are stated, not implied.** The settings precedence model is this tool's own, not
 something read back from Claude Code. Any view that computes an effective value must ship the rule
