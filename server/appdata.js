@@ -116,9 +116,16 @@ export async function readLedger() {
   return result.parsed.entries;
 }
 
-export async function appendLedger(entry) {
+/**
+ * Replaces the entry with this id, or appends it if it is gone. A summary run
+ * writes a "running" entry before it starts and replaces it when it ends, so
+ * a run cut off by a shutdown leaves a trace instead of nothing (#3).
+ */
+export async function putLedgerEntry(entry) {
   const entries = await readLedger();
-  entries.push(entry);
+  const i = entries.findIndex((e) => e && e.id === entry.id);
+  if (i === -1) entries.push(entry);
+  else entries[i] = entry;
   const kept = entries.slice(-MAX_LEDGER_ENTRIES);
   await atomicWrite(target('usage-ledger.json'), JSON.stringify({ entries: kept }, null, 2));
 }

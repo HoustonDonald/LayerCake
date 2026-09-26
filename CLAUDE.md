@@ -242,8 +242,10 @@ is not re-parsed by cmd.exe (`resolveClaudeCommand`, #6; launch.js uses it too).
 `claude -p` with a fixed argv (Haiku, `--safe-mode`, `--tools ""`,
 own system prompt, no session persistence, a budget cap), the digest on stdin, one run at a time
 (the lock is taken before the first await), from a POST the UI sends only on a click. Every run that
-finishes, succeeded or failed, is written to the usage ledger; the one gap is the exe shutting down
-mid-run (its drain waits 30 s, a run may take up to 180 s), which ends the run before its entry.
+finishes, succeeded or failed, is written to the usage ledger. The entry is written as "running"
+before `claude` starts and replaced by the result, so a run the exe's shutdown cuts off (its drain
+waits 30 s, a run may take up to 180 s) is left as "running", and `/api/usage` reports it as
+interrupted, usage unknown (#3).
 A `claude` that exits without reading stdin must not take the server down: `child.stdin` has an
 error listener for exactly that, and smoke proves it with a stand-in claude (`LAYERCAKE_CLAUDE_CMD`).
 Nothing automatic may call it; adding anything that does breaks the promise the README makes.

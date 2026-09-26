@@ -365,6 +365,11 @@ export default function SessionsView({ projectDir, scanId }) {
           <div className="usage-note" title={`Kept in ${usage.dataRoot}`}>
             LayerCake&apos;s own Claude usage: {usage.totals.runs} AI summar{usage.totals.runs === 1 ? 'y' : 'ies'}
             {usage.totals.runs > 0 && `, ${tokens(usage.totals.inputTokens)} in, ${tokens(usage.totals.outputTokens)} out, ${usd(usage.totals.costUSD)}`}
+            {usage.totals.interrupted > 0 && (
+              <span className="warn" title="LayerCake stopped during these runs, so their usage was never reported">
+                {' '}({usage.totals.interrupted} interrupted, usage unknown)
+              </span>
+            )}
             . Everything else here reads files and uses none.
           </div>
         )}

@@ -795,7 +795,7 @@ try {
   await runLaunchChecks({ base: BASE, port: PORT, token, check, scanId: lineage.scanId, proj, appData, claudeData, reportWindowMs: REPORT_WINDOW_MS, serverStartedAt });
 
   // --- AI summaries, against a stand-in claude --------------------------------
-  await runSummaryChecks({ base: BASE, token, check, proj, smokeDir });
+  await runSummaryChecks({ base: BASE, token, check, proj, smokeDir, appData });
 
   check('smoke\'s own server stayed up for the whole run', serverExit === null, `exit: ${serverExit}`);
 

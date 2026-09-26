@@ -878,7 +878,7 @@ const NPM_SHIM = [
   '',
 ].join('\r\n');
 
-export async function runSummaryChecks({ base, token, check, proj, smokeDir }) {
+export async function runSummaryChecks({ base, token, check, proj, smokeDir, appData }) {
   const H = { 'X-LayerCake-Token': token };
   const stub = path.join(smokeDir, 'claude-stub');
 
@@ -935,6 +935,27 @@ export async function runSummaryChecks({ base, token, check, proj, smokeDir }) {
     run.input.includes('First prompt: fix the widget') && run.input.includes('Fixed it.') && !run.input.includes(SENTINELS.toolOutput));
   usage = JSON.parse((await get(base, '/api/usage', H)).body);
   check('the successful run is in the ledger with the usage claude reported', usage.totals.runs === 2 && usage.totals.outputTokens === 12);
+
+  // #3: the entry is written as "running" BEFORE claude starts and replaced by
+  // the result, so a run cut off by a shutdown still leaves a trace.
+  await fs.writeFile(path.join(stub, 'mode'), 'slow-ok');
+  const ledgerFile = path.join(appData, 'usage-ledger.json');
+  const slow = postRaw(base, `/api/session/${IDS.onDisk}/summarize`, {}, H);
+  const midRun = await until(async () =>
+    JSON.parse(await fs.readFile(ledgerFile, 'utf8')).entries.some((e) => e.status === 'running' && e.sessionId === IDS.onDisk));
+  const slowRes = await slow;
+  const ledgerAfter = JSON.parse(await fs.readFile(ledgerFile, 'utf8')).entries;
+  check('a summary run is in the ledger as "running" before it ends, then replaced by its result',
+    midRun && slowRes.status === 200 && ledgerAfter.length === 3 && !ledgerAfter.some((e) => e.status === 'running') && ledgerAfter.every((e) => e.id),
+    JSON.stringify({ midRun, status: slowRes.status, entries: ledgerAfter.map((e) => e.status) }));
+  // A "running" entry older than any run can last is a run LayerCake never saw finish.
+  await fs.writeFile(ledgerFile, JSON.stringify({
+    entries: [...ledgerAfter, { id: 'stale-run', at: new Date(Date.now() - 3_600_000).toISOString(), feature: 'ai-summary', sessionId: IDS.onDisk, status: 'running', ok: false }],
+  }));
+  usage = JSON.parse((await get(base, '/api/usage', H)).body);
+  check('a run LayerCake never saw finish reads as interrupted, usage unknown',
+    usage.totals.interrupted === 1 && usage.entries.some((e) => e.id === 'stale-run' && e.status === 'interrupted'),
+    JSON.stringify(usage.totals));
   const d = JSON.parse((await get(base, `/api/session/${IDS.onDisk}`, H)).body);
   check('the summary is kept and shown with the session', d.aiSummary?.text === '- stub summary: the widget was fixed');
 

@@ -27,7 +27,7 @@ import {
   SESSION_ID_RE,
   subagentActivity,
 } from './sessions.js';
-import { estimateSummary, sessionCard, summarizeWithClaude } from './summaries.js';
+import { RUN_TIMEOUT_MS, estimateSummary, sessionCard, summarizeWithClaude } from './summaries.js';
 import { MAX_TEXT_CHARS } from './transcript.js';
 
 const PREVIEW_CHARS = 300;
@@ -413,7 +413,14 @@ export function registerSessionRoutes(app) {
   /** LayerCake's own Claude usage, kept apart from any session's. */
   app.get('/api/usage', async (req, res) => {
     try {
-      const entries = await readLedger();
+      // A "running" entry older than any run can last is a run LayerCake did
+      // not see finish: it was stopped mid-run, and the usage is unknown (#3).
+      const now = Date.now();
+      const entries = (await readLedger()).map((e) =>
+        e?.status === 'running' && now - Date.parse(e.at) > RUN_TIMEOUT_MS + 60_000
+          ? { ...e, status: 'interrupted', error: 'LayerCake stopped during this run, so its usage was never reported (it may have spent some).' }
+          : e
+      );
       const sum = (key) => entries.reduce((n, e) => n + (typeof e[key] === 'number' ? e[key] : 0), 0);
       res.json({
         dataRoot: dataRoot(),
@@ -421,6 +428,7 @@ export function registerSessionRoutes(app) {
         totals: {
           runs: entries.length,
           failed: entries.filter((e) => !e.ok).length,
+          interrupted: entries.filter((e) => e.status === 'interrupted').length,
           inputTokens: sum('inputTokens') + sum('cacheCreationTokens') + sum('cacheReadTokens'),
           outputTokens: sum('outputTokens'),
           costUSD: sum('costUSD'),

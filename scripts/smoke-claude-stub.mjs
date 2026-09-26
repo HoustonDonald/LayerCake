@@ -8,6 +8,7 @@
  *   exit-early  exit at once without reading stdin, as a claude that rejects
  *               a flag would; a large digest then breaks the pipe
  *   ok          read the digest, record argv and stdin, answer like claude -p
+ *   slow-ok     as ok, after 1.5 s: long enough to look at the ledger mid-run
  */
 
 import fs from 'node:fs';
@@ -21,7 +22,8 @@ if (mode === 'exit-early') process.exit(1);
 let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (d) => (input += d));
-process.stdin.on('end', () => {
+process.stdin.on('end', async () => {
+  if (mode === 'slow-ok') await new Promise((r) => setTimeout(r, 1500));
   fs.writeFileSync(path.join(control, 'last-run.json'), JSON.stringify({ args, input }));
   process.stdout.write(
     JSON.stringify({

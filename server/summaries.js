@@ -22,11 +22,12 @@
  */
 
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { appendLedger, writeAiSummary } from './appdata.js';
+import { putLedgerEntry, writeAiSummary } from './appdata.js';
 import { readForDisplay } from './readfile.js';
 import { DIR_TIMEOUT_MS, withTimeout } from './safety.js';
 
@@ -47,7 +48,7 @@ const FIXED_INPUT_TOKENS = 520;
 const EXPECTED_OUTPUT_TOKENS = 600;
 /** ~150K tokens: comfortably inside Haiku's 200K window with room for the reply. */
 const MAX_DIGEST_CHARS = 600_000;
-const RUN_TIMEOUT_MS = 180_000;
+export const RUN_TIMEOUT_MS = 180_000;
 const BUDGET_USD = '0.50';
 
 const SYSTEM_PROMPT = [
@@ -253,11 +254,27 @@ export async function resolveClaudeCommand(env = process.env) {
 /**
  * Runs one AI summary, stores it, and records its usage. The ledger entry is
  * written whether or not the run succeeded, because a failed run can still
- * have spent usage.
+ * have spent usage. It is written TWICE: as "running" before claude starts,
+ * then replaced by the result. The exe's shutdown drain waits 30 s and a run
+ * may take 180 s, so a run cut off by a shutdown would otherwise leave no
+ * trace of usage that may have been spent (#3); /api/usage shows such a
+ * leftover as interrupted.
  */
 export async function summarizeWithClaude(model) {
   const digest = buildDigest(model);
   const started = Date.now();
+  const id = crypto.randomUUID();
+  await putLedgerEntry({
+    id,
+    at: new Date(started).toISOString(),
+    feature: 'ai-summary',
+    sessionId: model.sessionId,
+    model: SUMMARY_MODEL,
+    status: 'running',
+    ok: false,
+    digestChars: digest.chars,
+    error: null,
+  });
   let result = null;
   let failure = null;
   try {
@@ -267,6 +284,8 @@ export async function summarizeWithClaude(model) {
   }
   const u = result?.usage || {};
   const entry = {
+    id,
+    status: 'done',
     at: new Date().toISOString(),
     feature: 'ai-summary',
     sessionId: model.sessionId,
@@ -282,7 +301,7 @@ export async function summarizeWithClaude(model) {
     ok: Boolean(result && !result.is_error && typeof result.result === 'string'),
     error: failure ? clip(failure.message, 300) : result?.is_error ? clip(String(result.result || ''), 300) : null,
   };
-  await appendLedger(entry);
+  await putLedgerEntry(entry);
   if (!entry.ok) {
     const e = new Error(entry.error || 'The summary run failed.');
     e.status = 502;
