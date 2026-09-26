@@ -800,11 +800,36 @@ pre.code {
 
 /* ---------- editor ---------- */
 
+/* The editor's file header sits above its own scroll area instead of floating
+   over it. A sticky header covers whatever scrolls beneath it, and at a small
+   window that was the hook acknowledgement checkbox, including where the
+   browser put it when focus scrolled it into view (#53). Content scrolled past
+   is now clipped at the header's lower edge rather than hidden behind it. */
+.editor-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.editor-view > .viewer-head {
+  position: static;
+  flex: none;
+}
+
+.editor-view > .viewer-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* No height: 100% here. It never resolved while the pane itself scrolled, and
+   against the scroll area above, which has a definite height, it would stretch
+   the text box to the window. The box keeps the height it has always had, at
+   least 320 px. */
 .editor {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  height: 100%;
 }
 
 .editor-area {
