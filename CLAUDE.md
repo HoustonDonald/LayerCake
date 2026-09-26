@@ -50,7 +50,10 @@ npm run build:exe  # dist\LayerCake.exe, the single executable (Windows only)
 **Run `npm run smoke` before calling any change to `server/` done.** It is the only regression net.
 It builds its own fixture, port and snapshot store, and cleans up after itself, so it is safe to run
 while you are working. A green run is necessary and not sufficient: it cannot see the UI, and the
-one bug it missed was found by opening a browser.
+one bug it missed was found by opening a browser. Its mapped-drive checks (#57) are skipped, visibly,
+unless `SMOKE_MAPPED_DRIVE=1`: they map a free drive letter to the admin share with `net use` for the
+run, which changes the machine's drive letters, so they are opt-in. Run them after touching drive
+detection or polling.
 
 **Smoke never runs the exe.** It starts `server/index.js`, which serves `public/` from disk; the exe
 serves an embedded copy through `desktop/main.js`. After touching `server/app.js`, `desktop/` or
@@ -84,7 +87,7 @@ server/sharegate.js one filesystem call per network share at a time, process-wid
 server/scan.js      lineage resolver -> ordered levels
 server/readfile.js  the ONLY producer of a file body
 server/flatten.js   the four flattened views
-server/watch.js     directory watches over a scanned lineage, polling on a UNC share; never opens a body
+server/watch.js     directory watches over a scanned lineage, polling on a share (UNC or mapped drive); never opens a body
 server/snapshot.js  capture, compare, restore, and the atomic write primitive
 server/writefile.js the ONLY edit path; depends on snapshot.js by design
 server/security.js  localhost CSRF guard and session token
@@ -160,7 +163,16 @@ becomes a second file reader that skips both the allowlist and the credential re
 notifier; reading stays on `/api/file`. The filter deciding which events reach the client is
 likewise read from the scan result and the manifest rather than kept as its own list, for the same
 reason the write policy is: a hand-maintained copy drifts and quietly stops matching what the scan
-actually treats as config.
+actually treats as config. The watched set is derived the same way: the parent of every entry and
+absence, every folder from a `.claude/` subtree's root down to each entry in it, and a subtree the
+scan marked `dirExists` (present, no config yet), because a new skill is a new folder and only the
+folder above it can see it arrive (#56).
+
+**A mute never reaches the server** (#13). Muting a file in the watch bar is a per-viewer preference
+kept in the browser's `localStorage` (keyed by path, lowercased on win32). The server stream keeps
+reporting every event for that file; the bar counts and lists it, marked muted, and only declines to
+light up or notify for it. Filtering on the server would make the stream lie, and would make one
+viewer's mute everyone's.
 
 **Session ids come from discovery, the way file paths come from a scan.** Every `/api/session*`
 route resolves its id through `sessions.js`, which only knows ids it found as
@@ -290,6 +302,21 @@ Before that, one scan of a project four folders deep on a dead share stranded al
 reach a share, never a bare `withTimeout`. Raising `UV_THREADPOOL_SIZE` instead only moves the cliff:
 every further level, and every scan running alongside, strands one more thread.
 
+A drive letter mapped to a share is polled the same way (#57), and the scan marks its root as a
+share for the gate (`markNetworkRoot`), so its calls are gated too once it is known; the first
+scan's own calls on it go ungated, because the drive is classified at the end. The scan detects it with Node's native
+`realpath` of the drive root, which resolves a mapped drive to its `\\server\share` and spawns no
+process; it records the result as `lineage.networkDrives`, and `watch.js` reads that rather than
+asking again. A root that fails with anything but ENOENT counts as a network drive, because polling
+is the side that fails safe (reasoned; a dead mapping was not produced to test it). Network verdicts are cached per drive letter for the life of the
+process; local ones are re-asked on every scan, since a stale "local" is the dangerous one.
+
+**A deleted folder must close its native watch at once.** On Windows, Node reports a watched
+folder's own deletion by its full `\\?\` path and keeps reporting it, about 130,000 events a second
+until the handle closes: 3.3 s of server CPU in 3 s, measured, from deleting one skill folder. `watch.js`
+treats an absolute filename as that report and closes the watcher. Smoke checks both the silence and
+the server's CPU share after a deletion, because a watcher left open and silenced would pass the first.
+
 **Merge rules are stated, not implied.** The settings precedence model is this tool's own, not
 something read back from Claude Code. Any view that computes an effective value must ship the rule
 that produced it in the same payload, and the UI must show it.
@@ -340,6 +367,10 @@ partially. A truncated file restored is silent data loss.
   Note the MCP key is `samePathKey(path)` **plus scope**, not path alone: `~/.claude.json` defines a
   server in both its global block and its per-project block, and that is a genuine shadow. Deduping
   on path alone there would hide a real one.
+- **A local folder that is a symbolic link to a share is watched natively.** Network detection is
+  per drive letter (#57), so `C:\proj\.claude\skills` linked to `\\server\skills` keeps the blocking
+  risk polling exists to avoid (reasoned, not measured). A native `realpath` per watched folder would
+  catch it, at one call per folder per stream.
 - **The app window's profile is still signed in to the Windows Microsoft account.** The isolation
   flags stop sync and extensions; no flag found stops Edge attaching the account identity.
 - **The exe stops with its window only when it launched the browser process.** If an Edge for the

@@ -55,9 +55,26 @@ export const SHARE_STUCK = 'ESHARESTUCK';
  * path.parse knows the UNC form: the root of \\server\share\x is \\server\share\.
  * Folded by samePathKey, because \\SERVER\Share and \\server\share are one share.
  */
+/**
+ * Drive roots the scan found mapped to a network share (#57). A mapped drive
+ * reaches the same server as its UNC path and strands threads the same way,
+ * so it is one share here too. Learnt from the scan, which already asks the
+ * filesystem, rather than asked again: a scan's own calls on a drive it has
+ * not classified yet go ungated, and every call after that is gated.
+ */
+const networkRoots = new Set();
+
+export function markNetworkRoot(root) {
+  networkRoots.add(samePathKey(path.parse(path.resolve(root)).root));
+}
+
 export function shareKeyOf(p) {
-  if (!isUncPath(p)) return null;
-  return samePathKey(path.parse(path.resolve(p)).root);
+  const root = samePathKey(path.parse(path.resolve(p)).root);
+  if (isUncPath(p)) return root;
+  // Found after the #13/#57 and #55 merges: without this a mapped drive had no
+  // key, so every mapped drive fell into one null group in the watcher and
+  // none of their calls were gated.
+  return networkRoots.has(root) ? root : null;
 }
 
 /** share key -> the set of its timed-out calls that have not settled yet. */

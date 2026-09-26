@@ -1126,7 +1126,10 @@ pre.code {
 .watch-banner {
   display: flex;
   align-items: center;
-  gap: 10px;
+  /* Wraps rather than clipping: every changed file carries a Mute button, and
+     a button pushed off the edge is a file that cannot be muted. */
+  flex-wrap: wrap;
+  gap: 6px 10px;
   margin: 0;
   padding: 7px 18px;
   border-bottom: 1px solid var(--border);
@@ -1146,7 +1149,7 @@ pre.code {
 }
 
 .watch-text {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1186,6 +1189,70 @@ pre.code {
 .watch-confirm {
   color: var(--warn);
   font-weight: 600;
+}
+
+.watch-quiet {
+  color: var(--text-faint);
+}
+
+.watch-files {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.watch-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 300px;
+  padding: 1px 2px 1px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text);
+}
+
+/* Still listed, visibly set apart: muted is a state the viewer chose, and it
+   must read as one rather than as a file that went missing. */
+.watch-file-muted {
+  border-style: dashed;
+  color: var(--text-dim);
+  background: transparent;
+}
+
+.watch-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watch-file-state {
+  font-family: var(--sans);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
+.watch-file-mute,
+.watch-more {
+  border: none;
+  background: transparent;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  color: var(--accent);
+}
+
+.watch-file-mute:hover,
+.watch-more:hover {
+  background: var(--bg-raised);
 }
 
 .btn-small {

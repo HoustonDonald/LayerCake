@@ -40,7 +40,7 @@ import {
 // timeout, it sends a network share one call at a time and none while an
 // earlier one is stranded. Without that, a deep project on a dead share strands
 // a threadpool thread per level and starves every other call (#55).
-import { timedFsCall } from './sharegate.js';
+import { markNetworkRoot, timedFsCall } from './sharegate.js';
 
 let entrySeq = 0;
 function nextId(prefix) {
@@ -55,6 +55,81 @@ async function statOf(target) {
   } catch (err) {
     return { st: null, error: err };
   }
+}
+
+/**
+ * Drive letters found mapped to a network share, by upper-case letter.
+ *
+ * Only that verdict is kept. A stale "network" costs polling a folder that
+ * could have been watched natively, a listing and a few stats every 5 s. A
+ * stale "local" would bind fs.watch to a share, the event-loop stall #57 is
+ * about, so a local drive is asked again on every scan: one sub-millisecond
+ * call. A drive that timed out is kept too, so a dead one costs one stranded
+ * threadpool call per process rather than one per scan.
+ */
+const networkDriveCache = new Map();
+
+/**
+ * Whether a drive letter is mapped to a network share (#57).
+ *
+ * Node has no GetDriveType, but its native realpath (the fs/promises one,
+ * which Node documents as having fs.realpath.native's semantics) resolves a
+ * mapped drive to the share behind it: `X:\` came back as `\\localhost\C$` for
+ * a real `net use` mapping, while a local disk comes back as itself, in about
+ * 0.2 ms. That answers the question with no process
+ * spawned. The alternatives were worse: `net use` output is localised, and
+ * HKCU\Network lists only persistent mappings (a `/persistent:no` mapping was
+ * not in it), which is exactly what a login script tends to create.
+ *
+ * A root that fails with anything but ENOENT is treated as a network drive:
+ * a disconnected mapping fails that way (UNKNOWN, or a timeout), and polling
+ * is the side that can name it unreachable instead of stalling on it. ENOENT
+ * is a letter that is not there, which leaves nothing on it to watch.
+ */
+async function networkDrive(root) {
+  const letter = root[0].toUpperCase();
+  if (networkDriveCache.has(letter)) return networkDriveCache.get(letter);
+  let found = null;
+  try {
+    // Through the gate like every call here. After the #55 and #57 merges this
+    // still named withTimeout, which scan.js no longer imports: the
+    // ReferenceError was caught below as "not ENOENT", and every drive,
+    // C: included, was then polled as a network drive.
+    const real = await timedFsCall(root, () => fs.realpath(root));
+    if (isUncPath(real)) found = { root, share: real, error: null };
+  } catch (err) {
+    if (err?.code !== 'ENOENT') found = { root, share: null, error: describeError(err) };
+  }
+  if (found) {
+    networkDriveCache.set(letter, found);
+    markNetworkRoot(root);
+  }
+  return found;
+}
+
+/**
+ * The network drives among the drive letters a lineage touches. Recorded on
+ * the lineage so the watcher can poll them the way it polls UNC paths; it
+ * reads this rather than asking the filesystem a second time.
+ */
+async function networkDrives(levels) {
+  if (process.platform !== 'win32') return [];
+  const roots = new Map();
+  for (const level of levels) {
+    const paths = [level.dir, ...level.entries.map((e) => e.absPath), ...level.absent.map((a) => a.absPath)];
+    for (const p of paths) {
+      const m = /^([a-z]):[\\/]/i.exec(p || '');
+      if (m) roots.set(m[1].toUpperCase(), `${m[1].toUpperCase()}:\\`);
+    }
+  }
+  const found = [];
+  // One at a time: a dead mapping strands the call it times out on, and the
+  // threadpool it strands it in is the one the rest of the server uses.
+  for (const root of roots.values()) {
+    const drive = await networkDrive(root);
+    if (drive) found.push(drive);
+  }
+  return found;
 }
 
 function makeEntry({ absPath, category, level, st, error, note }) {
@@ -146,6 +221,24 @@ async function walkTree(root, { maxDepth, exts, category, level, depth = 0, seen
       isSkillManifest: dirent.name.toUpperCase() === 'SKILL.MD',
     });
   }
+}
+
+/**
+ * A config subtree (agents/, skills/, ...) that is there but holds nothing the
+ * scan counts as config. Recorded as an absence, because the config is absent,
+ * with `dirExists` set because the folder is not: it is where the first agent
+ * or skill will land, so the watcher has to watch it, and only the scan knows
+ * it exists. Without this record a project level had no trace of such a
+ * folder at all (#56).
+ */
+function emptyTree(absPath, tree) {
+  return {
+    absPath,
+    name: `${tree.name}/`,
+    category: tree.category,
+    note: 'Directory exists but holds no config files',
+    dirExists: true,
+  };
 }
 
 function newLevel(fields) {
@@ -241,14 +334,7 @@ async function scanUser() {
         category: tree.category,
         level,
       });
-      if (level.entries.length === before) {
-        level.absent.push({
-          absPath: abs,
-          name: `${tree.name}/`,
-          category: tree.category,
-          note: 'Directory exists but holds no config files',
-        });
-      }
+      if (level.entries.length === before) level.absent.push(emptyTree(abs, tree));
     } else if (error && error.code !== 'ENOENT') {
       level.errors.push({ path: abs, ...describeError(error) });
     } else {
@@ -424,12 +510,14 @@ async function scanDirectory(dir, label) {
     const abs = path.join(claudeDir, tree.name);
     const probe = await statOf(abs);
     if (probe.st && probe.st.isDirectory()) {
+      const before = level.entries.length;
       await walkTree(abs, {
         maxDepth: tree.maxDepth,
         exts: tree.exts,
         category: tree.category,
         level,
       });
+      if (level.entries.length === before) level.absent.push(emptyTree(abs, tree));
     } else if (probe.error && probe.error.code !== 'ENOENT') {
       level.errors.push({ path: abs, ...describeError(probe.error) });
     } else {
@@ -496,6 +584,19 @@ export async function resolveLineage(projectDir) {
     level.precedence = index;
   });
 
+  // Said on the level the way a UNC level says "Network path": a mapped drive
+  // is one too, and it is why that level's changes arrive by polling.
+  const onNetwork = await networkDrives(levels);
+  for (const level of walkLevels) {
+    const drive = onNetwork.find((d) => /^[a-z]:/i.test(level.dir) && level.dir[0].toUpperCase() === d.root[0]);
+    if (!drive) continue;
+    const letter = drive.root.slice(0, 2);
+    const said = drive.share
+      ? `Network drive: ${letter} maps ${drive.share}. Scanned with a per-operation timeout.`
+      : `Treated as a network drive: ${letter} did not answer (${drive.error.message}).`;
+    level.note = level.note ? `${level.note} ${said}` : said;
+  }
+
   const fileCount = levels.reduce(
     (n, l) => n + l.entries.filter((e) => e.type === 'file').length,
     0
@@ -507,6 +608,7 @@ export async function resolveLineage(projectDir) {
     platform: process.platform,
     scannedAt: new Date().toISOString(),
     levels,
+    networkDrives: onNetwork,
     summary: {
       levelCount: levels.length,
       fileCount,

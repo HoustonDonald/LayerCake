@@ -91,7 +91,8 @@ export default function App() {
     notifySupported,
     enableNotifications,
     disableNotifications,
-  } = useWatch(lineage?.scanId);
+    mute: watchMute,
+  } = useWatch(lineage?.scanId, lineage?.platform);
 
   useEffect(() => {
     getManifest()
@@ -303,6 +304,7 @@ export default function App() {
           notifySupported={notifySupported}
           onEnableNotifications={enableNotifications}
           onDisableNotifications={disableNotifications}
+          mute={watchMute}
         />
       )}
 
