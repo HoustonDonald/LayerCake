@@ -80,7 +80,7 @@ server/safety.js    denylists, editable categories, size cap, timeout, errors
 server/scan.js      lineage resolver -> ordered levels
 server/readfile.js  the ONLY producer of a file body
 server/flatten.js   the four flattened views
-server/watch.js     directory watches over a scanned lineage; read-only, never opens a body
+server/watch.js     directory watches over a scanned lineage, polling on a UNC share; never opens a body
 server/snapshot.js  capture, compare, restore, and the atomic write primitive
 server/writefile.js the ONLY edit path; depends on snapshot.js by design
 server/security.js  localhost CSRF guard and session token
@@ -263,7 +263,11 @@ a third party can read the token.
 
 **Errors are values, never throws.** `readForDisplay` and the scan functions return an error object
 so one unreadable level degrades to a badge and the rest of the scan completes. A dead UNC share must
-not hang a scan: every filesystem call goes through `withTimeout`.
+not hang a scan: every filesystem call goes through `withTimeout`. That is why `watch.js` polls a UNC
+folder instead of binding `fs.watch` to it (#14): `fs.watch` opens its handle inside a synchronous
+call with no timeout, and on a share at an unroutable address that blocked the event loop for 21 s.
+A timed-out call is abandoned, not cancelled, and keeps a threadpool thread until the OS gives up, so
+the poller sends a share one call at a time and none while an earlier one is still out.
 
 **Merge rules are stated, not implied.** The settings precedence model is this tool's own, not
 something read back from Claude Code. Any view that computes an effective value must ship the rule

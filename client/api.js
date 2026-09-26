@@ -183,7 +183,9 @@ export function watchScan(scanId, { onReady, onChange, onError } = {}) {
     endedMessage: 'Watch stream ended. Re-scan to resume.',
     onError,
     onEvent: (event, payload) => {
-      if (event === 'ready') onReady?.(payload);
+      // 'coverage' is a newer 'ready': a share-side folder is polled, so whether
+      // its share answers is known only after the stream opens, and can change.
+      if (event === 'ready' || event === 'coverage') onReady?.(payload);
       else if (event === 'change') onChange?.(payload);
     },
   });

@@ -50,6 +50,7 @@ const BASE = `http://127.0.0.1:${PORT}`;
 
 let pass = 0;
 let fail = 0;
+let skipped = 0;
 function check(name, ok, detail = '') {
   if (ok) {
     pass += 1;
@@ -58,6 +59,12 @@ function check(name, ok, detail = '') {
     fail += 1;
     process.stdout.write(`  FAIL  ${name} ${detail}\n`);
   }
+}
+
+/** A check this machine cannot run. Printed and counted, so it never reads as a pass. */
+function skip(name, reason) {
+  skipped += 1;
+  process.stdout.write(`  SKIP  ${name} (${reason})\n`);
 }
 
 /**
@@ -657,6 +664,99 @@ try {
 
   await watch.close();
 
+  // --- watching on a network share (#14) -----------------------------------
+  //
+  // Share-side folders are polled rather than watched, because binding
+  // fs.watch to a dead share blocks the event loop. Nothing above reaches that
+  // code: every path in the fixture is local.
+
+  /** Opens a watch on a fresh scan of `dir`; returns the stream and its ready frame. */
+  async function watchScanOf(dir) {
+    const res = await fetch(`${BASE}/api/scan`, { method: 'POST', headers: H, body: JSON.stringify({ dir }) });
+    const scanned = await res.json();
+    const stream = openWatch(scanned.scanId, H);
+    return { scanned, stream, ready: await stream.waitFor('ready') };
+  }
+  const sameDir = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+
+  // The same fixture through the admin share, \\localhost\C$\..., is a real UNC
+  // path to a local folder, so a change made with plain fs locally is a change
+  // on the share. The admin share can be disabled or refused, so a missing one
+  // is reported as SKIP, never passed quietly.
+  const uncProj = /^[a-z]:\\/i.test(proj) ? `\\\\localhost\\${proj[0]}$${proj.slice(2)}` : null;
+  const adminShare = uncProj
+    ? await Promise.race([
+        fs.stat(uncProj).then(
+          () => true,
+          () => false
+        ),
+        new Promise((r) => setTimeout(() => r(false), 3000)),
+      ])
+    : false;
+  if (!adminShare) {
+    skip('polling a live share through the admin share (4 checks)', `no admin share for ${proj}`);
+  } else {
+    const share = await watchScanOf(uncProj);
+    check(
+      'share-side folders are polled, not skipped',
+      (share.ready?.data?.polled || []).some((p) => sameDir(p, uncProj)) &&
+        !(share.ready?.data?.skipped || []).some((s) => /network/i.test(s.reason)),
+      JSON.stringify(share.ready?.data?.skipped || [])
+    );
+    // The first round is the baseline; a change before it ends is part of it.
+    const firstRound = await share.stream.waitFor('coverage', 15000);
+    check(
+      'the first poll round finds the share reachable',
+      Boolean(firstRound) &&
+        !firstRound.data.errors.some(
+          (e) => /share not reachable/i.test(e.message) || String(e.path).toLowerCase().startsWith(uncProj.toLowerCase())
+        ),
+      JSON.stringify(firstRound?.data?.errors || null)
+    );
+    const marker = `share-side edit ${crypto.randomBytes(4).toString('hex')}`;
+    await fs.writeFile(memo.absPath, `# ${marker}\n`);
+    const deadline = Date.now() + 15000;
+    let seen = null;
+    while (!seen && Date.now() < deadline) {
+      seen = share.stream.events
+        .filter((e) => e.name === 'change')
+        .flatMap((e) => (e.data.changes || []).map((c) => ({ c, raw: e.raw })))
+        .find(({ c }) => sameDir(c.absPath, path.join(uncProj, 'CLAUDE.md')));
+      if (!seen) await new Promise((r) => setTimeout(r, 100));
+    }
+    check('a change under a network share path produces a change event naming it', Boolean(seen));
+    check(
+      'that event is a path and a verb, never content',
+      Boolean(seen) &&
+        seen.c.kind === 'change' &&
+        JSON.stringify(Object.keys(seen.c).sort()) === JSON.stringify(['absPath', 'dir', 'kind', 'name']) &&
+        !seen.raw.includes(marker),
+      JSON.stringify(seen?.c || null)
+    );
+    await share.stream.close();
+  }
+
+  // A share that does not answer. \\localhost with a share name that does not
+  // exist fails on the loopback in milliseconds, so this needs no network and
+  // no admin share. The scan cannot read those levels, and the stream must say
+  // so by name. (Whether they are left out of watchedCount cannot be told apart
+  // here: they are already left out at ready, from the scan's own error.)
+  const deadShare = `\\\\localhost\\layercake-smoke-no-share-${crypto.randomBytes(3).toString('hex')}\\proj`;
+  if (process.platform === 'win32') {
+    const dead = await watchScanOf(deadShare);
+    const polledDead = dead.ready?.data?.polled || [];
+    const deadRound = await dead.stream.waitFor('coverage', 15000);
+    check(
+      'a share that does not answer is named as not reachable, folder by folder',
+      polledDead.length > 0 &&
+        polledDead.every((p) => (deadRound?.data?.errors || []).some((e) => e.path === p && /share not reachable/i.test(e.message))),
+      JSON.stringify(deadRound?.data?.errors || null)
+    );
+    await dead.stream.close();
+  } else {
+    skip('a share that does not answer is named as not reachable', 'UNC paths are a Windows form');
+  }
+
   // --- session history -----------------------------------------------------
   await runSessionChecks({ base: BASE, token, check, proj, appData });
 
@@ -668,7 +768,7 @@ try {
 
   check('smoke\'s own server stayed up for the whole run', serverExit === null, `exit: ${serverExit}`);
 
-  process.stdout.write(`\n  ${pass} passed, ${fail} failed\n\n`);
+  process.stdout.write(`\n  ${pass} passed, ${fail} failed${skipped ? `, ${skipped} skipped` : ''}\n\n`);
   exitCode = fail ? 1 : 0;
 } finally {
   server.kill();

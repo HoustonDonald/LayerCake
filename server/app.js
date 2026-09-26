@@ -64,8 +64,9 @@ let scanSeq = 0;
 
 /**
  * Open /api/watch streams, so an evicted scan can take its watchers with it.
- * Bounded because each stream holds a directory handle per watched directory,
- * and a tab that never closes should not be able to accumulate them.
+ * Bounded because each stream holds a directory handle per watched directory
+ * and polls every share-side one, and a tab that never closes should not be
+ * able to accumulate them.
  */
 const watchStreams = new Set();
 const MAX_WATCH_STREAMS = 4;
@@ -280,20 +281,24 @@ export function createApp({ port, staticFiles }) {
       return res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
     };
 
-    const watcher = watchLineage(scan.lineage, (changes) => {
-      send('change', { changes, at: new Date().toISOString() });
-    });
+    const watcher = watchLineage(
+      scan.lineage,
+      (changes) => {
+        send('change', { changes, at: new Date().toISOString() });
+      },
+      // Coverage moves after ready: the first poll round settles whether a share
+      // answers, a share can drop or come back at any time after, and a native
+      // watch can fail. Same shape as ready, so it reads as a newer one.
+      (coverage) => {
+        send('coverage', { scanId, ...coverage, debounceMs: DEBOUNCE_MS });
+      }
+    );
 
     // Says what is covered AND what is not. A UI that claims to be watching while
-    // silently skipping a network ancestor is worse than one that does not watch
-    // at all, because it converts "no events" into false reassurance.
-    send('ready', {
-      scanId,
-      watchedCount: watcher.watchedCount,
-      skipped: watcher.skipped,
-      errors: watcher.errors,
-      debounceMs: DEBOUNCE_MS,
-    });
+    // silently skipping an ancestor, or a share that stopped answering, is worse
+    // than one that does not watch at all, because it converts "no events" into
+    // false reassurance.
+    send('ready', { scanId, ...watcher.coverage(), debounceMs: DEBOUNCE_MS });
 
     // A comment line costs two bytes and proves the socket is still alive, which
     // is how the client distinguishes "nothing has changed" from "the server went
