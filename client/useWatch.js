@@ -34,7 +34,38 @@ function pathKey(p) {
   return String(p || '').toLowerCase();
 }
 
-export default function useWatch(scanId) {
+/**
+ * Files the viewer has muted in the bar (#13): lowercased-on-win32 path ->
+ * the path as the server spelled it, kept for display.
+ *
+ * A mute is this viewer's preference about what may light the bar, so it lives
+ * in this browser and nowhere else. The server never hears of it and keeps
+ * reporting every event: the stream stays a truthful account of the disk, and
+ * the mute decides only what the bar does about one file.
+ */
+const MUTE_KEY = 'layercake.watch.muted';
+
+/**
+ * Unlike pathKey above, case is folded only where the filesystem folds it.
+ * A wrong fold there costs a two-second blip; here it would mute a file the
+ * viewer never chose, for good.
+ */
+function muteKeyFor(platform) {
+  return (p) => (platform === 'win32' ? String(p || '').toLowerCase() : String(p || ''));
+}
+
+/** Storage can be blocked, cleared or edited by hand; anything odd reads as no mutes. */
+function loadMuted() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(MUTE_KEY) || '{}');
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return new Map();
+    return new Map(Object.entries(stored).filter(([, shown]) => typeof shown === 'string'));
+  } catch {
+    return new Map();
+  }
+}
+
+export default function useWatch(scanId, platform) {
   const [changes, setChanges] = useState([]);
   const [ready, setReady] = useState(null);
   const [error, setError] = useState(null);
@@ -45,12 +76,43 @@ export default function useWatch(scanId) {
       return false;
     }
   });
+  const [muted, setMuted] = useState(loadMuted);
+
+  const keyOf = useMemo(() => muteKeyFor(platform), [platform]);
+  const isMuted = useCallback((p) => muted.has(keyOf(p)), [muted, keyOf]);
 
   // A ref, not state: suppression is consulted inside the stream callback, and
   // a stale closure over state would let a just-saved file through.
   const suppressed = useRef(new Map());
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
+  // Same reason: the stream callback is bound once per scan, and a mute set
+  // after that must still stop the next toast.
+  const isMutedRef = useRef(isMuted);
+  isMutedRef.current = isMuted;
+
+  const toggleMute = useCallback(
+    (absPath) => {
+      setMuted((prev) => {
+        const next = new Map(prev);
+        const key = keyOf(absPath);
+        if (next.has(key)) next.delete(key);
+        else next.set(key, absPath);
+        return next;
+      });
+    },
+    [keyOf]
+  );
+
+  // Written after the change rather than inside the updater, which React may
+  // run twice.
+  useEffect(() => {
+    try {
+      localStorage.setItem(MUTE_KEY, JSON.stringify(Object.fromEntries(muted)));
+    } catch {
+      /* blocked storage: the mute holds until this tab closes */
+    }
+  }, [muted]);
 
   const suppress = useCallback((paths) => {
     const until = Date.now() + SUPPRESS_MS;
@@ -81,6 +143,8 @@ export default function useWatch(scanId) {
         });
         if (incoming.length === 0) return;
 
+        // Muted files are merged in like any other: a mute keeps a file from
+        // lighting the bar, never from being counted or shown.
         setChanges((prev) => {
           // Keyed merge, so a file touched five times is one row, not five.
           const merged = new Map(prev.map((c) => [pathKey(c.absPath), c]));
@@ -90,9 +154,11 @@ export default function useWatch(scanId) {
 
         // Only toast a window the user is not looking at. With the tab focused
         // the banner is already in front of them, and a duplicate toast is just
-        // noise they have to dismiss.
-        if (notifyRef.current && document.visibilityState === 'hidden') {
-          maybeNotify(incoming);
+        // noise they have to dismiss. A muted file does not toast either: a
+        // toast is the bar lighting up somewhere else.
+        const loud = incoming.filter((c) => !isMutedRef.current(c.absPath));
+        if (loud.length && notifyRef.current && document.visibilityState === 'hidden') {
+          maybeNotify(loud);
         }
       },
     });
@@ -136,6 +202,11 @@ export default function useWatch(scanId) {
 
   const notifySupported = useMemo(() => typeof window !== 'undefined' && 'Notification' in window, []);
 
+  const mute = useMemo(
+    () => ({ isMuted, keyOf, paths: [...muted.values()], toggle: toggleMute }),
+    [isMuted, keyOf, muted, toggleMute]
+  );
+
   return {
     changes,
     ready,
@@ -146,6 +217,7 @@ export default function useWatch(scanId) {
     notifySupported,
     enableNotifications,
     disableNotifications,
+    mute,
   };
 }
 

@@ -23,7 +23,7 @@
  * `projects/`, `sessions/` and the rest of the runtime state the scan is
  * careful to skip.
  *
- * UNC PATHS ARE POLLED, NOT WATCHED. `fs.watch` opens its directory handle
+ * NETWORK PATHS ARE POLLED, NOT WATCHED. `fs.watch` opens its directory handle
  * eagerly, inside the synchronous call (that is why it can throw ENOENT on the
  * spot), and takes no timeout, so binding one against a disconnected share can
  * block the event loop with no way to race it: 21 s, measured, for a share on
@@ -32,7 +32,10 @@
  * calls run on libuv's threadpool and each goes through `withTimeout` like every
  * other filesystem call in this server, so a dead share costs a timeout and a
  * reported state, never a stalled server. See pollShare for why one share never
- * has two calls outstanding.
+ * has two calls outstanding. "On a share" means a UNC path, or a path on a
+ * drive letter the scan found mapped to one (`lineage.networkDrives`, #57):
+ * `Z:\proj` reaches the same server as `\\server\share\proj` and stalls the
+ * same way.
  *
  * ONE FILTER FOR BOTH. Native events and polled differences go through the same
  * `isReportable`, read from the scan result and the manifest, so a share-side
@@ -63,6 +66,43 @@ function inConfigTree(absPath) {
   const parts = String(absPath).split(/[\\/]/);
   const i = parts.lastIndexOf('.claude');
   return i !== -1 && i + 1 < parts.length && TREE_NAMES.has(parts[i + 1].toLowerCase());
+}
+
+/**
+ * Every folder between a config subtree's root and a path inside it: for
+ * `.claude/skills/x/SKILL.md`, `.claude/skills/x` and `.claude/skills`. Empty
+ * for a path outside the subtrees, and for a subtree root itself.
+ *
+ * These are where new config lands. A skill is a new FOLDER in skills/, so the
+ * watch that sees it is the one on skills/, and skills/ holds no file of its
+ * own, so nothing else puts it in the watched set. Without this, a new skill
+ * raised no event at all (#56): the watch on .claude does not reliably report
+ * a change one level down, and on a share, where .claude is polled and a
+ * folder is compared by presence only, it cannot. Same segment rule as
+ * inConfigTree, so the two agree on what a subtree is.
+ */
+function treeFoldersAbove(absPath) {
+  const parts = String(absPath).split(/[\\/]/);
+  const i = parts.lastIndexOf('.claude');
+  if (i === -1 || i + 2 >= parts.length || !TREE_NAMES.has(parts[i + 1].toLowerCase())) return [];
+  const folders = [];
+  let dir = path.dirname(absPath);
+  // parts[i + 1] is the subtree root; the last part is absPath's own name.
+  for (let n = parts.length - i - 3; n >= 0; n -= 1) {
+    folders.push(dir);
+    dir = path.dirname(dir);
+  }
+  return folders;
+}
+
+/**
+ * Whether a path is on a network share: a UNC path, or a path on a drive
+ * letter the scan found mapped to a share. Read from the scan result, which
+ * already asked the filesystem, so the watcher forms no opinion of its own.
+ */
+function onNetworkTest(lineage) {
+  const roots = new Set((lineage.networkDrives || []).map((d) => samePathKey(d.root)));
+  return (p) => isUncPath(p) || (roots.size > 0 && roots.has(samePathKey(path.parse(path.resolve(p)).root)));
 }
 
 /**
@@ -149,6 +189,7 @@ export function watchTargets(lineage) {
   const dirs = new Map();
   const polled = new Map();
   const skipped = new Map();
+  const onNetwork = onNetworkTest(lineage);
 
   const consider = (target, scanError = null) => {
     const key = samePathKey(target);
@@ -157,18 +198,22 @@ export function watchTargets(lineage) {
       skipped.set(key, { absPath: target, reason: `Over the ${MAX_WATCHED_DIRS} directory cap` });
       return;
     }
-    if (isUncPath(target)) polled.set(key, { absPath: target, scanError });
+    if (onNetwork(target)) polled.set(key, { absPath: target, scanError });
     else dirs.set(key, target);
   };
 
   for (const level of lineage.levels) {
+    // Directory entries (runtime state such as skills/.trash) are covered
+    // through their parent like everything else, and are not watched
+    // themselves: nothing inside them is config.
     for (const entry of level.entries) {
-      // A directory entry is watched itself as well as through its parent: the
-      // tree roots (agents/, skills/, hooks/) are where new files actually land.
-      if (entry.type === 'dir') consider(entry.absPath);
       consider(path.dirname(entry.absPath));
+      for (const folder of treeFoldersAbove(entry.absPath)) consider(folder);
     }
     for (const missing of level.absent) {
+      // A subtree that exists but holds no config yet is where its first
+      // file will land, so it is watched itself, not only through .claude.
+      if (missing.dirExists) consider(missing.absPath);
       consider(path.dirname(missing.absPath));
     }
 
@@ -179,7 +224,7 @@ export function watchTargets(lineage) {
     // an event when it answers again. ENOENT is left out: that is a folder
     // missing from a share that did answer, which is no different from a
     // missing local ancestor, and those are not watched either.
-    if (level.dir && isUncPath(level.dir)) {
+    if (level.dir && onNetwork(level.dir)) {
       const levelKey = samePathKey(level.dir);
       const unread = level.errors.find(
         (e) => e.code !== 'ENOENT' && e.path && samePathKey(e.path) === levelKey
@@ -350,19 +395,51 @@ export function watchLineage(lineage, onChange, onCoverage) {
     if (timer === null) timer = setTimeout(flush, DEBOUNCE_MS);
   }
 
+  /**
+   * A natively watched folder was deleted.
+   *
+   * Node on Windows says so by reporting the folder ITSELF as renamed, by its
+   * full \\?\ path, and then again, about 130,000 times a second for as long
+   * as the handle stays open (measured, Node 24.3, no 'error' event at all).
+   * Unhandled, that is a spinning core and a bar re-lit on every debounce, from
+   * deleting one skill folder: 3.3 s of server CPU and 14 change frames in the
+   * 3 s after. Closing the handle stops it (31 ms and none, same measurement).
+   *
+   * Reported as a change to the folder itself, because its parent may not be
+   * watched or may not count the folder's name as config (a deleted .claude/),
+   * and it stops counting as watched: it no longer exists.
+   */
+  function watchedFolderGone(dir, watcher) {
+    const at = watched.indexOf(dir);
+    // Events already queued behind the first one arrive after this ran.
+    if (at === -1) return;
+    watched.splice(at, 1);
+    try {
+      watcher.close();
+    } catch {
+      /* already gone */
+    }
+    record(dir, null, 'rename');
+    skipped.push({ absPath: dir, reason: 'Deleted after the watch started' });
+    sendCoverage();
+  }
+
   for (const dir of dirs) {
     try {
       // persistent:false so watchers never hold the process open by themselves.
       // The HTTP server is what keeps this process alive; a stranded watcher
       // should not be able to outlive it.
-      const watcher = fs.watch(dir, { persistent: false, recursive: false }, (eventType, filename) =>
-        record(dir, filename, eventType)
-      );
-      // An error after start (the directory is deleted out from under us)
-      // arrives here. Recording and closing that one watcher beats an unhandled
-      // 'error' event taking down the server. It stops counting as watched and
-      // the client is told, or the bar would go on claiming a folder nobody is
-      // looking at.
+      const watcher = fs.watch(dir, { persistent: false, recursive: false }, (eventType, filename) => {
+        // A child is always reported by its name alone; only the folder's own
+        // report of its deletion carries an absolute path.
+        if (filename && path.isAbsolute(filename)) watchedFolderGone(dir, watcher);
+        else record(dir, filename, eventType);
+      });
+      // An error after start arrives here. (Deleting the folder is not one on
+      // Windows, where it arrives as the event above.) Recording and closing
+      // that one watcher beats an unhandled 'error' event taking down the
+      // server. It stops counting as watched and the client is told, or the
+      // bar would go on claiming a folder nobody is looking at.
       watcher.on('error', (err) => {
         errors.push({ path: dir, ...describeError(err) });
         const at = watched.indexOf(dir);
@@ -403,6 +480,7 @@ export function watchLineage(lineage, onChange, onCoverage) {
   const shares = new Map();
   for (const { absPath, scanError } of polled) {
     // path.parse knows the UNC form: the root of \\server\share\x is \\server\share\.
+    // A mapped drive's root is the letter, Z:\, which is the same share.
     const root = path.parse(path.resolve(absPath)).root;
     const key = samePathKey(root);
     if (!shares.has(key)) shares.set(key, { key, root, targets: [] });

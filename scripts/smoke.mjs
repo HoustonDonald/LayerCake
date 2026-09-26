@@ -15,7 +15,7 @@
  * Deliberately not a framework. It is a list of assertions and a counter.
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import http from 'node:http';
@@ -587,6 +587,14 @@ try {
     'watch states what it is NOT covering',
     Array.isArray(ready?.data?.skipped) && Array.isArray(ready?.data?.errors)
   );
+  // The negative half of #57: a folder on a local disk is not taken for a
+  // network one. Polling it would still count as watched, so the count above
+  // cannot tell; the list of polled folders can.
+  check(
+    'local folders are watched natively, not polled',
+    Array.isArray(ready?.data?.polled) && ready.data.polled.length === 0,
+    JSON.stringify(ready?.data?.polled)
+  );
 
   // The decisive assertion. Plain fs, not the API, so nothing inside LayerCake
   // is told the change happened: the only way this can pass is if the watcher
@@ -683,7 +691,8 @@ try {
   // path to a local folder, so a change made with plain fs locally is a change
   // on the share. The admin share can be disabled or refused, so a missing one
   // is reported as SKIP, never passed quietly.
-  const uncProj = /^[a-z]:\\/i.test(proj) ? `\\\\localhost\\${proj[0]}$${proj.slice(2)}` : null;
+  const viaAdminShare = (p) => (/^[a-z]:\\/i.test(p) ? `\\\\localhost\\${p[0]}$${p.slice(2)}` : null);
+  const uncProj = viaAdminShare(proj);
   const adminShare = uncProj
     ? await Promise.race([
         fs.stat(uncProj).then(
@@ -755,6 +764,195 @@ try {
     await dead.stream.close();
   } else {
     skip('a share that does not answer is named as not reachable', 'UNC paths are a Windows form');
+  }
+
+  const changesIn = (stream) =>
+    stream.events.filter((e) => e.name === 'change').flatMap((e) => e.data.changes || []);
+  async function waitForChange(stream, match, timeoutMs = 4000) {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const hit = changesIn(stream).find(match);
+      if (hit || Date.now() > deadline) return hit || null;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+  const seenPaths = (stream) => JSON.stringify(changesIn(stream).map((c) => c.absPath));
+
+  // --- a new folder inside an open config subtree (#56) --------------------
+  //
+  // Its own fixture, because the main one cannot show this: its skills/ holds
+  // a .trash folder, which is a scan entry, so skills/ is watched as that
+  // entry's parent by accident. Here skills/ holds only skill folders and
+  // agents/ exists but is empty, which is what a young project looks like.
+  const treeProj = path.join(smokeDir, 'trees', 'proj');
+  const treeSkills = path.join(treeProj, '.claude', 'skills');
+  const treeAgents = path.join(treeProj, '.claude', 'agents');
+  await fs.mkdir(path.join(treeSkills, 'first-skill'), { recursive: true });
+  await fs.writeFile(path.join(treeSkills, 'first-skill', 'SKILL.md'), '---\nname: first-skill\n---\n');
+  await fs.mkdir(treeAgents, { recursive: true });
+  await fs.writeFile(path.join(treeProj, '.claude', 'settings.json'), '{}\n');
+
+  const trees = await watchScanOf(treeProj);
+  // Named, not just "something under .claude moved". On a local disk the
+  // watch on .claude reports skills/ itself as changed when a folder appears
+  // inside it, which lights the bar without saying what was added; on a share
+  // nothing reports it at all (checked further down).
+  await fs.mkdir(path.join(treeSkills, 'added-skill'));
+  await fs.writeFile(path.join(treeSkills, 'added-skill', 'SKILL.md'), '---\nname: added-skill\n---\n');
+  check(
+    'a new skill folder raises an event naming it',
+    Boolean(await waitForChange(trees.stream, (c) => sameDir(c.absPath, path.join(treeSkills, 'added-skill')))),
+    seenPaths(trees.stream)
+  );
+  await fs.writeFile(path.join(treeAgents, 'first-agent.md'), '---\nname: first-agent\n---\n');
+  check(
+    'a first file in an empty config folder raises an event naming it',
+    Boolean(await waitForChange(trees.stream, (c) => sameDir(c.absPath, path.join(treeAgents, 'first-agent.md')))),
+    seenPaths(trees.stream)
+  );
+
+  // Removing a folder that is itself watched. On Windows libuv then reports
+  // the folder's own \\?\ path as renamed, around 130,000 times a second, for
+  // as long as the watch stays open: a spinning core, and a bar re-lit on
+  // every debounce. So this asserts silence afterwards, not just an event.
+  await fs.rm(path.join(treeSkills, 'first-skill'), { recursive: true });
+  check(
+    'removing a skill folder raises an event naming it',
+    Boolean(await waitForChange(trees.stream, (c) => sameDir(c.absPath, path.join(treeSkills, 'first-skill')))),
+    seenPaths(trees.stream)
+  );
+  await new Promise((r) => setTimeout(r, 1000));
+  const quietFrom = trees.stream.events.length;
+  const quietAt = Date.now();
+  // The events alone cannot show a handle left open: the folder stops being
+  // reported, and libuv goes on spinning. Its CPU can. Measured over 3 s after
+  // such a deletion: 3,328 ms of server CPU with the storm, 31 ms without.
+  const serverCpuMs = () => {
+    const ps = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    const r = spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${server.pid}).TotalProcessorTime.TotalMilliseconds`], {
+      encoding: 'utf8',
+      timeout: 20000,
+      windowsHide: true,
+    });
+    const ms = Number(String(r.stdout).trim());
+    return r.status === 0 && Number.isFinite(ms) ? { ms, at: Date.now() } : null;
+  };
+  const cpuBefore = process.platform === 'win32' ? serverCpuMs() : null;
+  await new Promise((r) => setTimeout(r, 1500));
+  const cpuAfter = cpuBefore ? serverCpuMs() : null;
+  if (process.platform !== 'win32') {
+    skip('a removed folder does not leave the server spinning', 'the storm is a Windows libuv behaviour');
+  } else if (!cpuBefore || !cpuAfter) {
+    skip('a removed folder does not leave the server spinning', 'could not read the server process CPU time');
+  } else {
+    const share = (cpuAfter.ms - cpuBefore.ms) / (cpuAfter.at - cpuBefore.at);
+    check(
+      'a removed folder does not leave the server spinning',
+      share < 0.3,
+      `server used ${Math.round(share * 100)}% of a core after the removal`
+    );
+  }
+  // Only this fixture's paths: the scan also covers the real home, and a
+  // running Claude Code rewrites ~/.claude.json every few seconds.
+  const afterRemoval = trees.stream.events
+    .slice(quietFrom)
+    .filter((e) => e.name === 'change' && (e.data.changes || []).some((c) => c.absPath.startsWith(treeProj)));
+  check(
+    'a removed folder does not go on raising events',
+    afterRemoval.length === 0,
+    `${afterRemoval.length} change frames in ${((Date.now() - quietAt) / 1000).toFixed(1)} s, starting 1 s after the removal`
+  );
+  check(
+    'no event names a path the watcher did not build from a real child name',
+    !changesIn(trees.stream).some((c) => c.absPath.includes('\\?\\') || (c.name && path.isAbsolute(c.name))),
+    seenPaths(trees.stream)
+  );
+  await trees.stream.close();
+
+  // The same on a share, where it was worse: the poll of .claude compares a
+  // folder by presence only, so a skill folder appearing inside skills/ raised
+  // nothing at all.
+  const uncTrees = viaAdminShare(treeProj);
+  if (!adminShare || !uncTrees) {
+    skip('a new skill folder on a share raises an event naming it', `no admin share for ${treeProj}`);
+  } else {
+    const shareTrees = await watchScanOf(uncTrees);
+    // The first round is the baseline; a folder made before it ends is part of it.
+    await shareTrees.stream.waitFor('coverage', 15000);
+    await fs.mkdir(path.join(treeSkills, 'share-skill'));
+    await fs.writeFile(path.join(treeSkills, 'share-skill', 'SKILL.md'), '---\nname: share-skill\n---\n');
+    check(
+      'a new skill folder on a share raises an event naming it',
+      Boolean(
+        await waitForChange(
+          shareTrees.stream,
+          (c) => sameDir(c.absPath, path.join(uncTrees, '.claude', 'skills', 'share-skill')),
+          15000
+        )
+      ),
+      seenPaths(shareTrees.stream)
+    );
+    await shareTrees.stream.close();
+  }
+
+  // --- a drive letter mapped to a share (#57) ------------------------------
+  //
+  // Needs a real mapped drive, and mapping one changes this machine's drive
+  // letters for the length of the run, so it runs only when asked:
+  // SMOKE_MAPPED_DRIVE=1. subst would not do: it maps a letter to a LOCAL
+  // folder, which is exactly what must stay natively watched.
+  const MAPPED_CHECKS = 'a mapped network drive is polled (3 checks)';
+  if (process.platform !== 'win32') {
+    skip(MAPPED_CHECKS, 'drive letters are a Windows form');
+  } else if (process.env.SMOKE_MAPPED_DRIVE !== '1') {
+    skip(MAPPED_CHECKS, 'set SMOKE_MAPPED_DRIVE=1 to map a free letter to the admin share for the run');
+  } else if (!adminShare) {
+    skip(MAPPED_CHECKS, `no admin share for ${proj}`);
+  } else {
+    const netExe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'net.exe');
+    const net = (args) => spawnSync(netExe, args, { encoding: 'utf8', timeout: 20000, windowsHide: true });
+    let letter = null;
+    for (const l of 'ZYXWVUTSRQPONM') {
+      const taken = await fs.stat(`${l}:\\`).then(
+        () => true,
+        (err) => err.code !== 'ENOENT'
+      );
+      if (taken) continue;
+      if (net(['use', `${l}:`, `\\\\localhost\\${proj[0]}$`, '/persistent:no']).status === 0) {
+        letter = l;
+        break;
+      }
+    }
+    if (!letter) {
+      skip(MAPPED_CHECKS, 'net use could not map a free drive letter to the admin share');
+    } else {
+      try {
+        const mappedProj = `${letter}:${proj.slice(2)}`;
+        const mapped = await watchScanOf(mappedProj);
+        check(
+          'a folder on a mapped network drive is polled, not watched natively',
+          (mapped.ready?.data?.polled || []).some((p) => sameDir(p, mappedProj)),
+          JSON.stringify(mapped.ready?.data?.polled || null)
+        );
+        check(
+          'the scan says the level is on a network drive',
+          /network drive/i.test(mapped.scanned.levels.find((l) => sameDir(l.dir, mappedProj))?.note || ''),
+          JSON.stringify(mapped.scanned.levels.find((l) => sameDir(l.dir, mappedProj))?.note ?? null)
+        );
+        await mapped.stream.waitFor('coverage', 15000);
+        await fs.writeFile(memo.absPath, `# mapped-drive edit ${crypto.randomBytes(4).toString('hex')}\n`);
+        check(
+          'a change on a mapped drive produces a change event naming it',
+          Boolean(
+            await waitForChange(mapped.stream, (c) => sameDir(c.absPath, path.join(mappedProj, 'CLAUDE.md')), 15000)
+          ),
+          seenPaths(mapped.stream)
+        );
+        await mapped.stream.close();
+      } finally {
+        net(['use', `${letter}:`, '/delete', '/y']);
+      }
+    }
   }
 
   // --- session history -----------------------------------------------------

@@ -255,7 +255,9 @@ something changes underneath you. A thin bar under the header carries the state 
 |---|---|
 | `Watching 65 folders` | Live. The count is directories, not files. |
 | `Watching 65 folders (6 not watched)` | Live with gaps. Hover for the list and the reason, which includes a network share that is not answering. |
-| `4 files changed on disk` | Something changed. Offers **Rescan** and **Dismiss**. |
+| `4 files changed on disk` | Something changed. Names each file, each with **Mute**, and offers **Rescan** and **Dismiss**. |
+| `4 files changed on disk (1 muted)` | The same, and one of the four is a file you muted. It is counted and listed, marked muted. |
+| `Watching 65 folders, 1 muted change` | Only muted files changed. Listed and marked muted, but the bar stays unlit. |
 | `Not watching for changes` | The stream is down, with the reason. |
 
 The idle state is deliberate. A watcher that only appears when something happens cannot tell you it
@@ -268,9 +270,12 @@ open editor and discard whatever was typed into it. The bar reports and you deci
 has unsaved work, Rescan asks again before discarding it.
 
 **What raises an event.** A path the scan already knows about, present or absent, plus any new file
-inside one of the `.claude/` subtrees (`agents/`, `skills/`, `commands/`, `hooks/`, `rules/`,
-`memory/`), where the set of valid names is open-ended. A `CLAUDE.md` that does not exist yet is
-still a path the scan probed, so its creation is reported.
+or folder inside one of the `.claude/` subtrees (`agents/`, `skills/`, `commands/`, `hooks/`,
+`rules/`, `memory/`), where the set of valid names is open-ended. A `CLAUDE.md` that does not exist
+yet is still a path the scan probed, so its creation is reported. Inside a subtree every folder from
+its root down to each config file is watched, and so is a subtree that exists but holds nothing yet,
+because that is where new config lands: a new skill is a new folder in `skills/`, and the event names
+it. Deleting a folder is reported the same way.
 
 **What does not.** Runtime state living beside the config, which is most of `~/.claude`:
 `history.jsonl`, `daemon.log`, `backups/`, `sessions/`, `projects/`. Claude Code rewrites these
@@ -282,6 +287,16 @@ with no other change.
 
 LayerCake's own saves and restores are suppressed for two seconds, so the bar stays a report of what
 happened *outside* this window.
+
+**Muting a file.** Every changed file in the bar has a **Mute** button. A muted file still counts,
+is still listed (marked muted), and still goes into a Rescan; what it loses is the right to light the
+bar, or to raise a desktop notification. So a file that changes every few seconds, `~/.claude.json`
+while Claude Code runs, stops burying the change you care about without disappearing. Muted files
+that have not changed are behind a `1 muted` button in the bar, each with **Unmute**, so a mute set
+long ago cannot quietly hide a file. A mute is a preference of this browser: it is kept in
+`localStorage` (`layercake.watch.muted`, keyed by the path, lowercased on Windows), applies to that
+path in every project you scan, and survives a reload. The server never sees it: the stream still
+reports every event, so the mute changes what the bar does, never what the watcher reports.
 
 **Desktop notifications** are opt-in behind the **Notify me** button, and fire only when the window
 is in the background. `127.0.0.1` counts as a secure context, so this needs no HTTPS. The toast is
@@ -298,6 +313,14 @@ Implementation notes that matter if you change this:
   inside a synchronous call, and takes no timeout: binding one to a share on an unroutable address
   blocked the event loop for 21 s here. A UNC folder (`\\server\share\...`) is instead listed, and
   each config file in it stat'ed, every 5 s, through `withTimeout` like every other filesystem call.
+  So is a folder on a drive letter mapped to a share (`Z:\...`). The scan finds those with Node's
+  native `realpath` of the drive root, which resolves a mapped drive to the share behind it
+  (`X:\` to `\\localhost\C$`, checked with a real `net use` mapping) and a local disk to itself; no
+  helper process is started. A drive whose root does not answer at all is treated as a network
+  drive, the side that can say it is unreachable (reasoned: a dead mapping could not be produced
+  here to test it). The level says so (`Network drive: Z: maps ...`),
+  and the answer is kept for the life of the server once a drive is found to be a network one;
+  a local drive is asked again on every scan.
   The same filter decides what raises an event, so a share-side level reports what the same level
   would on a local disk, only up to about 5 s later: `change` when a file's modified time or size
   moves, `rename` when a name appears or goes. A rewrite that keeps both the modified time and the
@@ -315,9 +338,13 @@ Implementation notes that matter if you change this:
 - Rounds do not overlap: the next starts 5 s after the last one finishes. Calls to one share are
   made one at a time, across every open tab, so a share that dies strands one call, not one per
   folder or per tab.
-- A mapped drive letter (`Z:` pointing at a share) is not recognised as a network path and is
-  watched natively, so it keeps the blocking risk the polling avoids (by the same mechanism; not
-  measured).
+- A local folder that is a symbolic link to a share is not recognised as one, since detection is by
+  drive letter, and is watched natively (reasoned, not measured).
+- **A watched folder that is deleted is closed at once.** On Windows, Node reports a deleted
+  folder's own `\\?\` path, and keeps reporting it, about 130,000 times a second for as long as the
+  handle stays open: over 3 s the server used 3.3 s of CPU and re-lit the bar 14 times, from
+  deleting one skill folder. The watcher closes that handle on the first report, reports the folder
+  as changed, and lists it as not watched (`Deleted after the watch started`) until the next scan.
 - Events carry a path and a verb, never file content. Reading a body still goes through `/api/file`
   and its allowlist check.
 - The client reads the stream with `fetch` and a stream reader, not `EventSource`, because
@@ -326,6 +353,7 @@ Implementation notes that matter if you change this:
 Known: `~/.claude.json` is a real member of the lineage and Claude Code rewrites it every few
 seconds during a session, so it appears in the bar often. It is reported rather than filtered
 because it genuinely is config the tool tracks, and hiding a tracked file would be the worse lie.
+Mute it in the bar to keep it counted without it lighting the bar.
 
 ## Sessions
 
@@ -508,7 +536,7 @@ Unreadable paths degrade to an error badge on the affected level; the rest of th
 | Case | Behavior |
 |---|---|
 | Nonexistent directory | Each missing ancestor gets an `ENOENT` error badge, scan still returns |
-| Dead UNC share | 3 s per-operation timeout, level marked unreachable, no hang; the watch bar lists its folders as `Share not reachable` |
+| Dead UNC share (a dead mapped drive takes the same path; reasoned, not tested) | 3 s per-operation timeout, level marked unreachable, no hang; the watch bar lists its folders as `Share not reachable` |
 | Permission denied | `EACCES` / `EPERM` badge on the level, other levels unaffected |
 | Malformed JSON | Parse error banner plus the raw text |
 | Malformed YAML frontmatter | Parse error banner plus the raw block, markdown body still renders |
@@ -531,7 +559,7 @@ server/
   writefile.js   the only edit path; depends on snapshot.js by design
   snapshot.js    capture, compare, restore, and the atomic write primitive
   flatten.js     the four flattened views
-  watch.js       filesystem watcher: directory watches, debounce, config filter
+  watch.js       filesystem watcher: directory watches, polling on a share, debounce, config filter
   safety.js      denylists, editable categories, size caps, timeouts, errors
   transcript.js  the only transcript reader: records to a normalized session model
   jsonl.js       follows an append-only JSON Lines file by byte offset
@@ -650,7 +678,9 @@ build.
 
 `npm run smoke` creates its own fixture tree, starts a server on its own port with its own snapshot
 store, drives the real HTTP API, and removes everything it made. It needs no framework and adds no
-dependency.
+dependency. Checks this machine cannot run print as `SKIP` with the reason, never as a pass. The
+mapped-drive checks run only with `SMOKE_MAPPED_DRIVE=1`, because they map a free drive letter to
+the admin share (`net use`) for the run and remove it afterwards.
 
 It exists because this code can fail **silently**. A CSRF guard applied one route too widely once
 left every HTTP assertion green while the real app refused to load in a browser, since Node's
