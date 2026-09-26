@@ -97,6 +97,10 @@ await esbuild({
   entryPoints: [path.join(root, 'desktop', 'main.js')],
   outfile: bundlePath,
   bundle: true,
+  // Explicit because esbuild's default for platform 'node' has moved between
+  // versions, and a package left external would build cleanly and then fail at
+  // launch: a SEA's require() reaches builtins only.
+  packages: 'bundle',
   platform: 'node',
   format: 'cjs',
   target: `node${process.versions.node.split('.')[0]}`,

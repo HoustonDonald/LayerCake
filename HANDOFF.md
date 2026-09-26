@@ -71,6 +71,15 @@ all Edge component extensions (location 5, shipped inside Edge, no all-sites acc
 launch, now without sync), the repository went to a private GitHub remote, and the Host guard was
 added (smoke asserts the rebinding request shape; a no-op mutant fails 3 assertions).
 
+**`npm audit` cleared, same day** (owner: "fix the npm audit advisories"): 6 advisories to 0. In
+range: qs 6.16.0 (clears express and body-parser), js-yaml 4.3.2; `package.json` floors raised to
+the fixed versions. Major: Vite 5 to 7.3.6 (the advisories cover every Vite up to 6.4.2; 7 rather
+than 8 to avoid the Rolldown switch), esbuild 0.21 to 0.28.2, one copy shared with Vite.
+`@vitejs/plugin-react` 4.7 already supports Vite 7 and was left alone. Consequence: `engines` is now
+`^20.19.0 || >=22.12.0`. Verified: smoke; headless-rendered UI text identical to the Vite 5 build;
+a headless Edge pass (scan, open a file, Flattened, Snapshots, no console errors) against both the
+disk server and the exe; every exe suite; express confirmed inlined in the SEA bundle.
+
 Verified on the built exe (commands in the commit message of `Add a single-executable build`):
 no console host (control gets one; a console-subsystem copy gets one); UI served from the embedded
 bundle; token and origin guards; scan; exit on window close; second launch reuses the server; port
@@ -154,12 +163,10 @@ Nothing blocks progress. These were flagged and not answered.
    `withTimeout` precisely because that was a known failure. They are reported in the bar's
    "not watched" list rather than silently dropped. A project on a network share therefore gets a
    scan but no live events for the share-side levels.
-8. **`npm audit` lists 6 advisories, all present at the baseline commit** (express, body-parser and
-   qs moderate; js-yaml high; vite high; esbuild moderate, dev-server only). Not addressed.
-9. **The exe carries node.exe's icon and version resource**, so Task Manager calls it "Node.js
+8. **The exe carries node.exe's icon and version resource**, so Task Manager calls it "Node.js
    JavaScript Runtime". Setting both at build time needs one dev dependency (e.g. `resedit`). Not
    built: nobody asked, and the process is findable as `LayerCake.exe`.
-10. **`npm run dev:client` cannot call the API**, and could not before 2026-09-25 either: Vite
+9. **`npm run dev:client` cannot call the API**, and could not before 2026-09-25 either: Vite
     serves `client/index.html` without the session token, so every `/api` call is refused (reasoned
     from the code, not run). The Host guard is not a factor: Vite's string-shorthand proxy sets
     `changeOrigin: true`, so the server sees `Host: 127.0.0.1:5178` (checked in Vite's source).

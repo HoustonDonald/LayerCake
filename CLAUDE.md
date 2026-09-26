@@ -170,7 +170,8 @@ partially. A truncated file restored is silent data loss.
 
 ## Conventions
 
-- ESM throughout (`"type": "module"`), Node >= 18, `node:` prefixed builtins.
+- ESM throughout (`"type": "module"`), `node:` prefixed builtins. Node `^20.19.0 || >=22.12.0`, the
+  floor Vite 7 sets for building the client; the exe embeds whatever Node built it.
 - Comments explain *why*, especially for platform quirks. Match that density; it is deliberate.
   Windows-specific behavior (case folding, `UNKNOWN` errno on a dead share, ProgramData variants)
   gets a comment naming the quirk.
