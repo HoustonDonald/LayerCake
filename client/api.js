@@ -216,6 +216,19 @@ export function getUsage() {
   return request('/api/usage');
 }
 
+/**
+ * Starts Claude Code in Windows Terminal in the scanned directory. The screen
+ * size lets the server put the terminal on the right half.
+ */
+export function launchClaude(scanId) {
+  const screen = { width: window.screen.availWidth, height: window.screen.availHeight };
+  return post('/api/launch', { scanId, screen });
+}
+
+export function getLaunches() {
+  return request('/api/launches');
+}
+
 /** Live state for one session: small updates, never content. */
 export function followSession(id, { onUpdate, onError } = {}) {
   return openEventStream(`/api/session/${encodeURIComponent(id)}/stream`, {

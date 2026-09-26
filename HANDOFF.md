@@ -143,6 +143,29 @@ Fixed along the way, each its own commit or check: `projectSlug` (paths with `.`
 `skills/.trash` being listed as live skills, and a stale "background agent still running" line (now
 from subagent statuses, live sessions only).
 
+### 2026-09-26: Phase 2, launch and wrap (owner: "go ahead with Phase 2")
+
+"Start Claude here" (Sessions tab) opens a Windows Terminal tab running
+`claude --session-id <id> --settings <file>`; the file adds a curl.exe status-line forwarder and
+http hooks, answered at `/ingest/<launch>/<secret>/…` (`server/launch.js`, `server/ingest.js`).
+The session view then shows exact context, cost, 5-hour and weekly limits, prompt-cache warmth,
+tools running now, InstructionsLoaded reasons, and "Waiting for you" (amber glow) on permission or
+idle prompts.
+
+Measured on this machine:
+- A real launch through the API (no prompt sent, so no usage): the tab opened on the right half,
+  `claude.exe` ran with the settings file, and the status line and hooks both reported with the
+  assigned session id. No `sessions/<pid>.json` appeared within 30 s and no transcript before a
+  prompt; hence liveness from hooks and "appears after the first prompt".
+- Zero tokens: the same one-line `claude -p` prompt on Haiku with and without the settings file
+  used 44,007 input tokens both times; the second read all of it from cache; its hooks did fire.
+  Cost of that check: $0.06.
+
+Verified: smoke 141 passed (29 new, launch in dry-run mode: argv, settings file, ingest guards,
+empty hook answers, waiting, running tools, exact context, restart persistence, hook liveness);
+mutants caught: JSON hook answer, Origin check off, notification discarded, secret check always
+true, exact context ignored. Headless Edge rendered the wrapped panel and the live waiting banner.
+
 ---
 
 ## Decisions already made, so they do not get relitigated
@@ -204,11 +227,9 @@ Nothing blocks progress. These were flagged and not answered.
     from the code, not run). The Host guard is not a factor: Vite's string-shorthand proxy sets
     `changeOrigin: true`, so the server sees `Host: 127.0.0.1:5178` (checked in Vite's source).
     Fixing dev mode means getting the token into Vite's page, e.g. a dev-only proxy of `/`.
-10. **Next in the session-wrap plan: Phase 2, launch and wrap.** "Start Claude here" opens a
-    Windows Terminal tab running `claude --session-id <uuid> --settings <json>` beside LayerCake.
-    That adds exact context %, cost, 5-hour/weekly limits, prompt-cache expiry, "waiting for you"
-    (Notification/PermissionRequest hooks) and `InstructionsLoaded` reasons, with the per-session
-    overhead meter that must read 0 tokens. Not started; the owner has not yet said go for it.
+10. **Next in the session-wrap plan: optional physical lights** (ASUS Aura REST drives the case
+    fans; a WLED strip would be the real monitor-edge option), then the separately decided
+    embedded terminal. Phase 2 (launch and wrap) is done; see its section above. Not started.
 11. **`CLAUDE_CONFIG_DIR` is honoured nowhere in LayerCake** (pre-existing). A user who relocates
     Claude Code's config with it gets a scan of the default location. Filed, not fixed.
 

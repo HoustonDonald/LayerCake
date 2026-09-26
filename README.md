@@ -344,6 +344,49 @@ $0.004 at list price (1,091 tokens in, 583 out), and summarizing all 42 sessions
 was estimated at under a dollar. On a subscription this draws on your plan limits, not a bill. Every
 run is listed in "LayerCake's own Claude usage", kept apart from the sessions it summarizes.
 
+### Starting Claude from LayerCake
+
+**Start Claude here** (Sessions tab, after a scan) opens a Windows Terminal tab running Claude Code in
+the scanned directory, beside the LayerCake window:
+
+```
+wt -w LayerCake --pos <right half> new-tab --title "Claude: <project>" -d <project>
+   claude --session-id <new id> --settings <per-session settings file>
+```
+
+The settings file applies to that one session only (Claude Code documents `--settings` as a level
+that "lasts one session and doesn't write to any file"); your own settings are never touched. It
+adds two things:
+
+- **A status line** that forwards Claude Code's status JSON to LayerCake with `curl.exe` and prints
+  the line LayerCake sends back (`LayerCake · ctx 42% · $1.23 · 5h 12% · cache warm`) under the
+  prompt. This is the only source of exact context use, cost, the 5-hour and weekly plan limits
+  (Pro and Max) and prompt-cache warmth.
+- **HTTP hooks** for the documented events (prompt submitted, tool start and finish, permission
+  requests, notifications, subagents, compaction, instructions loaded, session end). These make
+  **"Waiting for you"** possible: a permission prompt or an idle prompt turns the session's glow
+  amber until Claude moves again. They also show tools running right now, and why each memory
+  file loaded (at start, a path-glob match, an include, a nested folder, after compaction).
+
+**Zero tokens, measured.** A status line is displayed, never sent to the model, and every hook is
+answered with an empty 204, which Claude Code treats as "success, no output". The same one-line
+prompt run with and without the settings file used exactly the same input (44,007 tokens each),
+and the second run read its whole prompt from cache, which a single changed byte would have
+prevented. The session view also shows "Context added by hooks this session", which should stay 0.
+
+Things to know:
+
+- The launched session appears in the list after its first prompt, when Claude Code first writes
+  its transcript.
+- If LayerCake is closed while that session keeps running, each hook shows a "hook error" notice in
+  the terminal. Claude does not see those notices (they are non-blocking errors), and the session
+  works normally. A restarted LayerCake picks the reporting back up.
+- The status line runs through Git Bash when installed, as Claude Code does it; `curl.exe` ships
+  with Windows 10 and later.
+- The window placement is approximate: Windows Terminal sizes in character cells, not pixels.
+- Workspace trust not yet accepted, `--safe-mode`, or a managed hook policy silence both channels;
+  the session view says so rather than showing stale numbers.
+
 LayerCake's own data (summary cards, AI summaries, the usage ledger) lives in
 `%LOCALAPPDATA%\LayerCake\data`, never under `~/.claude`. Override it with `LAYERCAKE_APPDATA_DIR`,
 and the Claude data folder read for sessions with `LAYERCAKE_CLAUDE_DATA_DIR`.
@@ -351,8 +394,15 @@ and the Claude data folder read for sessions with `LAYERCAKE_CLAUDE_DATA_DIR`.
 ## Network posture
 
 - Binds `127.0.0.1` only, never `0.0.0.0`.
-- No outbound requests. Nothing is sent anywhere. The one process LayerCake can start that talks to
-  Anthropic is `claude -p`, for an AI summary you asked for (see [Sessions](#sessions)).
+- No outbound requests. Nothing is sent anywhere. LayerCake starts two kinds of process, both on
+  your click: `claude -p` for an AI summary, and Windows Terminal running `claude` for **Start
+  Claude here** (see [Sessions](#sessions)).
+- `/ingest/<launch>/<secret>/…` accepts the status line and hooks of a session LayerCake launched.
+  It is outside `/api` because its callers are Claude Code processes, not the page: instead of the
+  page token it needs that launch's secret (compared in constant time), refuses any request
+  carrying an `Origin` header (a browser always sends one; Claude Code does not), and is behind the
+  Host guard like everything else. What arrives is kept in memory, reduced to tool names and
+  one-line summaries.
 - Session routes serve prompts and replies, so they accept only a session id the server itself
   discovered on disk, never a path, the same way file routes accept only what a scan found.
 - `/api/file` and `/api/write` only touch a path the preceding scan discovered. The scan result *is*
@@ -427,6 +477,8 @@ server/
   summaries.js   free summary cards; the opt-in AI summary (claude -p)
   appdata.js     LayerCake's own data store, written through atomicWrite
   session-routes.js  /api/sessions, /api/session/*, /api/history, /api/usage
+  launch.js      Start Claude here: Windows Terminal + per-session --settings
+  ingest.js      status line and hook posts from launched sessions
 client/          React UI: explorer, viewers, editor, snapshots, watch bar, sessions
 cli/             the layercake CLI, importing server modules directly
 scripts/

@@ -82,6 +82,8 @@ server/health.js    session health state + reasons, rules shipped in the payload
 server/summaries.js free summary cards; the opt-in AI summary via stripped-down claude -p
 server/appdata.js   LayerCake's own data (cards, AI summaries, usage ledger), via atomicWrite
 server/session-routes.js /api/sessions, /api/session/:id[/turn/:n|/stream|/summarize], /api/history, /api/usage
+server/launch.js    "Start Claude here": wt.exe + claude --session-id --settings <file>; fixed argv
+server/ingest.js    /ingest/<launch>/<secret>/{statusline,hook} from launched sessions; memory only
 client/             React 18 + Vite, two-pane explorer plus editor, snapshots and watch bar
 cli/                layercake CLI, imports server modules directly
 scripts/launch.js   build, serve, then open an app-mode browser window
@@ -157,6 +159,24 @@ from instruction attachments, the system prompt snapshot, the account email and 
 **Secrets beside the session data are never read or sent.** `history.jsonl`'s `pastedContents`
 never leaves `history.js`; `sessions/<pid>.<hash>.key` files are never opened (only `<digits>.json`
 matches). Smoke plants sentinels in both and searches every response for them.
+
+**A hook answer is an empty 204, always.** `ingest.js` answers every hook post with no body,
+which Claude Code treats as "success, no output". A JSON body could add context to Claude or block
+an action, which turns an observer into a participant. Smoke asserts every hook answer is empty and
+a mutant returning `{}` is caught; the zero-token claim was also measured end to end (the same
+prompt with and without a launch's settings: identical input, full cache hit). The status line's
+answer is the line to print and is never sent to the model.
+
+**Ingest is outside `/api` and guards itself.** Callers are Claude Code processes, so there is no
+page token: a per-launch secret in the path (constant-time compare), no `Origin` header allowed,
+and the global Host guard. Launch records, secret included, are kept in app data so a session keeps
+reporting across a LayerCake restart; the settings file that Claude Code reads holds the same
+secret under the same user ACL.
+
+**`launch.js` starts a process with a fixed argv.** The directory comes from the scan store, never
+the request; screen numbers are validated; the settings go in a file because Windows Terminal
+splits its arguments on `;`. Claude's own edits in a launched session bypass LayerCake's
+snapshot-first rule, since they are Claude Code's writes, not LayerCake's.
 
 **Only `summaries.js` may spend Claude usage, and only on an explicit request.** Everything else
 reads files. The AI summary runs `claude -p` with a fixed argv (Haiku, `--safe-mode`, `--tools ""`,
@@ -255,10 +275,17 @@ partially. A truncated file restored is silent data loss.
 - **The session view lags during a long reply.** Claude Code writes a main-thread transcript record
   when each API response completes, not while it streams (subagent files do stream). Context and
   the prompt rail catch up when the reply finishes.
-- **"Waiting for your approval" is not visible from the transcript.** A pending permission prompt is
-  not recorded, and `sessions/<pid>.json` has only been seen reporting `busy`. That signal needs
-  the documented `Notification`/`PermissionRequest` hooks, which is Phase 2 (sessions LayerCake
-  launches) in the plan.
+- **"Waiting for you" exists only for sessions LayerCake launched.** A pending permission prompt is
+  not in the transcript, and `sessions/<pid>.json` has only been seen reporting `busy`; the signal
+  comes from the `Notification`/`PermissionRequest` hooks a launch installs.
+- **A launched session's liveness comes from its hooks.** Claude Code writes `sessions/<pid>.json`
+  lazily (none 30 s after a launch, before any prompt), so a launched session counts as running
+  until its `SessionEnd` hook fires. A crash that skips `SessionEnd` reads as running until
+  LayerCake restarts.
+- **Closing LayerCake under a launched session makes its hooks fail**, visibly: a "hook error" notice
+  per event in that terminal. Claude does not see non-blocking hook errors, so it costs no tokens.
+- **The launched status line assumes Git Bash** (Claude Code's own choice when installed). Under the
+  PowerShell fallback, whether `curl.exe` receives the status JSON on stdin is untested.
 - **The context window is inferred from the model id** (`contextWindow` in `health.js`, rule shipped
   with the payload): `[1m]` or a documented native-1M family is 1M, else 200K. A new model family
   needs adding there.

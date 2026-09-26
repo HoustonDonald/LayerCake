@@ -34,15 +34,104 @@ function ContextGauge({ health }) {
   const pct = Math.min(1, c.pct || 0);
   const tone = pct >= 0.8 ? 'warn' : '';
   return (
-    <div className="gauge" title={`${c.rule}\nEstimated from the last API call in the transcript; it lags while a reply is still streaming.`}>
+    <div
+      className="gauge"
+      title={
+        c.source === 'status line (exact)'
+          ? "Reported by Claude Code's status line for this launched session."
+          : `${c.rule}\nEstimated from the last API call in the transcript; it lags while a reply is still streaming.`
+      }
+    >
       <div className="gauge-head">
-        <span>Context</span>
+        <span>Context <span className="muted">· {c.source}</span></span>
         <span>
           {tokens(c.tokens)} of {tokens(c.window)} ({Math.round(pct * 100)}%)
         </span>
       </div>
       <div className="gauge-track">
         <div className={`gauge-fill ${tone}`} style={{ width: `${pct * 100}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function secondsAgo(iso) {
+  return iso ? Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000)) : null;
+}
+
+function resetIn(epochSeconds) {
+  if (typeof epochSeconds !== 'number') return '';
+  const ms = epochSeconds * 1000 - Date.now();
+  if (ms <= 0) return 'resetting';
+  const m = Math.round(ms / 60000);
+  return m < 90 ? `resets in ${m} min` : `resets in ${Math.round(m / 60)} h`;
+}
+
+/**
+ * What only a session LayerCake launched can report: its status line (exact
+ * context, cost, plan limits, prompt cache) and its hooks (waiting for you,
+ * tools running right now, why each memory file loaded).
+ */
+function Wrapped({ detail }) {
+  const w = detail.wrapped;
+  if (!w) return null;
+  const s = w.statusline;
+  const waiting = detail.health?.flags?.includes('waiting') ? w.waiting : null;
+  const slAgo = secondsAgo(w.statuslineAt);
+  const hookAgo = secondsAgo(w.lastHookAt);
+  const events = Object.values(w.hookCounts || {}).reduce((a, b) => a + b, 0);
+  // Silence from both channels while the transcript moves means something is
+  // blocking them: trust not accepted, --safe-mode, or a managed hook policy.
+  const silent = detail.live && !w.statuslineAt && !w.lastHookAt && Date.now() - Date.parse(w.launchedAt) > 30000;
+  return (
+    <div className="wrapped">
+      {waiting && (
+        <div className="waiting-banner">
+          <strong>Waiting for you</strong> · {waiting.message || waiting.kind} <span className="muted">· {clock(waiting.at)}</span>
+        </div>
+      )}
+      {w.running.length > 0 && (
+        <div className="running-now">
+          <span className="turn-label">Running now</span>
+          {w.running.map((t) => (
+            <span key={t.id} className="running-tool">
+              {t.name}
+              {t.summary ? ` · ${t.summary}` : ''} <span className="muted">({duration(Date.now() - Date.parse(t.at))})</span>
+            </span>
+          ))}
+        </div>
+      )}
+      {s && (
+        <div className="stats">
+          {s.cost?.totalUSD != null && <Stat label="cost so far" value={usd(s.cost.totalUSD)} title="Claude Code's own estimate at list price; resets on /clear" />}
+          {s.rateLimits?.five_hour && (
+            <Stat label={`5-hour limit${s.rateLimits.five_hour.resetsAt ? `, ${resetIn(s.rateLimits.five_hour.resetsAt)}` : ''}`} value={`${Math.round(s.rateLimits.five_hour.usedPercentage ?? 0)}%`} tone={(s.rateLimits.five_hour.usedPercentage ?? 0) >= 80 ? 'warn' : ''} />
+          )}
+          {s.rateLimits?.seven_day && (
+            <Stat label={`weekly limit${s.rateLimits.seven_day.resetsAt ? `, ${resetIn(s.rateLimits.seven_day.resetsAt)}` : ''}`} value={`${Math.round(s.rateLimits.seven_day.usedPercentage ?? 0)}%`} tone={(s.rateLimits.seven_day.usedPercentage ?? 0) >= 80 ? 'warn' : ''} />
+          )}
+          {s.promptCache?.warm != null && (
+            <Stat
+              label={s.promptCache.expiresAt ? `prompt cache, ${resetIn(s.promptCache.expiresAt).replace('resets', 'expires')}` : 'prompt cache'}
+              value={s.promptCache.warm ? 'warm' : 'cold'}
+              tone={s.promptCache.warm ? '' : 'warn'}
+              title="A cold cache means the next request re-sends the whole context at full price"
+            />
+          )}
+          {s.cost?.linesAdded != null && <Stat label="lines +/-" value={`${s.cost.linesAdded}/${s.cost.linesRemoved}`} />}
+        </div>
+      )}
+      <div className="channels">
+        <span className="launched-badge">wrapped</span> Launched from LayerCake {when(w.launchedAt)}. Status line{' '}
+        {slAgo == null ? 'not heard from yet' : `updated ${slAgo}s ago`}; hooks {events ? `${events} events, last ${hookAgo}s ago` : 'not heard from yet'}.
+        {' '}Context added by hooks this session: {detail.hooks.contextInjections}
+        <span className="muted"> (LayerCake&apos;s hooks answer with an empty body, so this should stay 0)</span>
+        {silent && (
+          <div className="warn">
+            Neither the status line nor the hooks have reported. Likely causes: the folder&apos;s workspace trust has not been
+            accepted, Claude Code was started with --safe-mode, or a managed policy blocks hooks.
+          </div>
+        )}
       </div>
     </div>
   );
@@ -257,6 +346,7 @@ export default function SessionDetail({ detail, onSummarize, summarizing, summar
       </div>
 
       <ContextGauge health={health} />
+      <Wrapped detail={detail} />
       {(detail.mcp.failed.length > 0 || (detail.live ? detail.runningSubagents : 0) > 0 || detail.hooks.failures > 0) && (
         <div className="alerts">
           {detail.mcp.failed.length > 0 && <span className="warn">MCP servers that failed to connect: {detail.mcp.failed.join(', ')}</span>}
@@ -282,6 +372,22 @@ export default function SessionDetail({ detail, onSummarize, summarizing, summar
             </div>
           ))}
           {detail.instructions.length === 0 && <div className="muted">None recorded.</div>}
+          {detail.wrapped?.instructionsLoaded?.length > 0 && (
+            <>
+              <div className="turn-label">Reported live by the InstructionsLoaded hook</div>
+              {detail.wrapped.instructionsLoaded.map((i, n) => (
+                <div key={`${i.path}-${n}`} className="kv">
+                  <span className="kv-key">{i.reason}</span>
+                  <span>{i.path}</span>
+                  <span className="muted">
+                    {i.memoryType}
+                    {i.trigger ? ` · triggered by ${i.trigger}` : ''}
+                    {i.parent ? ` · included from ${i.parent}` : ''}
+                  </span>
+                </div>
+              ))}
+            </>
+          )}
         </Section>
         <Section title="Subagents" count={detail.subagents.length}>
           {detail.subagents.map((s) => (

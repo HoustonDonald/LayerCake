@@ -1691,3 +1691,84 @@ pre.code {
   color: var(--text-dim);
   border-bottom: 1px solid var(--border);
 }
+
+/* ---------- launched (wrapped) sessions ---------- */
+
+.glow-waiting {
+  --glow: #b07a00;
+  --glow-soft: rgba(176, 122, 0, 0.55);
+  animation: glow-breathe 1s ease-in-out infinite;
+}
+
+.h-waiting {
+  background: #b07a00;
+}
+
+.launched-badge {
+  margin-left: 6px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #1f7fa6;
+  border: 1px solid #1f7fa6;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.s-launch {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 12px 4px;
+  font-size: 11px;
+}
+
+.s-launch .btn {
+  align-self: flex-start;
+}
+
+.launch-note {
+  margin: 6px 12px;
+  padding: 6px 8px;
+  font-size: 12px;
+  border: 1px solid #1f7fa6;
+  border-radius: 4px;
+  color: var(--text-dim);
+}
+
+.wrapped {
+  margin: 4px 0 10px;
+}
+
+.waiting-banner {
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid #b07a00;
+  border-left-width: 4px;
+  border-radius: 4px;
+  background: rgba(176, 122, 0, 0.08);
+  font-size: 13px;
+}
+
+.running-now {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.running-now .turn-label {
+  margin: 0;
+}
+
+.running-tool {
+  font-family: var(--mono);
+}
+
+.channels {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}

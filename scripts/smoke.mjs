@@ -24,7 +24,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { projectSlug } from '../server/paths.js';
-import { makeSessionFixture, runSessionChecks } from './smoke-sessions.mjs';
+import { makeSessionFixture, runLaunchChecks, runSessionChecks } from './smoke-sessions.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PORT = Number(process.env.SMOKE_PORT || 5399);
@@ -140,6 +140,8 @@ const server = spawn(process.execPath, [path.join(ROOT, 'server', 'index.js')], 
     LAYERCAKE_SNAPSHOT_DIR: snaps,
     LAYERCAKE_CLAUDE_DATA_DIR: claudeData,
     LAYERCAKE_APPDATA_DIR: appData,
+    // Launches build their argv and settings but never start Windows Terminal.
+    LAYERCAKE_LAUNCH_DRY_RUN: '1',
   },
   stdio: 'ignore',
 });
@@ -588,6 +590,9 @@ try {
 
   // --- session history -----------------------------------------------------
   await runSessionChecks({ base: BASE, token, check, proj, appData });
+
+  // --- launch and ingest (Phase 2), dry run --------------------------------
+  await runLaunchChecks({ base: BASE, port: PORT, token, check, scanId: lineage.scanId, proj, appData });
 
   process.stdout.write(`\n  ${pass} passed, ${fail} failed\n\n`);
   exitCode = fail ? 1 : 0;

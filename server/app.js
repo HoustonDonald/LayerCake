@@ -42,6 +42,8 @@ import {
 import { isSecret, describeError, writePolicy } from './safety.js';
 import { hostGuard, injectToken, originGuard, requireToken } from './security.js';
 import { registerSessionRoutes } from './session-routes.js';
+import { listLaunches, registerIngestRoutes } from './ingest.js';
+import { launchClaude } from './launch.js';
 import {
   CLAUDE_DIR_FILE_TARGETS,
   CLAUDE_DIR_TREES,
@@ -422,6 +424,26 @@ export function createApp({ port, staticFiles }) {
   // Session history and live sessions. Registered here, after the /api guards,
   // so every one of them is behind the Host, origin and token checks.
   registerSessionRoutes(app);
+
+  // "Start Claude here". The directory comes from the scan store, never from the
+  // request body, the same way a write takes its target from the scan.
+  app.post('/api/launch', async (req, res) => {
+    const scan = scans.get(String(req.body?.scanId || ''));
+    if (!scan) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan first.' });
+    try {
+      const screen = req.body?.screen && typeof req.body.screen === 'object' ? req.body.screen : null;
+      return res.json(await launchClaude({ dir: scan.lineage.projectDir, port, screen }));
+    } catch (err) {
+      return sendError(res, err);
+    }
+  });
+
+  app.get('/api/launches', (req, res) => res.json({ launches: listLaunches() }));
+
+  // Status line and hook posts from sessions LayerCake launched. Not under
+  // /api: the callers are Claude Code processes, not our page, so they carry a
+  // per-launch secret instead of the page token (see ingest.js).
+  registerIngestRoutes(app);
 
   // Assets are served normally. Only the HTML shell carries the secret, and it
   // gets it from the injector below, never from the static source.

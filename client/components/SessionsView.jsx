@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-import { followSession, getHistory, getSession, getUsage, listSessions, summarizeSession } from '../api.js';
+import { followSession, getHistory, getSession, getUsage, launchClaude, listSessions, summarizeSession } from '../api.js';
 import { clock, daysUntil, tokens, usd, when } from '../sessionFormat.js';
 import SessionDetail from './SessionDetail.jsx';
 
@@ -15,6 +15,7 @@ function Row({ s, selected, onSelect, kind }) {
       <div className="s-row-title">
         {s.live && <span className="health-dot h-working" title={`running${s.status ? `, ${s.status}` : ''}`} />}
         {s.title}
+        {s.launched && <span className="launched-badge" title="Started from LayerCake: reports exact context, cost, limits and when it waits for you">wrapped</span>}
       </div>
       <div className="s-row-meta">
         <span>{when(s.lastAt)}</span>
@@ -119,8 +120,27 @@ function PromptOnly({ id, row }) {
   );
 }
 
-export default function SessionsView({ projectDir }) {
+/**
+ * Puts this window on the left half, beside the terminal the server placed on
+ * the right. Browsers allow this only for app-mode and popup windows; in a
+ * normal tab it silently does nothing, which is fine.
+ */
+function dockLeft() {
+  try {
+    window.moveTo(0, 0);
+    window.resizeTo(Math.floor(window.screen.availWidth / 2), window.screen.availHeight);
+  } catch {
+    /* not permitted here */
+  }
+}
+
+const LAUNCH_POLL_MS = 2000;
+const LAUNCH_WAIT_MS = 10 * 60 * 1000;
+
+export default function SessionsView({ projectDir, scanId }) {
   const [scope, setScope] = useState(projectDir ? 'project' : 'all');
+  const [launch, setLaunch] = useState(null);
+  const [launchError, setLaunchError] = useState(null);
   const [list, setList] = useState(null);
   const [listError, setListError] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -159,6 +179,31 @@ export default function SessionsView({ projectDir }) {
     const first = list.sessions.find((s) => s.live) || list.sessions[0];
     if (first) setSelected({ kind: 'session', id: first.sessionId });
   }, [list, selected]);
+
+  // A launched session has no transcript until Claude Code writes its first
+  // record, so poll quickly until it appears, then switch to it.
+  useEffect(() => {
+    if (!launch) return undefined;
+    if (list?.sessions.some((s) => s.sessionId === launch.sessionId)) {
+      setSelected({ kind: 'session', id: launch.sessionId });
+      setLaunch(null);
+      return undefined;
+    }
+    if (Date.now() - launch.at > LAUNCH_WAIT_MS) return undefined;
+    const t = setTimeout(loadList, LAUNCH_POLL_MS);
+    return () => clearTimeout(t);
+  }, [launch, list, loadList]);
+
+  const onLaunch = useCallback(async () => {
+    setLaunchError(null);
+    try {
+      const r = await launchClaude(scanId);
+      setLaunch({ ...r, at: Date.now() });
+      dockLeft();
+    } catch (e) {
+      setLaunchError(e.message);
+    }
+  }, [scanId]);
 
   const loadDetail = useCallback((id) => {
     lastFetch.current = Date.now();
@@ -221,6 +266,22 @@ export default function SessionsView({ projectDir }) {
             All projects
           </button>
         </div>
+        <div className="s-launch">
+          <button className="btn btn-primary btn-small" onClick={onLaunch} disabled={!scanId || Boolean(launch)} title={projectDir ? `Open Claude Code in Windows Terminal in ${projectDir}` : 'Scan a directory first'}>
+            Start Claude here
+          </button>
+          <span className="muted">
+            Opens Claude Code in Windows Terminal beside this window, wired to report exact context, cost, limits and when
+            it waits for you. Adds nothing to Claude&apos;s context.
+          </span>
+        </div>
+        {launch && (
+          <div className="launch-note">
+            Claude Code is starting in Windows Terminal (tab &quot;Claude: {projectDir?.split(/[\\/]/).pop()}&quot;). It shows up here
+            once it writes its first record, usually after your first prompt.
+          </div>
+        )}
+        {launchError && <div className="err-item">{launchError}</div>}
         {listError && <div className="err-item">{listError}</div>}
         {!list && !listError && <div className="empty-state">Reading sessions…</div>}
         {list && (

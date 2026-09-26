@@ -104,6 +104,30 @@ export async function appendLedger(entry) {
   await atomicWrite(target('usage-ledger.json'), JSON.stringify({ entries: kept }, null, 2));
 }
 
+const LAUNCH_ID_RE = /^[0-9a-f]{16}$/;
+
+/**
+ * A launched session's record and its --settings file. The record holds the
+ * ingest secret, so a session keeps reporting across a LayerCake restart; it
+ * sits under the same user ACL as ~/.claude, where the settings file that
+ * carries the same secret must live for Claude Code to read it anyway.
+ * Returns the settings file's path.
+ */
+export async function writeLaunch(record, settings) {
+  if (!LAUNCH_ID_RE.test(String(record.id || ''))) throw new Error('Not a launch id.');
+  const settingsPath = target('launches', `${record.id}.settings.json`);
+  await atomicWrite(target('launches', `${record.id}.json`), JSON.stringify(record, null, 2));
+  await atomicWrite(settingsPath, JSON.stringify(settings, null, 2));
+  return settingsPath;
+}
+
+/** A launch record by id, or null. */
+export async function readLaunch(id) {
+  if (!LAUNCH_ID_RE.test(String(id || ''))) return null;
+  const record = await readJson(target('launches', `${id}.json`));
+  return record && record.id === id && typeof record.secret === 'string' ? record : null;
+}
+
 /** Where the data lives, for the UI to state. */
 export function dataRoot() {
   return root();

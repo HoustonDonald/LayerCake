@@ -8,6 +8,11 @@
 /** Most severe first. The UI reads colour and label from here, never from its own list. */
 export const HEALTH_STATES = [
   { state: 'error', label: 'Error', rule: 'An API error (including rate limits) in the last 10 minutes of activity.' },
+  {
+    state: 'waiting',
+    label: 'Waiting for you',
+    rule: 'Launched by LayerCake, and Claude Code reported a permission request or that it is waiting for input, with nothing since. Sessions LayerCake did not launch cannot report this.',
+  },
   { state: 'warning', label: 'Context high', rule: 'Context at or above 80% of the model window.' },
   { state: 'working', label: 'Working', rule: 'Running, and Claude Code reports it busy or it wrote to its transcript in the last 15 seconds.' },
   { state: 'idle', label: 'Idle', rule: 'Running, not busy.' },
@@ -35,12 +40,21 @@ export function contextWindow(modelId, models) {
   return 200_000;
 }
 
-export function computeHealth(model, live, { now = Date.now(), mtimeMs = 0 } = {}) {
-  const window = contextWindow(model.modelId, model.models);
+export function computeHealth(model, live, { now = Date.now(), mtimeMs = 0, wrapped = null } = {}) {
+  // A launched session's status line reports the exact figure; everything else
+  // is estimated from the transcript's last API call.
+  const exact = wrapped?.statusline?.context;
+  const window = exact?.windowTokens || contextWindow(model.modelId, model.models);
   const tokens = model.context?.tokens ?? null;
-  const pct = tokens ? tokens / window : null;
+  const pct =
+    typeof exact?.usedPercentage === 'number' ? exact.usedPercentage / 100 : tokens ? tokens / window : null;
+  const source = typeof exact?.usedPercentage === 'number' ? 'status line (exact)' : 'transcript (estimate)';
   const reasons = [];
   const flags = new Set();
+  if (live && wrapped?.waiting) {
+    flags.add('waiting');
+    reasons.push(wrapped.waiting.message || 'Waiting for you');
+  }
 
   const lastAt = model.lastAt ? Date.parse(model.lastAt) : 0;
   const recentErrors = model.errors.filter((e) => e.at && lastAt - Date.parse(e.at) <= RECENT_ERROR_MS);
@@ -73,7 +87,7 @@ export function computeHealth(model, live, { now = Date.now(), mtimeMs = 0 } = {
     state,
     reasons,
     flags: [...flags],
-    context: { tokens, window, pct, rule: CONTEXT_RULE },
+    context: { tokens, window, pct, source, rule: CONTEXT_RULE },
     states: HEALTH_STATES,
   };
 }

@@ -16,6 +16,7 @@ import path from 'node:path';
 
 import { dataRoot, readAiSummary, readCards, readLedger, writeCard } from './appdata.js';
 import { computeHealth, HEALTH_STATES } from './health.js';
+import { wrappedFor } from './ingest.js';
 import { readHistory } from './history.js';
 import { samePathKey } from './paths.js';
 import {
@@ -122,8 +123,23 @@ function sessionDetail(model) {
   };
 }
 
+/**
+ * Whether a session is running. Claude Code's own pid file is the first
+ * source, but it is written lazily: a session LayerCake launched had none
+ * 30 s after start (measured 2026-09-26, before any prompt). For those the
+ * hooks answer instead: running until its SessionEnd hook fires, busy while a
+ * tool is in flight. A crash that skips SessionEnd reads as running until
+ * LayerCake restarts; stated in CLAUDE.md.
+ */
+function liveFrom(pidLive, sessionId) {
+  if (pidLive) return pidLive;
+  const w = wrappedFor(sessionId);
+  if (w && !w.ended) return { pid: null, sessionId, status: w.running.length ? 'busy' : null, source: 'hooks' };
+  return null;
+}
+
 async function liveFor(sessionId) {
-  return (await liveSessions()).find((s) => s.sessionId === sessionId) || null;
+  return liveFrom((await liveSessions()).find((s) => s.sessionId === sessionId), sessionId);
 }
 
 /**
@@ -178,8 +194,8 @@ export function registerSessionRoutes(app) {
           persistError = err.message;
         }
         if (!inScope(card.cwd)) continue;
-        const l = liveById.get(card.sessionId);
-        sessions.push({ ...card, transcript: 'on-disk', live: Boolean(l), status: l?.status || null, pid: l?.pid || null });
+        const l = liveFrom(liveById.get(card.sessionId), card.sessionId);
+        sessions.push({ ...card, transcript: 'on-disk', live: Boolean(l), status: l?.status || null, pid: l?.pid || null, launched: Boolean(wrappedFor(card.sessionId)) });
       }
 
       const expired = [];
@@ -228,11 +244,13 @@ export function registerSessionRoutes(app) {
       const reader = await getReader(req.params.id);
       const live = await liveFor(req.params.id);
       const retention = await retentionDays();
+      const wrapped = wrappedFor(reader.sessionId);
       res.json({
         ...sessionDetail(reader.model),
         card: sessionCard(reader.model, { size: reader.size, mtimeMs: reader.mtimeMs }, retention),
         live,
-        health: computeHealth(reader.model, live, { mtimeMs: reader.mtimeMs }),
+        health: computeHealth(reader.model, live, { mtimeMs: reader.mtimeMs, wrapped }),
+        wrapped,
         activity: await subagentActivity(reader),
         aiSummary: await readAiSummary(req.params.id).catch(() => null),
         estimate: estimateSummary(reader.model),
@@ -297,7 +315,8 @@ export function registerSessionRoutes(app) {
         await reader.refresh();
         const live = await liveFor(reader.sessionId);
         const m = reader.model;
-        const health = computeHealth(m, live, { mtimeMs: reader.mtimeMs });
+        const wrapped = wrappedFor(reader.sessionId);
+        const health = computeHealth(m, live, { mtimeMs: reader.mtimeMs, wrapped });
         const update = {
           lastAt: m.lastAt,
           turns: m.turns.length,
@@ -306,7 +325,9 @@ export function registerSessionRoutes(app) {
           backgroundPending: m.backgroundPending,
           live: live ? { status: live.status, pid: live.pid } : null,
         };
-        const key = JSON.stringify([update.lastAt, update.turns, health.state, live?.status || null]);
+        // A launched session changes without writing its transcript (a tool starts, a
+        // permission prompt appears), so the hook activity is part of the key.
+        const key = JSON.stringify([update.lastAt, update.turns, health.state, live?.status || null, wrapped?.lastHookAt || null, wrapped?.statuslineAt || null]);
         if (key !== lastKey) {
           lastKey = key;
           if (!res.writableEnded) res.write(`event: update\ndata: ${JSON.stringify(update)}\n\n`);

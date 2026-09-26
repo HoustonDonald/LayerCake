@@ -277,7 +277,7 @@ export default function App() {
 
       {mode === 'sessions' ? (
         <div className="panes single">
-          <SessionsView key={lineage?.projectDir || 'none'} projectDir={lineage?.projectDir || null} />
+          <SessionsView key={lineage?.projectDir || 'none'} projectDir={lineage?.projectDir || null} scanId={lineage?.scanId || null} />
         </div>
       ) : (
       <div className="panes">
