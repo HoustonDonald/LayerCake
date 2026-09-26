@@ -183,6 +183,26 @@ Named limits, not fixed, now issues: summary timeout does not reach grandchildre
 can make a dead session read as live (#1); an exe shutdown mid-summary leaves that run out of the
 ledger (#3).
 
+### 2026-09-26: Phase 2 reviews (security and correctness), all findings fixed
+
+Two independent reviews of the Phase 2 range. Every finding was filed as an issue (#20 to #30), and
+all of them are fixed and closed:
+- **Security (6cde47e):** a project path containing `;` injected Windows Terminal subcommands (#20,
+  high). The ingest secret appearing on curl's command line is now disclosed (#21).
+- **Correctness (de84318):** ingest state is per session, not per launch (#22); waits and running
+  tools end on transcript evidence (#23); launches are restored at startup (#24); the hook meter
+  says it counts any hook (#25); the Start button always recovers (#26); smoke checks that could not
+  fail now can (#27), and smoke grades only its own server (#28, 0df17d4); two more waiting types
+  (#29); the stream slot race is closed (#30).
+
+HANDOFF's Phase 2 entry above says "restart persistence" was verified. It was not: that check only
+read a status code. It is now covered by #27's checks.
+
+Method worth reusing: targeted mutants, each run in its own copy of the tree (node_modules
+junctioned) and 4 at a time, because smoke now picks a free port. That did 15 smoke runs in 57 s,
+against about 2.9 min serially (11.5 s a run). It also leaves the working tree unmutated. The script
+lives only in the session scratchpad (`mutate-p2.mjs`).
+
 ---
 
 ## Decisions already made, so they do not get relitigated
