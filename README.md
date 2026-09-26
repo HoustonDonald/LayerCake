@@ -650,6 +650,9 @@ npm run smoke          # end to end test over the real HTTP API
 npm run build:exe      # the single executable, see above
 ```
 
+Open the dev page at `http://localhost:5179`, not `http://127.0.0.1:5179`: Vite listens on the IPv6
+loopback (`::1`) by default, so the IPv4 address does not connect.
+
 `dev:client` needs `dev:server` already running on the same `PORT`, and a built client
 (`npm run build`, once). The page Vite serves takes its session token from the server's own page,
 the way the built page does, and the server only serves that page from `public/`. If either is
