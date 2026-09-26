@@ -325,6 +325,21 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
   check('launch refuses a request with no token', (await postRaw(base, '/api/launch', { scanId })).status === 403);
   check('launch refuses an unknown scan', (await postRaw(base, '/api/launch', { scanId: 'scan-nope' }, H)).status === 404);
 
+  // #20: Windows Terminal splits on ";" even inside a quoted argument, so a
+  // folder named like this would chain a second command after Claude's tab.
+  const hostile = path.join(path.dirname(proj), 'evil;calc.exe');
+  await fs.mkdir(hostile, { recursive: true });
+  const hostileScan = await postRaw(base, '/api/scan', { dir: hostile }, H);
+  const hostileScanId = hostileScan.status === 200 ? JSON.parse(hostileScan.body).scanId : null;
+  const launchFiles = async () => (await fs.readdir(path.join(appData, 'launches')).catch(() => [])).length;
+  const filesBefore = await launchFiles();
+  const refused = await postRaw(base, '/api/launch', { scanId: hostileScanId }, H);
+  const refusal = (() => { try { return JSON.parse(refused.body); } catch { return {}; } })();
+  check('launch refuses a project path containing ";" (a Windows Terminal separator)',
+    hostileScanId && refused.status === 400 && /contains ";"/.test(refusal.message || '') && !('argv' in refusal),
+    `scan ${hostileScan.status}, launch ${refused.status}`);
+  check('a refused launch writes no launch record or settings file', (await launchFiles()) === filesBefore);
+
   const launched = await postRaw(base, '/api/launch', { scanId, screen: { width: 2560, height: 1440 } }, H);
   const l = launched.status === 200 ? JSON.parse(launched.body) : null;
   check('launch (dry run) returns its argv', l?.dryRun === true && Array.isArray(l.argv), `status ${launched.status}`);

@@ -16,7 +16,8 @@
  * inputs are the project directory, which comes from a scan result and never
  * from the request, and screen dimensions, which are validated numbers. The
  * settings go in a file rather than on the command line because Windows
- * Terminal splits its arguments on ";" and re-quotes the rest.
+ * Terminal splits its arguments on ";" and re-quotes the rest, and a project
+ * path containing ";" is refused for the same reason (refuseTerminalSeparator).
  */
 
 import { spawn } from 'node:child_process';
@@ -85,7 +86,28 @@ function placement(screen) {
   return ['--pos', `${half},0`, '--size', `${cols},${rows}`];
 }
 
+/**
+ * Windows Terminal reads ";" in its own command line as the start of another
+ * subcommand, inside a quoted argument too (a literal one must be written
+ * "\;"). The project directory reaches wt twice, as -d and inside --title, and
+ * its name is chosen by whoever made the folder: one unpacked from an archive
+ * as "x;calc.exe" would start calc.exe from this button (#20). Refused, not
+ * escaped: a real project path with ";" is rare, and a refusal cannot be got
+ * subtly wrong the way an escaping rule can. Checked before anything is
+ * written, so a refused launch leaves no record or settings file behind.
+ */
+function refuseTerminalSeparator(dir) {
+  if (!dir.includes(';')) return;
+  const err = new Error(
+    `Not started: the project path contains ";", which Windows Terminal treats as a command separator. ` +
+      `Rename the folder to start Claude here from LayerCake. (${dir})`
+  );
+  err.status = 400;
+  throw err;
+}
+
 export async function launchClaude({ dir, port, screen }) {
+  refuseTerminalSeparator(dir);
   const id = crypto.randomBytes(8).toString('hex');
   const secret = crypto.randomBytes(24).toString('hex');
   const sessionId = crypto.randomUUID();

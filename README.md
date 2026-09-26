@@ -391,6 +391,9 @@ Things to know:
 - The status line runs through Git Bash when installed, as Claude Code does it; `curl.exe` ships
   with Windows 10 and later.
 - The window placement is approximate: Windows Terminal sizes in character cells, not pixels.
+- A project whose path contains `;` is refused. Windows Terminal reads `;` as "start another
+  command", even inside quotes, so a folder named to exploit that could run a program of its
+  maker's choosing beside Claude. Rename the folder to launch there.
 - Workspace trust not yet accepted, `--safe-mode`, or a managed hook policy silence both channels;
   the session view says so rather than showing stale numbers.
 

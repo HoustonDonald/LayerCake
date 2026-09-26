@@ -183,11 +183,16 @@ answer is the line to print and is never sent to the model.
 page token: a per-launch secret in the path (constant-time compare), no `Origin` header allowed,
 and the global Host guard. Launch records, secret included, are kept in app data so a session keeps
 reporting across a LayerCake restart; the settings file that Claude Code reads holds the same
-secret under the same user ACL.
+secret under the same user ACL. The secret is also on `curl.exe`'s command line at every
+status-line refresh, because the status-line command embeds the ingest URL. Only same-user
+processes can read that, and they can already read the file (#21).
 
 **`launch.js` starts a process with a fixed argv.** The directory comes from the scan store, never
 the request; screen numbers are validated; the settings go in a file because Windows Terminal
-splits its arguments on `;`. Claude's own edits in a launched session bypass LayerCake's
+splits its arguments on `;`, even inside a quoted argument. For the same reason a project path
+containing `;` is refused before anything is written (#20): the directory reaches `wt` as `-d` and
+inside `--title`, and a folder's name is chosen by whoever made it. Any new argument to `wt` that
+carries outside text needs the same check. Claude's own edits in a launched session bypass LayerCake's
 snapshot-first rule, since they are Claude Code's writes, not LayerCake's.
 
 **Only `summaries.js` may spend Claude usage, and only on an explicit request.** Everything else
