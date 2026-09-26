@@ -32,6 +32,18 @@ export const SENTINELS = {
 export const PRIOR_LAUNCH = { id: 'feedfacecafebeef', secret: 'a'.repeat(48) };
 export const PRIOR_LAUNCH_B = { id: 'fffe0000fffe0000', secret: 'c'.repeat(48) };
 
+/**
+ * This process's creation time as a UTC FILETIME, the form Claude Code writes
+ * into procStart. Windows only; elsewhere the pid file carries none.
+ */
+function ownProcStart() {
+  if (process.platform !== 'win32') return null;
+  const ps = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const r = spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${process.pid}).StartTime.ToFileTimeUtc()`], { encoding: 'utf8', timeout: 10000, windowsHide: true });
+  const v = String(r.stdout || '').trim();
+  return /^\d+$/.test(v) ? v : null;
+}
+
 /** A two-record transcript (one prompt, one reply): enough for discovery and a session view. */
 export async function minimalTranscript(projDir, sessionId, proj, text, { model = 'claude-opus-5', contextTokens = 1001 } = {}) {
   const at = (s) => new Date(Date.now() - 60_000 + s * 1000).toISOString();
@@ -189,11 +201,20 @@ export async function makeSessionFixture(smokeDir, proj) {
   await fs.writeFile(path.join(smokeDir, 'claude-stub', 'mode'), 'ok');
   await fs.writeFile(path.join(projDir, IDS.onDisk, 'subagents', `agent-${AGENT_BG}.jsonl`), '{"type":"user"}\n');
 
-  // A running session: this smoke process's own pid is guaranteed alive.
+  // A running session: this smoke process's own pid is guaranteed alive. Its
+  // procStart is this process's real creation time, as Claude Code writes it,
+  // so the check that drops reused pids must keep this one (#1).
   await fs.mkdir(path.join(claudeData, 'sessions'), { recursive: true });
+  const procStart = ownProcStart();
   await fs.writeFile(
     path.join(claudeData, 'sessions', `${process.pid}.json`),
-    JSON.stringify({ pid: process.pid, sessionId: IDS.onDisk, cwd: proj, status: 'busy', kind: 'interactive', version: '2.1.282' })
+    JSON.stringify({ pid: process.pid, sessionId: IDS.onDisk, cwd: proj, status: 'busy', kind: 'interactive', version: '2.1.282', ...(procStart ? { procStart } : {}) })
+  );
+  // A crashed session's pid file whose pid now belongs to another process:
+  // the parent of this run is alive, but was not started at this procStart.
+  await fs.writeFile(
+    path.join(claudeData, 'sessions', `${process.ppid}.json`),
+    JSON.stringify({ pid: process.ppid, sessionId: IDS.future, cwd: proj, status: 'busy', kind: 'interactive', version: '2.1.282', procStart: '116444736000000000' })
   );
   await fs.writeFile(path.join(claudeData, 'sessions', `${process.pid}.deadbeef.key`), SENTINELS.keyFile);
 
@@ -359,6 +380,12 @@ export async function runSessionChecks({ base, token, check, proj, appData }) {
     future?.health.context.window === 1_000_000 && future.health.context.windowSource === 'observed usage' &&
       Math.abs(future.health.context.pct - 0.35) < 1e-9 && !future.health.flags.includes('warning'),
     JSON.stringify(future?.health.context && { window: future.health.context.window, source: future.health.context.windowSource, pct: future.health.context.pct }));
+  // #1: a pid file whose pid is alive but whose process started at another time.
+  if (process.platform === 'win32') {
+    check('a reused pid (alive, but started at another time than procStart) does not make a session live',
+      future?.live === null, JSON.stringify(future?.live));
+    check('a running process that matches its procStart stays live', d?.live?.pid === process.pid, JSON.stringify(d?.live));
+  }
   check('memory loaded at start and on nested traversal are both recorded',
     d?.instructions.length === 2 && d.instructions.some((i) => i.reason === 'session_start') && d.instructions.some((i) => i.reason === 'nested'));
   const bg = d?.subagents.find((s) => s.agentId === AGENT_BG);

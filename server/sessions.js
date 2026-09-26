@@ -11,6 +11,7 @@
  * which is a secret and is never read.
  */
 
+import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -96,18 +97,95 @@ function isAlive(pid) {
 }
 
 /**
+ * PID reuse (#1). A crashed session can leave its pid file behind, and Windows
+ * reuses pids, so "a process with this pid exists" can be an unrelated
+ * process. The pid file carries procStart: the process creation time as a UTC
+ * FILETIME (measured: equal to Get-Process StartTime.ToFileTimeUtc() to the
+ * 100 ns tick for a running session). A process whose creation time differs
+ * is not the session. The image name cannot decide it: a running session was
+ * seen as "claude.exe.old.<n>" after Claude Code updated its own binary.
+ *
+ * Node cannot read another process's creation time, so this asks PowerShell,
+ * once for all pids that need it: a fixed argv from its absolute System32
+ * path, pids validated as integers, 5 s timeout, output parsed as numbers
+ * only. A new spawn site, stated in CLAUDE.md. Results are cached per pid and
+ * procStart for START_CHECK_TTL_MS: only a pid seen for the first time waits
+ * for the query; a stale entry is refreshed in the background. A pid the query
+ * could not read (another user's process, or gone) falls back to isAlive.
+ */
+const START_CHECK_TTL_MS = 60_000;
+const START_QUERY_TIMEOUT_MS = 5000;
+const startChecks = new Map(); // pid -> { procStart, match: boolean | null, at }
+let startQuery = null;
+
+function queryStartTimes(pids) {
+  const ps = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const ids = pids.filter((p) => Number.isInteger(p) && p > 0).join(',');
+  const script = `Get-Process -Id ${ids} -ErrorAction SilentlyContinue | ForEach-Object { try { '{0} {1}' -f $_.Id, $_.StartTime.ToFileTimeUtc() } catch {} }`;
+  return new Promise((resolve) => {
+    execFile(ps, ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: START_QUERY_TIMEOUT_MS, windowsHide: true }, (_err, stdout) => {
+      const out = new Map();
+      for (const line of String(stdout || '').split(/\r?\n/)) {
+        const m = /^(\d+) (\d+)$/.exec(line.trim());
+        if (m) out.set(Number(m[1]), m[2]);
+      }
+      resolve(out); // a failed or timed-out query reads as "unknown", never as "dead"
+    });
+  });
+}
+
+async function refreshStartChecks(entries) {
+  if (!entries.length) return;
+  const run = queryStartTimes(entries.map((e) => e.pid)).then((times) => {
+    const at = Date.now();
+    for (const e of entries) {
+      const live = times.get(e.pid);
+      startChecks.set(e.pid, { procStart: e.procStart, match: live === undefined ? null : live === e.procStart, at });
+    }
+  });
+  startQuery = run.finally(() => {
+    if (startQuery === run) startQuery = null;
+  });
+  return run;
+}
+
+/** False only when the running process provably is not the one that wrote the pid file. */
+async function sameProcess(candidates) {
+  if (process.platform !== 'win32') return () => true;
+  const now = Date.now();
+  const missing = [];
+  const stale = [];
+  for (const c of candidates) {
+    const known = startChecks.get(c.pid);
+    if (!known || known.procStart !== c.procStart) missing.push(c);
+    else if (now - known.at > START_CHECK_TTL_MS) stale.push(c);
+  }
+  if (missing.length) await refreshStartChecks([...missing, ...stale]);
+  else if (stale.length && !startQuery) refreshStartChecks(stale); // background, stale values meanwhile
+  return (c) => startChecks.get(c.pid)?.match !== false;
+}
+
+/**
  * Sessions with a running process. A pid file whose process is gone is
  * dropped: Claude Code does not always remove it after a crash.
  */
 export async function liveSessions() {
   const dir = path.join(claudeDataDir(), 'sessions');
-  const out = [];
+  const found = [];
   for (const entry of await listDir(dir)) {
     if (!entry.isFile() || !LIVE_FILE_RE.test(entry.name)) continue;
     const result = await readForDisplay(path.join(dir, entry.name));
     const j = result.parsed;
     if (!j || !SESSION_ID_RE.test(String(j.sessionId || ''))) continue;
     if (!isAlive(j.pid)) continue;
+    found.push(j);
+  }
+  // Only files that carry a procStart can be checked; older ones keep isAlive.
+  const checkable = found.filter((j) => typeof j.procStart === 'string' && /^\d+$/.test(j.procStart)).map((j) => ({ pid: j.pid, procStart: j.procStart }));
+  const same = await sameProcess(checkable);
+  const out = [];
+  for (const j of found) {
+    if (typeof j.procStart === 'string' && /^\d+$/.test(j.procStart) && !same({ pid: j.pid, procStart: j.procStart })) continue;
     out.push({
       pid: j.pid,
       sessionId: j.sessionId,

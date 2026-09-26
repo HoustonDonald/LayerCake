@@ -42,9 +42,22 @@ const FILES_DIR = 'files';
  * retried with backoff, as graceful-fs does, which is safe because the temp
  * file still exists and the target is untouched until it succeeds. Windows
  * only: elsewhere those codes are real permission errors, not a race.
+ *
+ * A read-only target gives the same EPERM but will never succeed, so it fails
+ * at once rather than after the whole window. That is what lets the window be
+ * long: 2 s measured about 1 failure in 100 saves against a reader holding
+ * the file ~70% of the time, and each doubling of attempts squares that.
  */
 const RENAME_RETRY_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
-const RENAME_RETRY_MS = 2000;
+const RENAME_RETRY_MS = 5000;
+
+async function isReadOnly(p) {
+  try {
+    return ((await fs.stat(p)).mode & 0o200) === 0;
+  } catch {
+    return false;
+  }
+}
 
 async function renameRetrying(from, to) {
   let waited = 0;
@@ -53,6 +66,7 @@ async function renameRetrying(from, to) {
       return await fs.rename(from, to);
     } catch (err) {
       if (process.platform !== 'win32' || !RENAME_RETRY_CODES.has(err.code) || waited >= RENAME_RETRY_MS) throw err;
+      if (await isReadOnly(to)) throw err;
       await new Promise((r) => setTimeout(r, delay));
       waited += delay;
     }

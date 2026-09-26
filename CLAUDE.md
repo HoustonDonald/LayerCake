@@ -131,8 +131,9 @@ Claude data folder.
 the reverse, so a new route cannot skip the snapshot by forgetting to call it. Keep that direction.
 Writes land via temp file plus rename in the same directory, so a crash leaves the old file or the
 new one, never a half-written config that breaks every future session. On Windows the rename is
-retried for up to 2 s on EPERM/EACCES/EBUSY, because a rename over a file another process has open
-fails: without it, 99 of 300 writes failed with a reader polling the target (#49).
+retried for up to 5 s on EPERM/EACCES/EBUSY, because a rename over a file another process has open
+fails: without it, 99 of 300 writes failed with a reader polling the target (#49). A read-only
+target gives the same EPERM, so it is checked and fails at once instead of after the window.
 
 **The snapshot store must never live under `~/.claude`.** That tree is a restore target, and a
 backup the restore can overwrite is not a backup. See `snapshotRoot()`.
@@ -227,6 +228,12 @@ containing `;` is refused before anything is written (#20): the directory reache
 inside `--title`, and a folder's name is chosen by whoever made it. Any new argument to `wt` that
 carries outside text needs the same check. Claude's own edits in a launched session bypass LayerCake's
 snapshot-first rule, since they are Claude Code's writes, not LayerCake's.
+
+**The processes LayerCake starts are few and fixed.** `launch.js` (wt.exe), `summaries.js`
+(`claude -p`), and `sessions.js`, which asks PowerShell for process start times so a reused PID
+cannot pass for a running session (#1). The last runs one `Get-Process` query from its absolute
+System32 path, pids validated as integers, a 5 s timeout, and the output parsed as numbers only; it
+is cached per pid for 60 s. Any new spawn needs the same shape and a line here.
 
 **Only `summaries.js` may spend Claude usage, and only on an explicit request.** Everything else
 reads files. The AI summary runs `claude -p` with a fixed argv (Haiku, `--safe-mode`, `--tools ""`,
