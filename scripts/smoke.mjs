@@ -23,6 +23,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { projectSlug } from '../server/paths.js';
+
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PORT = Number(process.env.SMOKE_PORT || 5399);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -134,6 +136,21 @@ try {
   const html = await (await fetch(`${BASE}/`)).text();
   const token = /name="layercake-token" content="([a-f0-9]+)"/.exec(html)?.[1];
   check('token is injected into served HTML', Boolean(token));
+
+  // Pinned against folder names Claude Code actually created (2026-09-26): a
+  // dot and a space are replaced too, not just separators and the colon.
+  if (process.platform === 'win32') {
+    check('project slug replaces separators and the colon', projectSlug('C:\\dev\\LayerCake') === 'C--dev-LayerCake');
+    check(
+      'project slug replaces a dot (worktree path)',
+      projectSlug('C:\\dev\\beetle-etl\\.claude\\worktrees\\bold-leavitt-3a0334') ===
+        'C--dev-beetle-etl--claude-worktrees-bold-leavitt-3a0334'
+    );
+    check(
+      'project slug replaces a space',
+      projectSlug('C:\\Users\\me\\Finance Optimization') === 'C--Users-me-Finance-Optimization'
+    );
+  }
 
   const H = { 'X-LayerCake-Token': token, 'Content-Type': 'application/json' };
 

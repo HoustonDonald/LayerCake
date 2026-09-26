@@ -95,11 +95,20 @@ export function isUncPath(p) {
 
 /**
  * Claude Code stores per-project state under ~/.claude/projects/<slug>, where
- * the slug is the absolute path with separators and colons replaced by dashes.
- * C:\dev\LayerCake -> C--dev-LayerCake
+ * the slug is the absolute path with every character that is not an ASCII
+ * letter or digit replaced by a dash. (Non-ASCII letters are assumed to be
+ * replaced too; no such path existed to check against.)
+ *   C:\dev\LayerCake                        -> C--dev-LayerCake
+ *   C:\dev\beetle-etl\.claude\worktrees\x   -> C--dev-beetle-etl--claude-worktrees-x
+ *   C:\Users\me\Finance Optimization        -> C--Users-me-Finance-Optimization
+ *
+ * An earlier rule replaced only separators and the colon. Checked 2026-09-26
+ * against every project folder on a real machine, comparing each folder name
+ * with the cwd its own transcripts record: that rule missed 3 of 7 (a dot in a
+ * worktree path, a space in a folder name), this one matched all 7.
  */
 export function projectSlug(dir) {
-  return path.resolve(dir).replace(/[\\/:]/g, '-');
+  return path.resolve(dir).replace(/[^a-zA-Z0-9]/g, '-');
 }
 
 export function projectMemoryDir(dir) {
