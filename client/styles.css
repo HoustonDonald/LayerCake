@@ -847,6 +847,67 @@ pre.code {
   border-radius: 4px;
 }
 
+/* Takes the text box's place while reviewing, so it gets the same share of the
+   pane rather than squeezing the editor below it. */
+.editor-review {
+  flex: 1;
+  min-height: 320px;
+  overflow: auto;
+}
+
+.diff {
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-code);
+  overflow-x: auto;
+}
+
+.diff-summary {
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+/* inline-block with min-width 100% makes every line as wide as the longest
+   one, so a row's background still reaches the edge when scrolled sideways. */
+.diff-lines {
+  display: inline-block;
+  min-width: 100%;
+  padding: 6px 0;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.diff-head {
+  padding: 2px 14px;
+  color: var(--text-faint);
+}
+
+.diff-hunk + .diff-hunk .diff-head {
+  margin-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+
+.diff-line {
+  padding: 0 14px;
+  white-space: pre;
+}
+
+.diff-add {
+  background: #e6f4ea;
+}
+
+.diff-del {
+  background: #fbe9e7;
+}
+
+.diff-note {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
 .ack {
   display: flex;
   align-items: center;

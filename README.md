@@ -187,6 +187,16 @@ The app reads the whole lineage and can edit the files it found. Writes are narr
   leaves the rest working.
 - **Concurrent edits are detected.** The editor sends the mtime it loaded; a mismatch returns 409
   rather than silently winning the race against your other editor.
+- **A pending edit can be reviewed before it is saved.** **Review changes** in the editor swaps the
+  text box for a line diff of the draft against the body loaded from disk: unified hunks with three
+  lines of context and a count of lines added and removed, computed in the browser by jsdiff (the
+  `diff` package). **Save** works from either view, and reviewing is optional. Opening the review
+  re-reads the file through `/api/file`, the same reader as everything else, and compares its mtime
+  with the one loaded. If they differ it says the file changed on disk and draws no diff, because a
+  diff against the old body would not show what Save replaces, and Save would get the 409 above.
+- **An edited file is saved with LF line endings.** A browser text box turns every line break into
+  LF, so after the first keystroke the draft has no CR in it. For a CRLF file the review says so and
+  leaves line endings out of the diff, so the edit itself stays visible.
 - **Credential files can be neither read nor written**, refused at scan time, at read time and at
   write time.
 - **Executable config requires acknowledgement.** Hook files are executed by Claude Code rather than
