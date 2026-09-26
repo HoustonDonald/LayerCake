@@ -30,6 +30,7 @@ export const SENTINELS = {
 
 /** A launch made before a (simulated) restart: on disk, never registered in memory. */
 export const PRIOR_LAUNCH = { id: 'feedfacecafebeef', secret: 'a'.repeat(48) };
+const PRIOR_LAUNCH_OLDER = { id: 'abad1deaabad1dea', secret: 'c'.repeat(48) };
 
 export const IDS = {
   onDisk: '11111111-1111-4111-8111-111111111111',
@@ -184,7 +185,32 @@ export async function makeSessionFixture(smokeDir, proj) {
   await fs.mkdir(path.join(appData, 'launches'), { recursive: true });
   await fs.writeFile(
     path.join(appData, 'launches', `${PRIOR_LAUNCH.id}.json`),
-    JSON.stringify({ ...PRIOR_LAUNCH, dir: proj, sessionId: IDS.launched, createdAt: '2026-09-01T00:00:00.000Z' })
+    // Written as by a previous run: it also carried the on-disk session, which
+    // ended there. Restoring must keep that end (#40).
+    JSON.stringify({
+      ...PRIOR_LAUNCH,
+      dir: proj,
+      sessionId: IDS.launched,
+      createdAt: '2026-09-01T00:00:00.000Z',
+      sessionIds: [IDS.launched, IDS.onDisk],
+      ended: { [IDS.onDisk]: 'prompt_input_exit' },
+      since: { [IDS.launched]: '2026-09-01T00:00:00.000Z', [IDS.onDisk]: '2026-09-01T00:00:01.000Z' },
+    })
+  );
+  // An older launch that carried the on-disk session EARLIER and never saw it
+  // end. After a restart nothing has been heard from either, so the session
+  // must belong to the launch that took it on last (#35). Its id sorts first,
+  // so "first launch found" would pick it.
+  await fs.writeFile(
+    path.join(appData, 'launches', `${PRIOR_LAUNCH_OLDER.id}.json`),
+    JSON.stringify({
+      ...PRIOR_LAUNCH_OLDER,
+      dir: proj,
+      sessionId: IDS.onDisk,
+      createdAt: '2026-08-31T00:00:00.000Z',
+      sessionIds: [IDS.onDisk],
+      since: { [IDS.onDisk]: '2026-08-31T00:00:00.000Z' },
+    })
   );
 
   // A card LayerCake kept for a session whose transcript has since been cleaned up.
@@ -339,12 +365,14 @@ export async function runSessionChecks({ base, token, check, proj, appData }) {
   check('six streams opened at once: four get a slot, two are refused',
     statuses.filter((s) => s === 200).length === 4 && statuses.filter((s) => s === 429).length === 2, statuses.join(','));
   for (const o of opened) o.close();
+  // All four at once: reopening one would pass with three slots leaked (#40).
   const reopened = await until(async () => {
-    const o = await openStream(base, `/api/session/${IDS.onDisk}/stream`, H);
-    o.close();
-    return o.status === 200;
+    const again = await Promise.all(Array.from({ length: 4 }, () => openStream(base, `/api/session/${IDS.onDisk}/stream`, H)));
+    for (const o of again) o.close();
+    await new Promise((r) => setTimeout(r, 150));
+    return again.every((o) => o.status === 200);
   });
-  check('closing them gives every slot back', reopened);
+  check('closing them gives every slot back (all four reopen at once)', reopened);
 
   const detailRes = await json(`/api/session/${IDS.onDisk}`);
   check('context added by hooks is counted by hook name (#25)',
@@ -385,9 +413,16 @@ function postRaw(base, pathname, body, headers = {}) {
  * Launch and ingest, with the server in dry-run mode (LAYERCAKE_LAUNCH_DRY_RUN=1):
  * everything except starting Windows Terminal.
  */
-export async function runLaunchChecks({ base, port, token, check, scanId, proj, appData }) {
+export async function runLaunchChecks({ base, port, token, check, scanId, proj, appData, reportWindowMs }) {
   const H = { 'X-LayerCake-Token': token };
   const bodies = [];
+
+  // #40 (M1): restored from a record that says the on-disk session ended.
+  // First, before anything in this run posts for that session.
+  const restoredEnd = JSON.parse((await get(base, `/api/session/${IDS.onDisk}`, H)).body);
+  check('a launch record that says a session ended restores it as ended',
+    restoredEnd.wrapped?.launchId === PRIOR_LAUNCH.id && restoredEnd.wrapped.ended === true && restoredEnd.wrapped.endReason === 'prompt_input_exit',
+    JSON.stringify({ launch: restoredEnd.wrapped?.launchId, ended: restoredEnd.wrapped?.ended, reason: restoredEnd.wrapped?.endReason }));
 
   check('launch refuses a request with no token', (await postRaw(base, '/api/launch', { scanId })).status === 403);
   check('launch refuses an unknown scan', (await postRaw(base, '/api/launch', { scanId: 'scan-nope' }, H)).status === 404);
@@ -426,6 +461,9 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
     Object.values(settings.hooks).every((groups) => groups[0].hooks[0].type === 'http' && groups[0].hooks[0].timeout === 3));
   check('the status line command is curl.exe posting to this launch',
     settings.statusLine.type === 'command' && /^curl\.exe /.test(settings.statusLine.command) && settings.statusLine.command.includes(`/ingest/${m?.[1]}/`));
+  check('the status line re-runs on a timer, so silence means stopped (#31)',
+    Number.isInteger(settings.statusLine.refreshInterval) && settings.statusLine.refreshInterval >= 1 &&
+      settings.statusLine.refreshInterval * 1000 < 45_000, `refreshInterval ${settings.statusLine.refreshInterval}`);
 
   const [launchId, secret] = m ? [m[1], m[2]] : ['0', '0'];
   const ingest = (kind, body, headers) => postRaw(base, `/ingest/${launchId}/${secret}/${kind}`, body, headers);
@@ -545,9 +583,9 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
   check('a launch from before a restart is restored at startup: its session is still marked launched',
     before.wrapped?.launchId === PRIOR_LAUNCH.id && row?.launched === true, JSON.stringify(row));
   check('until it reports again, it is neither called running nor "No running process"',
-    before.live === null && before.wrapped.unconfirmed === true && row?.unconfirmed === true &&
+    before.live === null && before.wrapped.quiet === true && row?.quiet === 'restart' &&
       before.health.reasons.some((r) => /LayerCake restarted/.test(r)) && !before.health.reasons.includes('No running process'),
-    JSON.stringify(before.health.reasons));
+    JSON.stringify({ reasons: before.health.reasons, quiet: row?.quiet }));
   check('after a switch to Haiku the window is 200K, not the earlier 1M model\'s',
     before.health.context.window === 200_000, `window ${before.health.context.window}`);
   const priorSl = await prior('statusline', { session_id: lid, context_window: { used_percentage: 5, context_window_size: 200000 } });
@@ -570,6 +608,15 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
   });
   check('the end is written to the launch record, so a restart remembers it', remembered);
 
+  // --- #40 (M4): /resume away from sid and back, inside the same terminal.
+  await hook({ hook_event_name: 'SessionEnd', reason: 'resume' });
+  d = await session(sid);
+  const endedByResume = d.wrapped.ended === true && d.wrapped.launchId === launchId;
+  await hook({ hook_event_name: 'UserPromptSubmit', prompt: 'back again' });
+  d = await session(sid);
+  check('a session /resumed back into the same terminal is no longer ended',
+    endedByResume && d.wrapped.ended === false && d.wrapped.launchId === launchId, JSON.stringify({ endedByResume, ended: d.wrapped.ended }));
+
   // --- #22: one terminal, several sessions. /clear in the launched terminal
   // ends sid, and a new session reports 3%.
   const fresh = '66666666-6666-4666-8666-666666666666';
@@ -579,6 +626,58 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
   check('after /clear, the old session does not show the new one\'s context as exact',
     d.health.context.source === 'transcript (estimate)' && d.wrapped.ended === true && d.wrapped.statusline?.sessionId === sid,
     JSON.stringify({ context: d.health.context, ended: d.wrapped.ended, sl: d.wrapped.statusline?.sessionId }));
+
+  // #36: an async event arriving after the end does not revive it.
+  await hook({ hook_event_name: 'Notification', notification_type: 'idle_prompt', message: 'late' });
+  await hook({ hook_event_name: 'InstructionsLoaded', file_path: path.join(proj, 'CLAUDE.md'), load_reason: 'session_start' });
+  d = await session(sid);
+  check('a late Notification or InstructionsLoaded does not revive an ended session', d.wrapped.ended === true && d.live?.source !== 'hooks');
+
+  // #37: a post with no valid session id is answered and changes nothing.
+  const launchesNow = async () => JSON.parse((await get(base, '/api/launches', H)).body).launches.find((x) => x.id === launchId);
+  // The launch's own first session ends first: a fallback that pinned an
+  // anonymous post on it would revive it, which is the defect (#37).
+  await hookVia(ingest, { session_id: l.sessionId, hook_event_name: 'SessionEnd', reason: 'prompt_input_exit' });
+  const beforeAnon = await launchesNow();
+  const anon = await postRaw(base, `/ingest/${launchId}/${secret}/hook`, { hook_event_name: 'UserPromptSubmit', prompt: 'who am I' });
+  const anonSl = await postRaw(base, `/ingest/${launchId}/${secret}/statusline`, { session_id: 'not-a-uuid', context_window: { used_percentage: 9 } });
+  const afterAnon = await launchesNow();
+  d = await session(sid);
+  check('a post without a valid session id is answered but changes nothing',
+    anon.status === 204 && anon.body === '' && anonSl.status === 200 &&
+      JSON.stringify(afterAnon.sessions.map((x) => [x.id, x.ended])) === JSON.stringify(beforeAnon.sessions.map((x) => [x.id, x.ended])) &&
+      d.wrapped.ended === true,
+    JSON.stringify({ before: beforeAnon.sessions.length, after: afterAnon.sessions.length, ended: d.wrapped.ended }));
+
+  // #33: hostile bodies (a toString that is not a function) are answered and
+  // do not take the server down. The fresh id has no transcript: nothing else
+  // in this run reads it.
+  const hostileBody = { toString: null };
+  const hostileId = '77777777-7777-4777-8777-777777777777';
+  const h1 = await postRaw(base, `/ingest/${launchId}/${secret}/hook`, { session_id: hostileBody, hook_event_name: hostileBody, tool_use_id: hostileBody });
+  const h2 = await postRaw(base, `/ingest/${launchId}/${secret}/hook`, {
+    session_id: hostileId, hook_event_name: 'PreToolUse', tool_use_id: hostileBody, tool_name: 'Bash', tool_input: { description: hostileBody, command: hostileBody },
+  });
+  const h3 = await postRaw(base, `/ingest/${launchId}/${secret}/hook`, {
+    session_id: hostileId, hook_event_name: 'InstructionsLoaded', file_path: hostileBody, load_reason: hostileBody, notification_type: hostileBody,
+  });
+  const h4 = await postRaw(base, `/ingest/${launchId}/${secret}/statusline`, {
+    session_id: hostileId, model: { id: hostileBody }, context_window: { used_percentage: hostileBody }, cost: { total_cost_usd: hostileBody }, rate_limits: hostileBody,
+  });
+  const stillUp = await get(base, '/', {}).catch((e) => ({ status: `request failed: ${e.code || e.message}` }));
+  check('hostile ingest bodies get an empty 204 (or a status line) and the server stays up',
+    [h1, h2, h3].every((r) => r.status === 204 && r.body === '') && h4.status === 200 && stillUp.status === 200,
+    [h1, h2, h3, h4].map((r) => r.status).concat(stillUp.status).join(','));
+
+  // #40 (M3): a record written after startup (so not restored) is read from
+  // disk on its first post.
+  const late = { id: 'decafbaddecafbad', secret: 'b'.repeat(48) };
+  await fs.writeFile(path.join(appData, 'launches', `${late.id}.json`),
+    JSON.stringify({ ...late, dir: proj, sessionId: fresh, createdAt: '2026-09-02T00:00:00.000Z' }));
+  const lateSl = await postRaw(base, `/ingest/${late.id}/${late.secret}/statusline`, { session_id: fresh, context_window: { used_percentage: 12 } });
+  const lateLaunch = JSON.parse((await get(base, '/api/launches', H)).body).launches.find((x) => x.id === late.id);
+  check('a launch record written after startup is read from disk on its first post',
+    lateSl.status === 200 && /ctx 12%/.test(lateSl.body) && lateLaunch?.sessionIds.includes(fresh), lateSl.body);
   // /resume of that session in another terminal LayerCake launched.
   await prior('statusline', { session_id: sid, context_window: { used_percentage: 61, context_window_size: 1000000 } });
   d = await session(sid);
@@ -592,6 +691,31 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
   check('and the other way round: the restored launch\'s session, resumed in the newer one, reports through it',
     ld.wrapped.launchId === launchId && ld.wrapped.ended === false && Math.abs(ld.health.context.pct - 0.44) < 1e-9,
     JSON.stringify({ launch: ld.wrapped.launchId, ended: ld.wrapped.ended, context: ld.health.context }));
+
+  // #34: a record write that fails is kept as an error, shown, and retried on
+  // the next post. Read-only makes the atomic rename over it fail (EPERM).
+  const lateFile = path.join(appData, 'launches', `${late.id}.json`);
+  const retryId = '88888888-8888-4888-8888-888888888888';
+  await fs.chmod(lateFile, 0o444);
+  await postRaw(base, `/ingest/${late.id}/${late.secret}/statusline`, { session_id: retryId });
+  const failedShown = await until(async () =>
+    Boolean(JSON.parse((await get(base, '/api/launches', H)).body).launches.find((x) => x.id === late.id)?.persistError));
+  await fs.chmod(lateFile, 0o644);
+  await postRaw(base, `/ingest/${late.id}/${late.secret}/statusline`, { session_id: retryId });
+  const recovered = await until(async () => {
+    const rec = JSON.parse(await fs.readFile(lateFile, 'utf8'));
+    const shown = JSON.parse((await get(base, '/api/launches', H)).body).launches.find((x) => x.id === late.id);
+    return rec.sessionIds?.includes(retryId) && !shown?.persistError;
+  });
+  check('a failed record write is shown, then retried on the next post', failedShown && recovered, JSON.stringify({ failedShown, recovered }));
+
+  // #31 and #4: silence past the report window reads as not running. lid last
+  // reported through the dry-run launch above; wait the window out.
+  await new Promise((r) => setTimeout(r, reportWindowMs + 400));
+  ld = await session(lid);
+  check('a launched session that stops reporting reads as not running, not running forever',
+    ld.live === null && ld.wrapped.quiet === true && ld.health.state === 'offline' && ld.health.reasons.some((r) => /No report for over/.test(r)),
+    JSON.stringify({ live: ld.live, quiet: ld.wrapped.quiet, reasons: ld.health.reasons }));
 
   check('every hook answer is 204 with an EMPTY body, on every path above', allEmpty);
   check('no response carries a hook\'s tool input', !bodies.join('\n').includes(SENTINELS.hookToolInput));

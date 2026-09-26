@@ -62,10 +62,12 @@ Env knobs: `PORT` (default 5178), `CLAUDE_EXPLORER_DIR_TIMEOUT_MS` (default 3000
 `LAYERCAKE_SNAPSHOT_DIR` (default `%LOCALAPPDATA%\LayerCake\snapshots`), `LAYERCAKE_APPDATA_DIR`
 (default `%LOCALAPPDATA%\LayerCake\data`) and `LAYERCAKE_CLAUDE_DATA_DIR` (default `~/.claude`, read
 for session data only; smoke points it at a synthetic folder so real sessions are never read).
-Claude Code's own `CLAUDE_CONFIG_DIR` is not honoured anywhere yet. Two more exist for smoke only:
-`LAYERCAKE_LAUNCH_DRY_RUN=1` (launch builds its argv and settings but starts nothing) and
+Claude Code's own `CLAUDE_CONFIG_DIR` is not honoured anywhere yet. Three more exist for smoke only:
+`LAYERCAKE_LAUNCH_DRY_RUN=1` (launch builds its argv and settings but starts nothing),
 `LAYERCAKE_CLAUDE_CMD` (a JSON array replacing `claude` for AI summaries, pointed at
-`scripts/smoke-claude-stub.mjs`, so no usage is ever spent testing).
+`scripts/smoke-claude-stub.mjs`, so no usage is ever spent testing), and
+`LAYERCAKE_REPORT_WINDOW_MS` (how long a launched session counts as running after its last report;
+45 s in use, a few seconds in smoke so "stopped reporting" can be tested).
 
 `npm start` builds only when `public/index.html` is older than the newest file under `client/`, so a
 change to `server/` alone does not trigger a rebuild and does not need one.
@@ -189,11 +191,24 @@ processes can read that, and they can already read the file (#21).
 
 **Ingest state is per session, not per launch** (#22). One terminal carries several session ids
 (`/clear`, `/resume`), and launch-wide state once showed the new session's context, labelled
-exact, on the old one. A status line counts as exact only for its own session and only until that
-session ends; a session in two launches belongs to the one that heard from it last. What the hooks
-report is memory only; the launch record is rewritten when a session id is first seen or ends, so
-a restart remembers both, and restored launches count as "not heard from since restart" until
-they report, never as running (#24).
+exact, on the old one. A status line counts as exact only for its own session and only while that
+session is reporting. A session in two launches belongs to the one that heard from it last, or,
+before either has heard from it since a restart, the one that took it on last (a persisted `since`).
+What the hooks report is memory only; the launch record is rewritten when a session id is first
+seen or ends, so a restart remembers them. A failed write is retried and shown, never silent. A
+post without a valid session id is answered and changes nothing, and only a status line or a
+prompt/tool event revives an ended session, because Notification and InstructionsLoaded are async
+and can land after the end (#35, #36, #37).
+
+**A launched session is running only while it reports.** Its status line re-runs every 15 s
+(`refreshInterval`, `STATUS_REFRESH_S` in ingest.js), so silence past 45 s means it is not running,
+whether it crashed, its tab closed, or LayerCake restarted and has not heard from it since (#31,
+#4). Never infer "running" from memory or from the absence of an end.
+
+**Ingest bodies are untrusted even with the secret: errors are values here too.** Only strings are
+read as text (`str()`), because `String()` on an object whose `toString` is not a function throws,
+and Express 4 does not catch a rejected async handler, so a throw exits the server (#33). The
+handler also catches and still answers with an empty 204.
 
 **`launch.js` starts a process with a fixed argv.** The directory comes from the scan store, never
 the request; screen numbers are validated; the settings go in a file because Windows Terminal
@@ -309,10 +324,11 @@ partially. A truncated file restored is silent data loss.
   comes from the `Notification`/`PermissionRequest` hooks a launch installs. Answering a permission
   prompt fires no hook, so an approved long-running tool still reads as waiting until it finishes;
   the banner says so. The wait also ends when the transcript records that tool's result (#23).
-- **A launched session's liveness comes from its hooks.** Claude Code writes `sessions/<pid>.json`
-  lazily (none 30 s after a launch, before any prompt), so a launched session counts as running
-  until its `SessionEnd` hook fires. A crash that skips `SessionEnd` reads as running (#4); after a
-  LayerCake restart it reads as "not heard from since restart" instead.
+- **A launched session's liveness comes from its reports.** Claude Code writes `sessions/<pid>.json`
+  lazily (none 30 s after a launch, before any prompt), so without a pid file a launched session
+  counts as running only while its status line and hooks keep reporting (every 15 s at least).
+  Sessions launched before that refresh existed report only on activity and read as not running
+  while idle.
 - **Closing LayerCake under a launched session makes its hooks fail**, visibly: a "hook error" notice
   per event in that terminal. Claude does not see non-blocking hook errors, so it costs no tokens.
 - **The launched status line assumes Git Bash** (Claude Code's own choice when installed). Under the

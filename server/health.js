@@ -54,7 +54,7 @@ export function computeHealth(model, live, { now = Date.now(), mtimeMs = 0, wrap
   // is estimated from the transcript's last API call. Only this session's own
   // status line counts, and only while it has not ended: after /clear or an
   // exit, the last line heard is another session's, or a stale one (#22).
-  const own = wrapped && !wrapped.ended && wrapped.statusline?.sessionId === model.sessionId;
+  const own = wrapped && wrapped.reporting && wrapped.statusline?.sessionId === model.sessionId;
   const exact = own ? wrapped.statusline.context : null;
   const window = exact?.windowTokens || contextWindow(model.modelId, model.lastModel);
   const tokens = model.context?.tokens ?? null;
@@ -63,7 +63,7 @@ export function computeHealth(model, live, { now = Date.now(), mtimeMs = 0, wrap
   const source = typeof exact?.usedPercentage === 'number' ? 'status line (exact)' : 'transcript (estimate)';
   const reasons = [];
   const flags = new Set();
-  if (live && wrapped?.waiting) {
+  if (live && wrapped?.reporting && wrapped.waiting) {
     flags.add('waiting');
     reasons.push(wrapped.waiting.message || 'Waiting for you');
   }
@@ -89,8 +89,20 @@ export function computeHealth(model, live, { now = Date.now(), mtimeMs = 0, wrap
     // something Claude Code said (#23).
     const busyReason = live.source === 'hooks' ? 'A tool is running (from its hooks)' : 'Claude Code reports it busy';
     reasons.push(busy ? busyReason : writing ? 'Transcript written in the last 15 s' : 'Running, not busy');
-  } else if (wrapped?.unconfirmed) {
-    reasons.push('LayerCake restarted after launching this session; it shows as running again when it next reports');
+  } else if (wrapped?.quiet) {
+    // A launched session's status line re-runs every refreshS seconds while
+    // it runs, so silence past the window is evidence it is not (#31).
+    const every = `a running launched session reports every ${wrapped.refreshS} s`;
+    if (wrapped.restored && !wrapped.lastSeenAt) {
+      const sinceRestart = now - Date.parse(wrapped.registeredAt);
+      reasons.push(
+        sinceRestart <= wrapped.reportWindowS * 1000
+          ? `LayerCake restarted moments ago; waiting for this session's next report (${every})`
+          : `No report since LayerCake restarted; ${every}, so this one is not running`
+      );
+    } else {
+      reasons.push(`No report for over ${wrapped.reportWindowS} s; ${every}, so this one is not running (it crashed, or its terminal closed)`);
+    }
   } else {
     reasons.push('No running process');
   }

@@ -45,6 +45,7 @@ function freePort() {
 // would otherwise share one, and the loser's server dies of EADDRINUSE while
 // its checks run against the winner's server, fixture and code (#28).
 const PORT = Number(process.env.SMOKE_PORT || (await freePort()));
+const REPORT_WINDOW_MS = 4000;
 const BASE = `http://127.0.0.1:${PORT}`;
 
 let pass = 0;
@@ -168,6 +169,9 @@ const server = spawn(process.execPath, [path.join(ROOT, 'server', 'index.js')], 
     LAYERCAKE_APPDATA_DIR: appData,
     // Launches build their argv and settings but never start Windows Terminal.
     LAYERCAKE_LAUNCH_DRY_RUN: '1',
+    // A launched session counts as running for this long after its last
+    // report. 45 s in use; short here so "stopped reporting" can be tested.
+    LAYERCAKE_REPORT_WINDOW_MS: String(REPORT_WINDOW_MS),
     // AI summaries run a stand-in for claude: no usage is ever spent here.
     LAYERCAKE_CLAUDE_CMD: JSON.stringify([
       process.execPath,
@@ -636,7 +640,7 @@ try {
   await runSessionChecks({ base: BASE, token, check, proj, appData });
 
   // --- launch and ingest (Phase 2), dry run --------------------------------
-  await runLaunchChecks({ base: BASE, port: PORT, token, check, scanId: lineage.scanId, proj, appData });
+  await runLaunchChecks({ base: BASE, port: PORT, token, check, scanId: lineage.scanId, proj, appData, reportWindowMs: REPORT_WINDOW_MS });
 
   // --- AI summaries, against a stand-in claude --------------------------------
   await runSummaryChecks({ base: BASE, token, check, proj, smokeDir });

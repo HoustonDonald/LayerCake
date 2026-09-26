@@ -8,7 +8,8 @@
  * The empty body is the zero-token contract. Claude Code treats a 2xx with an
  * empty body as "success, no output", so nothing reaches Claude's context
  * (docs: hooks, "HTTP response handling"). A JSON body could add context or
- * block an action, which is why this module never sends one to a hook.
+ * block an action, which is why this module never sends one to a hook, on
+ * any path, a failure included.
  *
  * Guards, because these routes are not under /api and so not behind the page
  * token or the origin guard:
@@ -19,13 +20,20 @@
  *    with the secret.
  * What arrives is held in memory only, reduced to what the UI shows: tool
  * names and one-line summaries, never tool input or output bodies. The one
- * thing written down is which session ids a launch carried and which ended,
- * so a restart does not forget them (#24).
+ * thing written down is which session ids a launch carried, since when, and
+ * which ended, so a restart does not forget them (#24).
  *
  * State is kept per SESSION within a launch, not per launch (#22). One
  * terminal carries several session ids over its life: /clear starts a new
  * one, /resume switches to another. Launch-wide state showed the new
  * session's numbers, labelled exact, on the old one.
+ *
+ * Liveness is evidence, not memory (#31, #4). The launch's status line
+ * re-runs every STATUS_REFRESH_S seconds (statusLine.refreshInterval, docs:
+ * status line), so a running session reports at least that often. A launched
+ * session counts as running only if it reported within REPORT_WINDOW_MS; a
+ * crash, a closed tab, or a restart of LayerCake all read as "no report since
+ * ..." rather than as running forever.
  */
 
 import crypto from 'node:crypto';
@@ -34,24 +42,39 @@ import { listLaunchRecords, readLaunch, updateLaunchRecord } from './appdata.js'
 import { SESSION_ID_RE } from './sessions.js';
 import { toolSummary } from './transcript.js';
 
+/** How often a launched session's status line re-runs, in seconds; launch.js puts it in the settings. */
+export const STATUS_REFRESH_S = 15;
+/**
+ * Silence longer than this means the session is not running: three missed
+ * refreshes. LAYERCAKE_REPORT_WINDOW_MS shortens it for smoke only.
+ */
+const REPORT_WINDOW_MS = Number(process.env.LAYERCAKE_REPORT_WINDOW_MS) || STATUS_REFRESH_S * 3 * 1000;
+
 const MAX_EVENTS = 200;
 const PREVIEW_CHARS = 200;
+/** Sessions remembered per launch; past this the oldest ended ones go (#39). */
+const MAX_SESSIONS = 200;
 
 /** launchId -> launch. Populated by launch.js and, at startup, from app data. */
 const launches = new Map();
 
+/** Hook and status line bodies are untrusted: only strings are read as text (#33). */
+const str = (v) => (typeof v === 'string' ? v : '');
+
 function clip(text, max = PREVIEW_CHARS) {
-  const s = typeof text === 'string' ? text : '';
+  const s = str(text);
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
-function blankSession() {
+function blankSession(since = null) {
   return {
+    // When this launch first carried the session: persisted, and the tie key
+    // for a session found in two launches after a restart (#35).
+    since,
     statusline: null,
     statuslineAt: null,
     lastHookAt: null,
-    // Last post of any kind for this session: picks the launch that holds a
-    // session now, when /resume has carried it into a later launch.
+    // Last post of any kind: liveness, and the launch that holds the session now.
     lastSeenAt: null,
     events: [],
     waiting: null,
@@ -66,13 +89,15 @@ function blankSession() {
 
 function blank(record, restored) {
   const ended = record.ended && typeof record.ended === 'object' ? record.ended : {};
+  const since = record.since && typeof record.since === 'object' ? record.since : {};
   const ids = Array.isArray(record.sessionIds) ? record.sessionIds : [record.sessionId];
   const sessions = new Map();
-  for (const id of ids.filter((x) => SESSION_ID_RE.test(String(x || '')))) {
-    const s = blankSession();
+  for (const id of ids.filter((x) => SESSION_ID_RE.test(str(x)))) {
+    // A record from before `since` existed: the launch's own time is the best known.
+    const s = blankSession(str(since[id]) || str(record.createdAt) || null);
     if (Object.hasOwn(ended, id)) {
       s.ended = true;
-      s.endReason = typeof ended[id] === 'string' ? ended[id] : null;
+      s.endReason = str(ended[id]) || null;
     }
     sessions.set(id, s);
   }
@@ -83,11 +108,9 @@ function blank(record, restored) {
     sessionId: record.sessionId,
     createdAt: record.createdAt,
     sessions,
-    // The session a post without a session id belongs to: the latest seen.
-    currentId: record.sessionId,
-    // Restored from disk after a restart: until a session reports again,
-    // nothing in memory says whether it is still running.
+    // Restored from disk after a restart: what the hooks said before is gone.
     restored,
+    registeredAt: new Date().toISOString(),
     persisting: Promise.resolve(),
     persistError: null,
   };
@@ -99,11 +122,7 @@ export function registerLaunch(record, { restored = false } = {}) {
   return launches.get(record.id);
 }
 
-/**
- * Loads every launch record from app data. Before this, a launched session
- * read as "not running" after a restart until its next post, which for a
- * session idle at the prompt can be an hour (#24).
- */
+/** Loads every launch record from app data, so a restart does not forget its launches (#24). */
 export async function restoreLaunches() {
   for (const record of await listLaunchRecords()) registerLaunch(record, { restored: true });
 }
@@ -130,80 +149,82 @@ export function listLaunches() {
 
 /**
  * The launch that holds a session now, with that session's state. A session
- * /resume'd into a later launch appears in both; the one that heard from it
- * last wins, and a launch that has not heard from it at all loses to one
- * that has.
+ * /resume'd into another launch appears in both: the one that heard from it
+ * last wins, and after a restart, when nothing has been heard yet, the one
+ * that started carrying it last (#35).
  */
 function sessionFor(sessionId) {
   let best = null;
   for (const l of launches.values()) {
     const s = l.sessions.get(sessionId);
     if (!s) continue;
-    const key = s.lastSeenAt || '';
-    if (!best || key > best.key || (key === best.key && String(l.createdAt) > String(best.l.createdAt))) best = { l, s, key };
+    // Compared as a pair, not one joined string: a missing lastSeenAt must
+    // lose to any real one, and '|' sorts after every digit.
+    const seen = s.lastSeenAt || '';
+    const since = s.since || '';
+    if (!best || seen > best.seen || (seen === best.seen && since > best.since)) best = { l, s, seen, since };
   }
   return best;
 }
 
 function secretMatches(expected, supplied) {
-  const a = Buffer.from(String(supplied || ''));
-  const b = Buffer.from(String(expected || ''));
+  const a = Buffer.from(str(supplied));
+  const b = Buffer.from(str(expected));
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
+
+const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
 /** The line Claude Code prints under its prompt for a launched session. */
 function statusText(s) {
   const parts = ['LayerCake'];
-  const cw = s.context_window;
-  if (cw && typeof cw.used_percentage === 'number') parts.push(`ctx ${Math.round(cw.used_percentage)}%`);
-  if (typeof s.cost?.total_cost_usd === 'number') parts.push(`$${s.cost.total_cost_usd.toFixed(2)}`);
-  const five = s.rate_limits?.five_hour?.used_percentage;
-  if (typeof five === 'number') parts.push(`5h ${Math.round(five)}%`);
-  const week = s.rate_limits?.seven_day?.used_percentage;
-  if (typeof week === 'number') parts.push(`7d ${Math.round(week)}%`);
+  const used = num(s.context_window?.used_percentage);
+  if (used !== null) parts.push(`ctx ${Math.round(used)}%`);
+  const cost = num(s.cost?.total_cost_usd);
+  if (cost !== null) parts.push(`$${cost.toFixed(2)}`);
+  const five = num(s.rate_limits?.five_hour?.used_percentage);
+  if (five !== null) parts.push(`5h ${Math.round(five)}%`);
+  const week = num(s.rate_limits?.seven_day?.used_percentage);
+  if (week !== null) parts.push(`7d ${Math.round(week)}%`);
   if (s.prompt_cache && typeof s.prompt_cache.warm === 'boolean') parts.push(s.prompt_cache.warm ? 'cache warm' : 'cache cold');
   return parts.join(' · ');
 }
 
-/** The subset of the status line JSON kept and shown. */
+/** The subset of the status line JSON kept and shown: numbers and short strings only. */
 function keepStatusline(s) {
+  const obj = (v) => (v && typeof v === 'object' ? v : null);
+  const cost = obj(s.cost);
+  const cw = obj(s.context_window);
+  const pc = obj(s.prompt_cache);
+  const rl = obj(s.rate_limits);
   return {
-    sessionId: s.session_id || null,
-    model: s.model ? { id: s.model.id || null, name: s.model.display_name || null } : null,
-    version: s.version || null,
-    outputStyle: s.output_style?.name || null,
-    effort: s.effort?.level || null,
+    sessionId: str(s.session_id) || null,
+    model: obj(s.model) ? { id: str(s.model.id) || null, name: str(s.model.display_name) || null } : null,
+    version: str(s.version) || null,
+    outputStyle: str(s.output_style?.name) || null,
+    effort: str(s.effort?.level) || null,
     thinking: typeof s.thinking?.enabled === 'boolean' ? s.thinking.enabled : null,
-    cost: s.cost
+    cost: cost
       ? {
-          totalUSD: s.cost.total_cost_usd ?? null,
-          durationMs: s.cost.total_duration_ms ?? null,
-          apiDurationMs: s.cost.total_api_duration_ms ?? null,
-          linesAdded: s.cost.total_lines_added ?? null,
-          linesRemoved: s.cost.total_lines_removed ?? null,
+          totalUSD: num(cost.total_cost_usd),
+          durationMs: num(cost.total_duration_ms),
+          apiDurationMs: num(cost.total_api_duration_ms),
+          linesAdded: num(cost.total_lines_added),
+          linesRemoved: num(cost.total_lines_removed),
         }
       : null,
-    context: s.context_window
-      ? {
-          usedPercentage: s.context_window.used_percentage ?? null,
-          windowTokens: s.context_window.context_window_size ?? null,
-          current: s.context_window.current_usage || null,
-        }
-      : null,
-    rateLimits: s.rate_limits
+    context: cw ? { usedPercentage: num(cw.used_percentage), windowTokens: num(cw.context_window_size), current: obj(cw.current_usage) } : null,
+    rateLimits: rl
       ? Object.fromEntries(
-          Object.entries(s.rate_limits).map(([k, v]) => [k, { usedPercentage: v?.used_percentage ?? null, resetsAt: v?.resets_at ?? null }])
+          ['five_hour', 'seven_day']
+            .filter((k) => obj(rl[k]))
+            .map((k) => [k, { usedPercentage: num(rl[k].used_percentage), resetsAt: num(rl[k].resets_at) ?? (str(rl[k].resets_at) || null) }])
         )
       : null,
-    promptCache: s.prompt_cache
-      ? {
-          warm: s.prompt_cache.warm ?? null,
-          expiresAt: s.prompt_cache.expires_at ?? null,
-          hitRatio: s.prompt_cache.hit_ratio ?? null,
-          ttl: s.prompt_cache.ttl ?? null,
-        }
+    promptCache: pc
+      ? { warm: typeof pc.warm === 'boolean' ? pc.warm : null, expiresAt: num(pc.expires_at) ?? (str(pc.expires_at) || null), hitRatio: num(pc.hit_ratio), ttl: num(pc.ttl) ?? (str(pc.ttl) || null) }
       : null,
-    worktree: s.worktree?.name || null,
+    worktree: str(s.worktree?.name) || null,
   };
 }
 
@@ -219,6 +240,12 @@ const WAITING_NOTIFICATIONS = new Set([
 const PERMISSION_WAITS = new Set(['permission', 'permission_prompt']);
 /** Events that mean Claude is moving again, so a pending "waiting" is over. */
 const RESUMING = new Set(['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'StopFailure', 'SessionEnd']);
+/**
+ * Posts that prove an ended session is active again (/resume back into it).
+ * Not Notification or InstructionsLoaded: those are async and can land after
+ * the SessionEnd they belong before (#36).
+ */
+const REVIVING = new Set(['UserPromptSubmit', 'PreToolUse']);
 
 /**
  * The tool a permission prompt is for. PermissionRequest carries no
@@ -233,16 +260,18 @@ function pendingToolId(s, toolName) {
 }
 
 function applyHook(s, h, at) {
-  const event = String(h.hook_event_name || 'unknown');
+  const event = str(h.hook_event_name) || 'unknown';
+  const tool = str(h.tool_name);
+  const toolUseId = str(h.tool_use_id);
   s.lastHookAt = at;
   s.hookCounts[event] = (s.hookCounts[event] || 0) + 1;
   if (RESUMING.has(event)) s.waiting = null;
 
-  const summary = h.tool_name ? toolSummary(String(h.tool_name), h.tool_input) : '';
-  if (event === 'PreToolUse' && h.tool_use_id) {
-    s.running.set(String(h.tool_use_id), { name: h.tool_name, summary, at });
-  } else if ((event === 'PostToolUse' || event === 'PostToolUseFailure' || event === 'PermissionDenied') && h.tool_use_id) {
-    s.running.delete(String(h.tool_use_id));
+  const summary = tool ? toolSummary(tool, h.tool_input) : '';
+  if (event === 'PreToolUse' && toolUseId) {
+    s.running.set(toolUseId, { name: tool, summary, at });
+  } else if ((event === 'PostToolUse' || event === 'PostToolUseFailure' || event === 'PermissionDenied') && toolUseId) {
+    s.running.delete(toolUseId);
     if (event === 'PostToolUseFailure') s.toolFailures += 1;
   } else if (event === 'UserPromptSubmit' || event === 'Stop' || event === 'StopFailure' || event === 'SessionEnd') {
     // A new prompt means every earlier tool finished or was interrupted: Esc
@@ -250,29 +279,30 @@ function applyHook(s, h, at) {
     // Stop does not run on an interrupt (docs: hooks) (#23).
     s.running.clear();
   }
-  if (event === 'Notification' && WAITING_NOTIFICATIONS.has(h.notification_type)) {
+  const notification = str(h.notification_type);
+  if (event === 'Notification' && WAITING_NOTIFICATIONS.has(notification)) {
     s.waiting = {
-      kind: h.notification_type,
-      message: clip(h.message || h.title || ''),
+      kind: notification,
+      message: clip(h.message) || clip(h.title),
       at,
-      toolUseId: h.notification_type === 'permission_prompt' ? pendingToolId(s, null) : null,
+      toolUseId: notification === 'permission_prompt' ? pendingToolId(s, null) : null,
     };
   }
   if (event === 'PermissionRequest') {
     s.waiting = {
       kind: 'permission',
-      message: `Permission to use ${h.tool_name || 'a tool'}${summary ? `: ${summary}` : ''}`,
+      message: `Permission to use ${tool || 'a tool'}${summary ? `: ${summary}` : ''}`,
       at,
-      toolUseId: pendingToolId(s, h.tool_name || null),
+      toolUseId: pendingToolId(s, tool || null),
     };
   }
-  if (event === 'InstructionsLoaded' && h.file_path) {
+  if (event === 'InstructionsLoaded' && str(h.file_path)) {
     s.instructionsLoaded.push({
-      path: String(h.file_path),
-      memoryType: h.memory_type || null,
-      reason: h.load_reason || null,
-      trigger: h.trigger_file_path || null,
-      parent: h.parent_file_path || null,
+      path: str(h.file_path),
+      memoryType: str(h.memory_type) || null,
+      reason: str(h.load_reason) || null,
+      trigger: str(h.trigger_file_path) || null,
+      parent: str(h.parent_file_path) || null,
       at,
     });
     if (s.instructionsLoaded.length > MAX_EVENTS) s.instructionsLoaded.shift();
@@ -280,10 +310,10 @@ function applyHook(s, h, at) {
 
   s.events.push({
     at,
-    event,
-    tool: h.tool_name || null,
+    event: clip(event, 60),
+    tool: clip(tool, 120) || null,
     summary: clip(summary),
-    detail: clip(h.notification_type || h.load_reason || h.reason || h.error || h.agent_type || h.trigger || ''),
+    detail: clip(notification || str(h.load_reason) || str(h.reason) || str(h.error) || str(h.agent_type) || str(h.trigger)),
   });
   if (s.events.length > MAX_EVENTS) s.events.shift();
 }
@@ -295,19 +325,28 @@ function applyHook(s, h, at) {
  * finishing (Esc, a denied permission), and a permission wait whose tool has
  * since run (#23).
  */
-export function wrappedFor(sessionId, { toolDone = () => false } = {}) {
+export function wrappedFor(sessionId, { toolDone = () => false, now = Date.now() } = {}) {
   const found = sessionFor(sessionId);
   if (!found) return null;
   const { l, s } = found;
   const running = [...s.running.entries()].filter(([id]) => !toolDone(id)).map(([id, t]) => ({ id, ...t }));
   const waiting = s.waiting && !(s.waiting.toolUseId && toolDone(s.waiting.toolUseId)) ? s.waiting : null;
+  const reporting = Boolean(s.lastSeenAt) && now - Date.parse(s.lastSeenAt) <= REPORT_WINDOW_MS;
   return {
     launchId: l.id,
     launchedAt: l.createdAt,
     ended: s.ended,
     endReason: s.endReason,
-    // Restored after a LayerCake restart and not heard from since.
-    unconfirmed: l.restored && !s.lastSeenAt && !s.ended,
+    // Reported recently enough to be running. Not ended, and silent past the
+    // window, is `quiet`: a crash, a closed tab, or not heard from since a
+    // LayerCake restart (`restored` says which of the last two).
+    reporting: !s.ended && reporting,
+    quiet: !s.ended && !reporting,
+    restored: l.restored,
+    registeredAt: l.registeredAt,
+    lastSeenAt: s.lastSeenAt,
+    reportWindowS: Math.round(REPORT_WINDOW_MS / 1000),
+    refreshS: STATUS_REFRESH_S,
     statusline: s.statusline,
     statuslineAt: s.statuslineAt,
     lastHookAt: s.lastHookAt,
@@ -317,18 +356,27 @@ export function wrappedFor(sessionId, { toolDone = () => false } = {}) {
     instructionsLoaded: s.instructionsLoaded,
     hookCounts: s.hookCounts,
     events: s.events.slice(-40),
+    persistError: l.persistError,
   };
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 /**
- * Writes which session ids the launch has carried and which ended. Chained,
- * so two posts close together cannot land their writes out of order and
- * leave the older state on disk. A failure is kept for /api/launches rather
- * than thrown: the hook was already answered, and memory is still right.
+ * Writes which session ids the launch carried, since when, and which ended.
+ * Chained, so two posts close together cannot land their writes out of order.
+ * A failure is retried with a short backoff (Windows can refuse a rename
+ * while another process has the file open, measured about 1 in 300 back to
+ * back), then kept, shown in the session view, and retried on the next post
+ * (#34). It never reaches the answer: the hook was answered already.
  */
 function persist(l) {
   const ended = {};
-  for (const [id, s] of l.sessions) if (s.ended) ended[id] = s.endReason || 'unknown';
+  const since = {};
+  for (const [id, s] of l.sessions) {
+    if (s.ended) ended[id] = s.endReason || 'unknown';
+    if (s.since) since[id] = s.since;
+  }
   const record = {
     id: l.id,
     secret: l.secret,
@@ -337,70 +385,107 @@ function persist(l) {
     createdAt: l.createdAt,
     sessionIds: [...l.sessions.keys()],
     ended,
+    since,
+  };
+  const attempt = async () => {
+    for (let i = 0; ; i += 1) {
+      try {
+        return await updateLaunchRecord(record);
+      } catch (err) {
+        if (i >= 2) throw err;
+        await sleep(100 * (i + 1));
+      }
+    }
   };
   l.persisting = l.persisting
-    .then(() => updateLaunchRecord(record))
+    .then(attempt)
     .then(() => {
       l.persistError = null;
     })
     .catch((err) => {
-      l.persistError = err.message;
+      l.persistError = str(err?.message) || 'write failed';
     });
   return l.persisting;
 }
 
+/** Keeps a launch's session list bounded: oldest ended sessions go first (#39). */
+function trimSessions(l) {
+  if (l.sessions.size <= MAX_SESSIONS) return;
+  const ended = [...l.sessions.entries()].filter(([, s]) => s.ended).sort((a, b) => str(a[1].since).localeCompare(str(b[1].since)));
+  for (const [id] of ended) {
+    if (l.sessions.size <= MAX_SESSIONS) break;
+    l.sessions.delete(id);
+  }
+}
+
+/**
+ * Applies one post. Returns the status line text for a status line post.
+ * A post without a valid session id is answered but changes nothing: after a
+ * restart there is no "current" session it could safely belong to (#37).
+ */
+function applyPost(l, kind, body, at) {
+  const id = SESSION_ID_RE.test(str(body.session_id)) ? body.session_id : null;
+  if (!id) return;
+  let changed = false;
+  let s = l.sessions.get(id);
+  if (!s) {
+    s = blankSession(at);
+    l.sessions.set(id, s);
+    trimSessions(l);
+    changed = true;
+  }
+  s.lastSeenAt = at;
+  const event = kind === 'hook' ? str(body.hook_event_name) : '';
+  if (s.ended && (kind === 'statusline' || REVIVING.has(event))) {
+    // Active again after an end: /resume back into this session.
+    s.ended = false;
+    s.endReason = null;
+    changed = true;
+  }
+  if (kind === 'statusline') {
+    s.statusline = keepStatusline(body);
+    s.statuslineAt = at;
+  } else {
+    applyHook(s, body, at);
+    if (event === 'SessionEnd') {
+      s.ended = true;
+      s.endReason = clip(body.reason, 40) || null;
+      changed = true;
+    }
+  }
+  if (changed || l.persistError) persist(l);
+}
+
 export function registerIngestRoutes(app) {
   restoreLaunches().catch(() => {
-    /* unreadable app data: launches load one by one as they post, as before */
+    /* unreadable app data: launches load one by one as they post, below */
   });
 
   app.post('/ingest/:id/:secret/:kind', async (req, res) => {
-    if (req.get('origin')) return res.status(403).end();
-    let l = launches.get(req.params.id);
-    if (!l) {
-      // Launched before a restart and not restored yet: the record on disk still holds its secret.
-      const record = await readLaunch(req.params.id).catch(() => null);
-      if (record) l = registerLaunch(record, { restored: true });
-    }
-    if (!l) return res.status(404).end();
-    if (!secretMatches(l.secret, req.params.secret)) return res.status(403).end();
-    if (req.params.kind !== 'statusline' && req.params.kind !== 'hook') return res.status(404).end();
+    const kind = req.params.kind;
+    try {
+      if (req.get('origin')) return res.status(403).end();
+      let l = launches.get(req.params.id);
+      if (!l) {
+        // Not restored at startup (written since, or the restore failed): the record on disk still holds its secret.
+        const record = await readLaunch(req.params.id).catch(() => null);
+        if (record) l = registerLaunch(record, { restored: true });
+      }
+      if (!l) return res.status(404).end();
+      if (!secretMatches(l.secret, req.params.secret)) return res.status(403).end();
+      if (kind !== 'statusline' && kind !== 'hook') return res.status(404).end();
 
-    const body = req.body && typeof req.body === 'object' ? req.body : {};
-    const at = new Date().toISOString();
-    const id = SESSION_ID_RE.test(String(body.session_id || '')) ? body.session_id : l.currentId;
-    let changed = false;
-    let s = l.sessions.get(id);
-    if (!s) {
-      s = blankSession();
-      l.sessions.set(id, s);
-      changed = true;
+      const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+      applyPost(l, kind, body, new Date().toISOString());
+      if (kind === 'statusline') return res.type('text').send(statusText(body));
+      // Empty on purpose: see the zero-token contract at the top of this file.
+      return res.status(204).end();
+    } catch {
+      // Errors are values: a malformed body must not take the server down
+      // (Express 4 does not catch a rejected async handler, and Node exits on
+      // it), and a hook still gets an empty answer (#33).
+      if (!res.headersSent) res.status(kind === 'statusline' ? 200 : 204).end();
+      return undefined;
     }
-    l.currentId = id;
-    s.lastSeenAt = at;
-    const isEnd = req.params.kind === 'hook' && body.hook_event_name === 'SessionEnd';
-    if (s.ended && !isEnd) {
-      // Back after an end: /resume into this launch, or claude -c in the same terminal.
-      s.ended = false;
-      s.endReason = null;
-      changed = true;
-    }
-
-    if (req.params.kind === 'statusline') {
-      s.statusline = keepStatusline(body);
-      s.statuslineAt = at;
-      if (changed) persist(l);
-      return res.type('text').send(statusText(body));
-    }
-
-    applyHook(s, body, at);
-    if (isEnd) {
-      s.ended = true;
-      s.endReason = typeof body.reason === 'string' ? clip(body.reason, 40) : null;
-      changed = true;
-    }
-    if (changed) persist(l);
-    // Empty on purpose: see the zero-token contract at the top of this file.
-    return res.status(204).end();
   });
 }

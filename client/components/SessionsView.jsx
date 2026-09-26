@@ -22,7 +22,8 @@ function Row({ s, selected, onSelect, kind }) {
         <span>{s.prompts} prompt{s.prompts === 1 ? '' : 's'}</span>
         {kind === 'session' && s.tools > 0 && <span>{s.tools} tools</span>}
         {kind === 'session' && s.errors > 0 && <span className="err">{s.errors} errors</span>}
-        {s.unconfirmed && <span className="muted" title="LayerCake restarted after launching this session and has not heard from it since">not heard from since restart</span>}
+        {s.quiet === 'restart' && <span className="muted" title="Launched from LayerCake, and no report from it since LayerCake restarted">no report since restart</span>}
+        {s.quiet === 'silent' && <span className="muted" title="Launched from LayerCake; its status line has stopped reporting, so it is not running">stopped reporting</span>}
         {expiresIn != null && !s.live && expiresIn <= 7 && <span className="warn">deleted in {expiresIn}d</span>}
         {kind === 'expired' && <span className="muted">transcript gone, card kept</span>}
         {kind === 'promptOnly' && <span className="muted">prompts only</span>}
@@ -231,7 +232,9 @@ export default function SessionsView({ projectDir, scanId }) {
         .then(({ launches }) => {
           const mine = launches.find((l) => l.id === launch.launchId);
           if (!mine) return;
-          const over = mine.sessions.length > 0 && mine.sessions.every((s) => s.ended);
+          // Ended by /clear or /resume is not over: the same terminal goes on
+          // with another session, whose id arrives with its first report (#38).
+          const over = mine.sessions.length > 0 && mine.sessions.every((s) => s.ended && s.endReason !== 'clear' && s.endReason !== 'resume');
           const same = mine.sessionIds.length === ids.length && mine.sessionIds.every((id) => ids.includes(id));
           if (!same || over) {
             setLaunch((cur) => (cur && cur.launchId === launch.launchId ? { ...cur, sessionIds: mine.sessionIds, over } : cur));

@@ -82,7 +82,10 @@ function Wrapped({ detail }) {
   const events = Object.values(w.hookCounts || {}).reduce((a, b) => a + b, 0);
   // Silence from both channels while the transcript moves means something is
   // blocking them: trust not accepted, --safe-mode, or a managed hook policy.
-  const silent = detail.live && !w.statuslineAt && !w.lastHookAt && Date.now() - Date.parse(w.launchedAt) > 30000;
+  // Not for a launch restored after a restart: its silence says only that it
+  // has not reported since, not that something blocks it (#32).
+  const silent = detail.live && !w.restored && !w.statuslineAt && !w.lastHookAt && Date.now() - Date.parse(w.launchedAt) > 30000;
+  const heard = w.restored ? 'not heard from since LayerCake restarted' : 'not heard from yet';
   return (
     <div className="wrapped">
       {waiting && (
@@ -101,10 +104,19 @@ function Wrapped({ detail }) {
           This session ended{w.endReason ? ` (${w.endReason.replace(/_/g, ' ')})` : ''}. The figures below are its last report.
         </div>
       )}
-      {w.unconfirmed && (
+      {w.quiet && (
         <div className="muted">
-          LayerCake restarted after launching this session and has not heard from it since. It reports again on its next
-          event: a new message, a tool, or the prompt cache expiring.
+          {w.restored && !w.lastSeenAt
+            ? `No report from this session since LayerCake restarted (${clock(w.registeredAt)}).`
+            : `No report from this session since ${clock(w.lastSeenAt)}.`}{' '}
+          A running launched session reports every {w.refreshS} s, so after {w.reportWindowS} s of silence it counts as not
+          running. Sessions started by a LayerCake from before that refresh existed report only on activity.
+        </div>
+      )}
+      {w.persistError && (
+        <div className="warn">
+          LayerCake could not save this launch&apos;s record ({w.persistError}). It retries on the next report; until it
+          succeeds, a LayerCake restart may forget which sessions this launch carried.
         </div>
       )}
       {w.running.length > 0 && (
@@ -140,7 +152,7 @@ function Wrapped({ detail }) {
       )}
       <div className="channels">
         <span className="launched-badge">wrapped</span> Launched from LayerCake {when(w.launchedAt)}. Status line{' '}
-        {slAgo == null ? 'not heard from yet' : `updated ${slAgo}s ago`}; hooks {events ? `${events} events, last ${hookAgo}s ago` : 'not heard from yet'}.
+        {slAgo == null ? heard : `updated ${slAgo}s ago`}; hooks {events ? `${events} events, last ${hookAgo}s ago` : heard}.
         {' '}Context added by hooks this session, any hook: {detail.hooks.contextInjections}
         {detail.hooks.contextInjections > 0 && (
           <span>

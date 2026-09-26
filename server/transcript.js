@@ -162,18 +162,22 @@ export function classifyUser(r) {
 
 /** One line describing a tool call, from its input. Never the input body itself. */
 export function toolSummary(name, input) {
+  // Strings only: ingest passes hook bodies straight in, and String() on an
+  // object whose toString is not a function throws (#33).
+  const str = (v) => (typeof v === 'string' ? v : '');
   const i = input && typeof input === 'object' ? input : {};
+  const n = str(name);
   let s = '';
-  if (name === 'Bash' || name === 'PowerShell') s = i.description || i.command || '';
-  else if (name === 'Read' || name === 'Write' || name === 'Edit' || name === 'NotebookEdit') s = i.file_path || i.notebook_path || '';
-  else if (name === 'Grep' || name === 'Glob') s = i.pattern || '';
-  else if (name === 'Agent' || name === 'Task') s = [i.subagent_type, i.description].filter(Boolean).join(': ');
-  else if (name === 'Skill') s = i.skill || '';
-  else if (name === 'WebFetch') s = i.url || '';
-  else if (name === 'WebSearch') s = i.query || '';
-  else if (name.startsWith('mcp__')) s = name.split('__')[1] || '';
-  else s = i.description || i.file_path || i.path || i.query || '';
-  return clip(String(s).replace(/\s+/g, ' '), SUMMARY_CHARS);
+  if (n === 'Bash' || n === 'PowerShell') s = str(i.description) || str(i.command);
+  else if (n === 'Read' || n === 'Write' || n === 'Edit' || n === 'NotebookEdit') s = str(i.file_path) || str(i.notebook_path);
+  else if (n === 'Grep' || n === 'Glob') s = str(i.pattern);
+  else if (n === 'Agent' || n === 'Task') s = [str(i.subagent_type), str(i.description)].filter(Boolean).join(': ');
+  else if (n === 'Skill') s = str(i.skill);
+  else if (n === 'WebFetch') s = str(i.url);
+  else if (n === 'WebSearch') s = str(i.query);
+  else if (n.startsWith('mcp__')) s = n.split('__')[1] || '';
+  else s = str(i.description) || str(i.file_path) || str(i.path) || str(i.query);
+  return clip(s.replace(/\s+/g, ' '), SUMMARY_CHARS);
 }
 
 function newTurn(model, at, cls) {

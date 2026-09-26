@@ -368,7 +368,9 @@ adds two things:
 - **A status line** that forwards Claude Code's status JSON to LayerCake with `curl.exe` and prints
   the line LayerCake sends back (`LayerCake · ctx 42% · $1.23 · 5h 12% · cache warm`) under the
   prompt. This is the only source of exact context use, cost, the 5-hour and weekly plan limits
-  (Pro and Max) and prompt-cache warmth.
+  (Pro and Max) and prompt-cache warmth. It also re-runs every 15 seconds (`refreshInterval`), so a
+  running session always reports within 15 s, and a session silent for 45 s counts as not
+  running. That is how a crash or a closed tab stops reading as "running".
 - **HTTP hooks** for the documented events (prompt submitted, tool start and finish, permission
   requests, notifications, subagents, compaction, instructions loaded, session end). These make
   **"Waiting for you"** possible: a permission prompt, an idle prompt, an MCP server asking for
@@ -381,7 +383,8 @@ adds two things:
   deny, fires no hook either; it leaves "running now" once the transcript records its result, or
   at your next prompt.
 
-**Zero tokens, measured.** A status line is displayed, never sent to the model, and every hook is
+**Zero tokens, measured.** A status line is displayed, never sent to the model (however often it
+re-runs), and every hook is
 answered with an empty 204, which Claude Code treats as "success, no output". The same one-line
 prompt run with and without the settings file used exactly the same input (44,007 tokens each),
 and the second run read its whole prompt from cache, which a single changed byte would have
@@ -394,9 +397,11 @@ Things to know:
   its transcript.
 - If LayerCake is closed while that session keeps running, each hook shows a "hook error" notice in
   the terminal. Claude does not see those notices (they are non-blocking errors), and the session
-  works normally. A restarted LayerCake picks the reporting back up: it reloads its launches at
-  startup, and marks each of their sessions "not heard from since restart" until that session
-  next reports (a new message, a tool, the prompt cache expiring). It does not guess "running".
+  works normally. The status line just goes blank. A restarted LayerCake picks the reporting back
+  up: it reloads its launches at startup, and a running session reports again within 15 s. Until
+  then, and for good if it does not, the session reads "no report since restart"; LayerCake never
+  guesses "running". A session launched by a LayerCake from before the 15-second refresh reports
+  only on activity, so while idle it reads as not running.
 - One terminal can carry several sessions: `/clear` starts a new one and `/resume` switches to
   another. LayerCake keeps each session's figures separately, so an old session never shows the
   new one's context, and once a session has ended its last status line is no longer shown as exact.

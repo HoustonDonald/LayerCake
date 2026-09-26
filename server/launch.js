@@ -25,7 +25,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 
 import { writeLaunch } from './appdata.js';
-import { registerLaunch } from './ingest.js';
+import { STATUS_REFRESH_S, registerLaunch } from './ingest.js';
 
 /** Documented hook events worth showing (docs: hooks, as of Claude Code 2.1.283). */
 export const HOOK_EVENTS = [
@@ -64,6 +64,10 @@ export function buildSettings(base) {
       type: 'command',
       command: `curl.exe -s --max-time 1 -H "Content-Type: application/json" --data-binary "@-" "${base}/statusline"`,
       padding: 0,
+      // Re-run on a timer as well as on events (docs: status line,
+      // refreshInterval), so a running session is never silent for long and
+      // silence becomes evidence that it stopped (ingest.js, #31).
+      refreshInterval: STATUS_REFRESH_S,
     },
     hooks: Object.fromEntries(HOOK_EVENTS.map((event) => [event, hook])),
   };

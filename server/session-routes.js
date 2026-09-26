@@ -127,15 +127,14 @@ function sessionDetail(model) {
  * Whether a session is running. Claude Code's own pid file is the first
  * source, but it is written lazily: a session LayerCake launched had none
  * 30 s after start (measured 2026-09-26, before any prompt). For those the
- * hooks answer instead: running until its SessionEnd hook fires, busy while a
- * tool is in flight. A crash that skips SessionEnd reads as running (#4). A
- * launch restored after a LayerCake restart counts as nothing until the
- * session reports again: memory from before the restart is gone, and
- * "running" would be a guess (#24).
+ * launch's own reports answer instead: running while it has reported within
+ * the report window (its status line re-runs on a timer), busy while a tool
+ * is in flight. Silence past the window, whether from a crash, a closed tab or
+ * a LayerCake restart, reads as not running, never as running forever (#4, #31).
  */
 function liveFrom(pidLive, wrapped, sessionId) {
   if (pidLive) return pidLive;
-  if (!wrapped || wrapped.ended || wrapped.unconfirmed) return null;
+  if (!wrapped || !wrapped.reporting) return null;
   return { pid: null, sessionId, status: wrapped.running.length ? 'busy' : null, source: 'hooks' };
 }
 
@@ -209,7 +208,8 @@ export function registerSessionRoutes(app) {
           status: l?.status || null,
           pid: l?.pid || null,
           launched: Boolean(w),
-          unconfirmed: Boolean(!l && w?.unconfirmed),
+          // Launched, not ended, and silent: since a restart, or since it last reported.
+          quiet: !l && w?.quiet ? (w.restored && !w.lastSeenAt ? 'restart' : 'silent') : null,
         });
       }
 
