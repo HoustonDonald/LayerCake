@@ -198,6 +198,12 @@ all of them are fixed and closed:
 HANDOFF's Phase 2 entry above says "restart persistence" was verified. It was not: that check only
 read a status code. It is now covered by #27's checks.
 
+**Verification round (c8eeffff).** An independent check of those fixes found two ordinary-use bugs
+in restored launches, plus eight lesser ones (#31 to #40), all fixed. The structural change: a
+launched session's status line now re-runs every 15 s (`refreshInterval`), and a launched session
+without a pid file counts as running only while it reports (45 s window). That also closed #4.
+Verified live, with no usage spent: a real idle launch with no prompt reported every 15.0 s.
+
 Method worth reusing: targeted mutants, each run in its own copy of the tree (node_modules
 junctioned) and 4 at a time, because smoke now picks a free port. That did 15 smoke runs in 57 s,
 against about 2.9 min serially (11.5 s a run). It also leaves the working tree unmutated. The script
