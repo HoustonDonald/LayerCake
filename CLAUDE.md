@@ -74,6 +74,11 @@ config home, so its user level is never the real one. Three more exist for smoke
 `scripts/smoke-claude-stub.mjs`, so no usage is ever spent testing), and
 `LAYERCAKE_REPORT_WINDOW_MS` (how long a launched session counts as running after its last report;
 45 s in use, a few seconds in smoke so "stopped reporting" can be tested).
+`LAYERCAKE_BROWSER_PROFILE_DIR` (default `%LOCALAPPDATA%\LayerCake\browser`) moves the app window's
+Edge profile (#59). Every exe test sets it, beside the three data folders above: without it the
+test's Edge writes into the real profile, and a real LayerCake window already open takes the test's
+window and decides when the test's exe stops. A test of an exe built before it existed has to
+redirect `LOCALAPPDATA` for that process instead.
 
 `npm start` builds only when `public/index.html` is older than the newest file under `client/`, so a
 change to `server/` alone does not trigger a rebuild and does not need one.
@@ -106,8 +111,8 @@ server/ingest.js    /ingest/<launch>/<secret>/{statusline,hook} from launched se
 client/             React 18 + Vite, two-pane explorer plus editor, snapshots and watch bar
 cli/                layercake CLI, imports server modules directly
 scripts/launch.js   build, serve, then open an app-mode browser window
-desktop/window.js   the app window (browser, profile, isolation flags), shared by launch.js and main.js
-desktop/main.js     single-executable entry: embedded client, exits when its window's browser does
+desktop/window.js   the app window (browser, profile, isolation flags, profile lock), shared by launch.js and main.js
+desktop/main.js     single-executable entry: embedded client, exits when no browser holds the window's profile
 desktop/inflight.js counts running handlers so the exe's shutdown can wait for them
 desktop/build.mjs   vite + esbuild + SEA blob + icon/version (resedit) + postject + GUI subsystem -> dist\LayerCake.exe
 ```
@@ -292,7 +297,10 @@ cannot read our HTML". An extension is not a page, and a separate `--user-data-d
 keep extensions out: Edge signs a new profile in to the Windows Microsoft account, turns sync on, and
 sync installs the user's extensions. That was measured on this machine, including a shopping extension
 with access to every URL. Removing either flag reopens it silently: nothing breaks, the UI works, and
-a third party can read the token.
+a third party can read the token. `APP_FLAGS` also carries `--disable-features=msEdgeStartupBoost`
+(#58), for a different reason: without it every close started a background Edge for the user's
+default profile. Chromium honours only the last `--disable-features` on a command line, so another
+feature goes into that same flag, comma separated, never into a second one.
 
 **Errors are values, never throws.** `readForDisplay` and the scan functions return an error object
 so one unreadable level degrades to a badge and the rest of the scan completes. A dead UNC share must
@@ -380,12 +388,32 @@ partially. A truncated file restored is silent data loss.
   catch it, at one call per folder per stream.
 - **The app window's profile is still signed in to the Windows Microsoft account.** The isolation
   flags stop sync and extensions; no flag found stops Edge attaching the account identity.
-- **The exe stops with its window only when it launched the browser process.** If an Edge for the
-  LayerCake profile is already running, Edge takes the window and the exe cannot see it, so it stays
-  up (the safe side: a live window with a server) until the next launch reuses it or Task Manager
-  ends it. The hand-off is recognised as a browser exit within 5 s of launch (`HANDOFF_MS`).
-  Relaunching within about 0.5 s of closing the last window can attach to the server that is about
-  to exit, leaving the new window without one (reasoned, not measured).
+- **The exe follows the browser profile, through Chromium's `lockfile`** (#10). It stops when its
+  own browser has exited AND no browser holds `<profile>\lockfile` (`profileInUse` in
+  `desktop/window.js`), so a hand-off (an Edge already running on the profile takes the window, and
+  ours exits within 5 s, `HANDOFF_MS`) now ends when that browser does, instead of never. Measured
+  before and after: exe still up 12 s after the last window closed, then exiting about 0.7 s after it.
+  This rests on an undocumented Chromium file that disappears when its browser process ends, a
+  kill included (measured on Edge 154). If a Chromium stops keeping it, a hand-off falls back to the
+  old behaviour, staying up, which is the safe side; an ordinary close is unaffected. It also means
+  any browser on the profile keeps the exe up, an `npm run app` window on another port included.
+- **A relaunch just as the last window closes used to open a window with no server** (4 of 4
+  relaunches 0 to 0.3 s after the close, measured). Three parts, each exercised by an exe test that
+  fails when that part is made a no-op (hand-off, takeover, dropped hand-off; the harness is not in
+  the repository): the closing exe waits while the relaunch's browser holds the profile; a launch that
+  attached to a running server keeps probing it for 5 s (`REATTACH_MS`) and takes over the port if
+  it goes away, after which Edge's own retry reloads the window; and if the taking-over launch's
+  window had been handed to a browser that has since exited (no browser holds the profile), it
+  opens the window again. The third was found as 1 of 9 relaunches ending with a server and no
+  window. On the final build, 18 of 18 relaunches 0 to 0.9 s after the close ended with a served
+  window, and every process ended once that window closed.
+- **A second launch that attaches to a running server lingers for `REATTACH_MS` (5 s)**, invisibly,
+  before exiting. That is the cost of the fix above.
+- **A window closed within 5 s of launch reads as a hand-off** (`HANDOFF_MS`). With no browser on
+  the profile, the exe then waits for one to appear, so it stays up, invisible, until the next
+  launch's window closes (measured; before #10 it stayed up for good). That wait is for a Chromium
+  that stops keeping the lockfile, where a hand-off would otherwise shut the server down under a
+  live window.
 - **With no Edge or Chrome installed, the window falls back to the default browser**, in the user's
   own profile, so the `APP_FLAGS` invariant cannot hold there and the exe never sees the window
   close. Stated in the README rather than refused, because the alternative is no app at all.

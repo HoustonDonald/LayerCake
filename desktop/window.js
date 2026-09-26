@@ -94,11 +94,52 @@ function findBrowser() {
  * separate taskbar identity, so LayerCake pins and alt-tabs as its own thing
  * rather than as another browser window.
  *
+ * LAYERCAKE_BROWSER_PROFILE_DIR moves it, the way LAYERCAKE_APPDATA_DIR moves
+ * LayerCake's data (#59). Without it an exe test writes Edge's profile into the
+ * real %LOCALAPPDATA%\LayerCake, and if a real LayerCake window is open, the
+ * test's window is handed to the user's browser, which then decides when the
+ * test's exe may stop. A knob of its own rather than a folder
+ * derived from the app-data root: this is Edge's data, not ours (60 MB and 348
+ * files after one launch of a fresh profile), and moving LayerCake's data
+ * somewhere (a synced folder, say) should not drag a browser profile along.
+ *
  * A separate profile is NOT, on its own, isolation. See APP_FLAGS.
  */
 function userDataDir() {
+  if (process.env.LAYERCAKE_BROWSER_PROFILE_DIR) {
+    return path.resolve(process.env.LAYERCAKE_BROWSER_PROFILE_DIR);
+  }
   const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
   return path.join(localAppData, 'LayerCake', 'browser');
+}
+
+/**
+ * Resolves true while a browser process is running on the app window's
+ * profile, whether or not we started it.
+ *
+ * Chromium on Windows keeps <profile>\lockfile open for the whole life of the
+ * browser process that owns the profile, and the file disappears when that
+ * process ends, however it ends. Measured on Edge 154: present while the window
+ * was open, gone 0.3 s after Stop-Process -Force, and already gone when the exe
+ * saw its browser exit. A stat is a read; nothing here opens the file.
+ *
+ * Asynchronous because the exe polls this from the process that serves the UI.
+ * A synchronous stat of a profile folder on a share that stops answering would
+ * hold every request until Windows gave up (reasoned, from #14, where one
+ * synchronous call on an unroutable share blocked the event loop for 21 s).
+ *
+ * Any error other than "not there" counts as in use, because the caller keeps a
+ * server up while this is true, and a server nobody needs is the safe mistake
+ * where a window without its server is not. Windows only, like the exe: POSIX
+ * Chromium marks its profile with a SingletonLock symlink instead.
+ */
+export async function profileInUse() {
+  try {
+    await fs.promises.stat(path.join(userDataDir(), 'lockfile'));
+    return true;
+  } catch (err) {
+    return !(err.code === 'ENOENT' || err.code === 'ENOTDIR');
+  }
 }
 
 /**
@@ -129,8 +170,27 @@ function userDataDir() {
  * What the flags do NOT stop: Edge still attaches the Windows account identity
  * to the profile. Nothing syncs and no installed extension runs, but it is
  * signed in.
+ *
+ * --disable-features=msEdgeStartupBoost is about the moment the window closes
+ * (#58). With startup boost on, the exiting browser starts a replacement,
+ * `msedge --no-startup-window /prefetch:5`, to keep Edge warm. The replacement
+ * has no --user-data-dir, so it is the user's DEFAULT Edge profile being started
+ * in the background by LayerCake closing. It does not hold
+ * the LayerCake profile (its lockfile is released as usual), so it causes no
+ * hand-off. Measured on Edge 154 with LOCALAPPDATA redirected so the replacement
+ * stayed visible: 5 of 5 closes started one without the flag, 0 of 4 with it;
+ * --disable-background-mode did not stop it. Per window, so the user's own
+ * startup boost setting is untouched. Chromium honours only the last
+ * --disable-features on a command line, so any other feature goes in this one,
+ * comma separated.
  */
-const APP_FLAGS = ['--no-first-run', '--no-default-browser-check', '--disable-sync', '--disable-extensions'];
+const APP_FLAGS = [
+  '--no-first-run',
+  '--no-default-browser-check',
+  '--disable-sync',
+  '--disable-extensions',
+  '--disable-features=msEdgeStartupBoost',
+];
 
 /**
  * Opens an app window on `url`. Returns what was opened, plus the browser

@@ -307,6 +307,21 @@ try {
   );
   check('localhost is an accepted Host too', (await getWithHost('/', `localhost:${PORT}`)).status === 200);
 
+  // --- the page icon (#60) --------------------------------------------------
+  // Without it the request fell through to the HTML route: a 200, but HTML, so
+  // the window showed a generic icon. Hence the type and the bytes, not the status.
+  const icon = await fetch(`${BASE}/favicon.ico`);
+  const iconType = icon.headers.get('content-type') || '';
+  const iconBytes = Buffer.from(await icon.arrayBuffer());
+  check(
+    'favicon.ico is the exe icon, served as an image',
+    icon.status === 200 &&
+      iconType.startsWith('image/') &&
+      iconBytes.equals(await fs.readFile(path.join(ROOT, 'desktop', 'layercake.ico'))),
+    `got ${icon.status} "${iconType}", ${iconBytes.length} bytes (a public/ built before the icon existed needs npm run build)`
+  );
+  check('favicon.ico refuses a foreign Host header too', (await getWithHost('/favicon.ico', rebound)).status === 403);
+
   const manifestRes = await fetch(`${BASE}/api/manifest`, { headers: H });
   check('API accepts a valid token', manifestRes.status === 200);
   const manifest = await manifestRes.json();
