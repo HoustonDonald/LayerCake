@@ -1,8 +1,34 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 const API_PORT = process.env.PORT || 5178;
 const API_ORIGIN = `http://127.0.0.1:${API_PORT}`;
+
+// Resolved from this file rather than the working directory, which differs
+// between `npm run build` and desktop/build.mjs.
+const ICON = path.join(path.dirname(fileURLToPath(import.meta.url)), 'desktop', 'layercake.ico');
+
+/**
+ * The page's icon (#60): the exe's own icon, desktop/layercake.ico, emitted
+ * into the build as favicon.ico. That puts it in public/, which npm start
+ * serves from disk and desktop/build.mjs embeds in the exe with the rest of the
+ * client, so both serve it the same way as any other asset, behind the same
+ * Host guard. Emitted rather than copied into client/public/, so the .ico
+ * stays one file and scripts/make-icon.mjs stays its only writer.
+ */
+function favicon() {
+  return {
+    name: 'layercake-favicon',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'favicon.ico', source: fs.readFileSync(ICON) });
+    },
+  };
+}
 
 /**
  * Dev only (npm run dev:client; `apply: 'serve'` keeps it out of every build).
@@ -46,7 +72,7 @@ function devSessionToken() {
 
 export default defineConfig({
   root: 'client',
-  plugins: [react(), devSessionToken()],
+  plugins: [react(), devSessionToken(), favicon()],
   build: {
     outDir: '../public',
     emptyOutDir: true,

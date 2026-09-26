@@ -516,7 +516,8 @@ Unreadable paths degrade to an error badge on the affected level; the rest of th
 
 Configurable via env: `PORT` (default 5178), `CLAUDE_EXPLORER_DIR_TIMEOUT_MS` (default 3000),
 `LAYERCAKE_SNAPSHOT_DIR`, `LAYERCAKE_APPDATA_DIR`, `LAYERCAKE_CLAUDE_DATA_DIR` (default `~/.claude`,
-for session data only).
+for session data only), `LAYERCAKE_BROWSER_PROFILE_DIR` (the app window's browser profile, default
+`%LOCALAPPDATA%\LayerCake\browser`).
 
 ## Layout
 
@@ -557,7 +558,7 @@ desktop/
   main.js        entry of the single executable
   inflight.js    running-request count, so shutdown waits for a save to finish
   build.mjs      npm run build:exe
-  layercake.ico  the exe's icon
+  layercake.ico  the exe's icon, and the page's favicon.ico (vite.config.js emits it into the build)
 layercake.cmd    double-clickable entry point for the shortcut
 ```
 
@@ -569,9 +570,15 @@ code that enforces them, so what the app claims can be checked against what it d
 `npm run app` (or `layercake.cmd`, or the Start Menu shortcut) builds if stale, starts the server,
 waits until it actually answers, then opens it in Edge or Chrome **app mode**: a chromeless window
 with its own taskbar entry that looks like a desktop app and costs no extra dependency. The browser
-gets a profile of its own under `%LOCALAPPDATA%\LayerCake\browser`, so the window does not join your
-running browser or its session, and it runs with extensions and sync switched off (see
-[Network posture](#network-posture) for why the profile alone was not enough).
+gets a profile of its own under `%LOCALAPPDATA%\LayerCake\browser` (`LAYERCAKE_BROWSER_PROFILE_DIR`
+moves it), so the window does not join your running browser or its session, and it runs with
+extensions and sync switched off (see [Network posture](#network-posture) for why the profile alone
+was not enough).
+
+The window also runs with Edge's startup boost off (`--disable-features=msEdgeStartupBoost`). With
+it on, every close of the window (5 of 5 measured) made Edge start a background
+`msedge --no-startup-window` for your default Edge profile, not LayerCake's. Only this window is
+affected; your own Edge setting is not touched.
 
 If the port is already answering, it opens a window against the running instance instead of starting
 a second server.
@@ -596,7 +603,9 @@ application (SEA) support. Copy it anywhere and double-click it: no Node install
 no console window. It opens the same app-mode window as `npm run app`, and **closing the last
 LayerCake window stops it**, after letting a save or restore that was still running finish. A second
 double-click while it is running, or at the same moment, opens another window on the same server
-rather than starting a new one.
+rather than starting a new one. A double-click just as the last window closes also works: the new
+launch notices the old server going away and takes over its port, and the new window's "can't reach
+this page" reloads itself onto it.
 
 The build runs `vite build`, bundles the server into one script with esbuild, and embeds `public/` as
 assets. It then copies the `node.exe` that ran the build, gives the copy LayerCake's icon and version
@@ -615,10 +624,13 @@ What to know:
 - **It is unsigned.** Fine on the machine that built it. Downloaded onto another machine (so marked
   as coming from the internet), SmartScreen will warn on first run.
 - **The CLI is not in it.** `layercake here` still runs from source (`npm run cli -- here`).
-- **One case keeps it running after the window closes.** If an Edge for the LayerCake profile is
-  already running (a window left open after the server was killed, say), Edge takes the new window
-  itself and the exe can no longer see it, so it stays up rather than leave that window without a
-  server. The next launch finds it and reuses it; Task Manager ends it.
+- **It follows the browser profile, not just its own browser.** If an Edge for the LayerCake profile
+  is already running (a window left open after the server was killed, say, or an `npm run app`
+  window on another port), Edge takes the new window itself and the exe's own browser exits at once.
+  The exe then stays up until no browser is running on that profile, so it stops when the last
+  window on the profile closes, including windows that are not its own. A window closed within five
+  seconds of opening looks the same as that hand-off, so it leaves the exe running, invisibly,
+  until the next LayerCake window closes.
 - **Without Edge or Chrome** (Edge can be uninstalled in the EEA), it falls back to your default
   browser: a normal window in your normal profile, where your extensions run and can read the page,
   including the session token. It also cannot tell when that window closes, so it keeps running.
@@ -628,8 +640,8 @@ What to know:
   The icon is `desktop/layercake.ico`, drawn by `node scripts/make-icon.mjs`, which only needs
   running again to change the drawing. The copyright line is still Node's, since most of the file
   is Node.
-- Its taskbar entry and toasts belong to Edge, not LayerCake, as with `npm run app`. The window's
-  title bar shows Edge's generic page icon rather than the cake.
+- Its taskbar entry and toasts belong to Edge, not LayerCake, as with `npm run app`. The page serves
+  the same cake as `/favicon.ico`, which Edge shows in the window's title bar.
 
 ## Development
 

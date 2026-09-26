@@ -9,17 +9,20 @@
  * there is no app to show.
  *
  * Lifecycle, in the order it happens:
- *  1. Something already answers on the port: open a window on it and exit. A
- *     second double-click never starts a second server.
+ *  1. Something already answers on the port: open a window on it, and keep
+ *     checking for a few seconds that it still answers (REATTACH_MS). A second
+ *     double-click never starts a second server. If it stops answering, it was
+ *     a server whose last window had just closed, and this launch takes the
+ *     port and serves the window it opened, or opens it again if the browser
+ *     it was handed to has gone (#10).
  *  2. Otherwise serve the embedded client, open the window, and stay up exactly
- *     as long as the browser process that owns it. Closing the last LayerCake
- *     window ends that Edge process (measured: about 0.5 s), which ends this,
- *     once any request still running has finished (see inflight.js).
+ *     as long as a browser is running on the app window's profile. Closing the
+ *     last LayerCake window ends that Edge process, which ends this, once any
+ *     request still running has finished (see inflight.js).
  *  3. If Edge was already running for this profile, it takes the new window
- *     itself and the process we started exits at once (measured: about 0.2 s),
- *     so we can no longer see the window. Staying up is the safe side of that:
- *     a working window and an idle process, rather than a window whose server
- *     has just vanished. The next launch finds it on the port and reuses it.
+ *     itself and the process we started exits at once (measured: about 0.2 s).
+ *     We cannot watch that browser's process, so we watch its hold on the
+ *     profile instead (profileInUse in window.js) and stop when it lets go.
  */
 
 /* global __LAYERCAKE_ASSETS__ */
@@ -27,7 +30,7 @@
 import { getAsset, isSea } from 'node:sea';
 
 import { trackInflight } from './inflight.js';
-import { HOST, openWindow, probe, showError } from './window.js';
+import { HOST, openWindow, probe, profileInUse, showError } from './window.js';
 
 // server/app.js is imported inside main(), not here. A static import runs every
 // server module's top level before the uncaughtException handler below exists,
@@ -39,6 +42,23 @@ import { HOST, openWindow, probe, showError } from './window.js';
  * 0.2 s; nobody opens and closes a window inside five.
  */
 const HANDOFF_MS = 5000;
+
+/**
+ * How long a launch that found a server already answering keeps checking that
+ * it still does (#10). A server whose last window has just closed answers for
+ * as long as its browser takes to exit, and a window opened on it in that time
+ * was left with nothing behind it: 4 of 4 relaunches 0 to 0.3 s after closing
+ * the window, measured before this existed. Five seconds covers the browser's
+ * exit and the new page's load several times over, and costs nothing visible,
+ * because the window is already open.
+ */
+const REATTACH_MS = 5000;
+
+/**
+ * How often to look at the profile while a browser holds it that is not the
+ * one we started. A stat each time, so the only cost of polling is latency.
+ */
+const PROFILE_POLL_MS = 500;
 
 /**
  * The most the process waits, after its window has closed, for a handler that
@@ -86,13 +106,83 @@ function psQuote(text) {
   return `'${text.replace(/['\u2018\u2019\u201A\u201B]/g, (q) => q + q)}'`;
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function answersWithin(port, ms) {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
     if (await probe(port)) return true;
-    await new Promise((resolve) => setTimeout(resolve, REPROBE_INTERVAL_MS));
+    await sleep(REPROBE_INTERVAL_MS);
   }
   return false;
+}
+
+async function stopsAnsweringWithin(port, ms) {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    await sleep(REPROBE_INTERVAL_MS);
+    if (!(await probe(port))) return true;
+  }
+  return false;
+}
+
+/**
+ * Opens the app window. `exited` is made here, at spawn, rather than when the
+ * lifecycle gets to it: a launch that attached to another server opens its
+ * window seconds before it knows whether it will serve it, and a hand-off's
+ * browser has exited long before then.
+ */
+function openAppWindow(url) {
+  const launchedAt = Date.now();
+  const { child } = openWindow(url);
+  if (!child) return { child: null, exitedAt: null };
+  // A browser that cannot be started at all (blocked by AppLocker, say) fails
+  // asynchronously. Without a listener that is an uncaught exception whose error
+  // window would fail the same way; with one, at least no invisible server is
+  // left holding the port.
+  child.on('error', () => process.exit(1));
+  const appWindow = { child, launchedAt, exitedAt: null };
+  appWindow.exited = new Promise((resolve) => {
+    child.once('exit', () => {
+      appWindow.exitedAt = Date.now();
+      resolve(appWindow.exitedAt);
+    });
+  });
+  return appWindow;
+}
+
+function handedOff(appWindow) {
+  return appWindow.exitedAt !== null && appWindow.exitedAt - appWindow.launchedAt < HANDOFF_MS;
+}
+
+/**
+ * Serves until no LayerCake window is left, then stops.
+ *
+ * The browser we started exiting is the usual signal, and when nothing else
+ * holds the profile it is the whole story. Two cases leave the window in a
+ * browser we did not start, and both are followed through the profile instead:
+ * a hand-off, where a browser already running on the profile took the window
+ * and ours exited at once; and a relaunch just as our window closed, which can
+ * start a new browser on the profile as ours exits (#10). Either way, stop when
+ * no browser holds the profile any more.
+ *
+ * A hand-off to a browser that does NOT show as holding the profile waits for
+ * one to appear, which may be never: that is how the exe behaved before it
+ * could see the profile at all, kept for a Chromium that stops keeping the
+ * lockfile. Staying up is the safe side of not knowing, since a window whose
+ * server has vanished is worse than an idle process.
+ */
+async function serveUntilWindowsClose(server, inflight, appWindow) {
+  await appWindow.exited;
+  if (handedOff(appWindow)) {
+    while (!(await profileInUse())) await sleep(PROFILE_POLL_MS);
+  }
+  while (await profileInUse()) await sleep(PROFILE_POLL_MS);
+  // Stop taking requests, then let the ones already running finish, so a save
+  // or restore started just before the window closed is not cut off.
+  server.close();
+  await inflight.idle(DRAIN_MS);
+  process.exit(0);
 }
 
 function listenFailure(err, port) {
@@ -125,9 +215,16 @@ async function main() {
   const port = readPort();
   const url = `http://${HOST}:${port}`;
 
+  // Set when this launch opened its window before it had a server of its own.
+  let appWindow = null;
+
   if (await probe(port)) {
-    openWindow(url);
-    process.exit(0);
+    appWindow = openAppWindow(url);
+    if (!(await stopsAnsweringWithin(port, REATTACH_MS))) process.exit(0);
+    // It went away: its last window had just closed. Serve on its port, so the
+    // window just opened has a server again. If that window got Edge's "can't
+    // reach this page", Edge retries it by itself on a backoff (measured: the
+    // retry about 6 s after the failure picked up a server started at 2.6 s).
   }
 
   const { createApp, listen, memoryStatic } = await import('../server/app.js');
@@ -138,7 +235,7 @@ async function main() {
   } catch (err) {
     // Lost a race with another launch: it is LayerCake after all, so use it.
     if (err.code === 'EADDRINUSE' && (await answersWithin(port, REPROBE_MS))) {
-      openWindow(url);
+      if (!appWindow) openWindow(url);
       process.exit(0);
     }
     showError(...listenFailure(err, port));
@@ -146,25 +243,21 @@ async function main() {
   }
   const inflight = trackInflight(server);
 
-  const launchedAt = Date.now();
-  const { child } = openWindow(url);
+  if (!appWindow) {
+    appWindow = openAppWindow(url);
+  } else if (handedOff(appWindow) && !(await profileInUse())) {
+    // Taking over, and our browser handed the window to another one that has
+    // since exited: the old server's, which was closing as the hand-off
+    // arrived. Nothing holds the profile, so nothing is showing our window;
+    // open it again, on our own server now. Without this, 1 of 9 relaunches
+    // 0.2 s after a close ended with a server and no window (the hand-off is
+    // reasoned from the timing; a test that kills the receiving browser
+    // reproduces the same end state every time).
+    appWindow = openAppWindow(url);
+  }
   // No app-mode browser, so no process that tracks the window: stay up.
-  if (!child) return;
-
-  // A browser that cannot be started at all (blocked by AppLocker, say) fails
-  // asynchronously. Without a listener that is an uncaught exception whose error
-  // window would fail the same way; with one, at least no invisible server is
-  // left holding the port.
-  child.on('error', () => process.exit(1));
-
-  child.on('exit', async () => {
-    if (Date.now() - launchedAt < HANDOFF_MS) return;
-    // Stop taking requests, then let the ones already running finish, so a save
-    // or restore started just before the window closed is not cut off.
-    server.close();
-    await inflight.idle(DRAIN_MS);
-    process.exit(0);
-  });
+  if (!appWindow.child) return;
+  await serveUntilWindowsClose(server, inflight, appWindow);
 }
 
 if (!isSea()) {
