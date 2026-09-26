@@ -19,6 +19,7 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,7 +28,23 @@ import { projectSlug } from '../server/paths.js';
 import { makeSessionFixture, runLaunchChecks, runSessionChecks, runSummaryChecks } from './smoke-sessions.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const PORT = Number(process.env.SMOKE_PORT || 5399);
+
+/** A port nothing is listening on right now, chosen by the OS. */
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+  });
+}
+
+// Not a fixed port: two runs at once (parallel reviewers, a mutation loop)
+// would otherwise share one, and the loser's server dies of EADDRINUSE while
+// its checks run against the winner's server, fixture and code (#28).
+const PORT = Number(process.env.SMOKE_PORT || (await freePort()));
 const BASE = `http://127.0.0.1:${PORT}`;
 
 let pass = 0;
@@ -114,14 +131,23 @@ function getWithHost(pathname, host, headers = {}) {
   });
 }
 
+/**
+ * Ready means OUR server is listening, not that something answers the port:
+ * server/index.js prints its URL only after its own listen succeeded, and a
+ * server that failed to bind exits instead. Anything else answering on the
+ * port is some other process, and grading it would be a false verdict (#28).
+ */
 async function waitForServer(timeoutMs = 20000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`${BASE}/`);
-      if (res.ok) return true;
-    } catch {
-      /* not listening yet */
+    if (serverExit !== null) return false;
+    if (serverOut.includes(`http://127.0.0.1:${PORT}`)) {
+      try {
+        const res = await fetch(`${BASE}/`);
+        if (res.ok) return true;
+      } catch {
+        /* listening, but not answering yet */
+      }
     }
     await new Promise((r) => setTimeout(r, 150));
   }
@@ -149,13 +175,25 @@ const server = spawn(process.execPath, [path.join(ROOT, 'server', 'index.js')], 
       path.join(smokeDir, 'claude-stub'),
     ]),
   },
-  stdio: 'ignore',
+  // Piped, and always drained: its first line is the readiness signal, and its
+  // stderr says why it exited if it did.
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+let serverOut = '';
+let serverExit = null;
+const keep = (chunk) => {
+  serverOut = (serverOut + chunk).slice(-8000);
+};
+server.stdout.setEncoding('utf8').on('data', keep);
+server.stderr.setEncoding('utf8').on('data', keep);
+server.once('exit', (code, signal) => {
+  serverExit = code ?? signal;
 });
 
 let exitCode = 1;
 try {
   if (!(await waitForServer())) {
-    process.stdout.write(`\n  Server never answered on ${BASE}. Is the port in use?\n\n`);
+    process.stdout.write(`\n  Smoke's own server never came up on ${BASE} (exit: ${serverExit}).\n${serverOut}\n`);
     throw new Error('server did not start');
   }
 
@@ -602,6 +640,8 @@ try {
 
   // --- AI summaries, against a stand-in claude --------------------------------
   await runSummaryChecks({ base: BASE, token, check, proj, smokeDir });
+
+  check('smoke\'s own server stayed up for the whole run', serverExit === null, `exit: ${serverExit}`);
 
   process.stdout.write(`\n  ${pass} passed, ${fail} failed\n\n`);
   exitCode = fail ? 1 : 0;
