@@ -112,6 +112,9 @@ function sessionDetail(model) {
     toolFailures: model.toolFailures,
     permissionDenials: model.permissionDenials,
     backgroundPending: model.backgroundPending,
+    // From each subagent's own status, not the last turn_duration record, which
+    // is only written when a turn ends and so lags behind a completion.
+    runningSubagents: model.subagents.filter((s) => s.status === 'running' || s.status === 'starting').length,
     costState: model.costState,
     continuedIn: model.continuedIn,
     parse: { lines: model.lines, badLines: model.badLines, unknown: model.unknown },

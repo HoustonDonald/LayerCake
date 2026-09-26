@@ -38,6 +38,8 @@ import {
   renderView,
 } from './render.js';
 import { buildSummary } from './summary.js';
+import { runSession } from './session.js';
+import { homeDir } from '../server/paths.js';
 
 /** A failure worth exit 1, as opposed to a scan that merely found problems. */
 class CliError extends Error {}
@@ -57,6 +59,7 @@ Commands
   snapshots                      list snapshots, newest first
   diff <snapshotId> [dir]        compare a snapshot against what is on disk now
   restore <snapshotId> [dir]     restore from a snapshot, dry run by default
+  session [dir] [--list]         the current Claude Code session here: state, context, memory loaded
 
   dir defaults to the current directory.
   Run layercake <command> --help for the options of one command.
@@ -71,6 +74,18 @@ Exit codes
   1  the command could not run: bad directory, unknown snapshot, failed write`;
 
 const COMMAND_HELP = {
+  session: `layercake session [dir] [--list]
+
+The Claude Code session for a directory: the running one if there is one, else
+the most recent. Shows its state, model, context used against the window,
+activity, and which memory files it actually loaded (at start and later).
+Read from the session transcript: it spends no Claude usage. The transcript
+format is internal to Claude Code, so a new release can change what is shown.
+
+Options
+  --list        every session recorded for the directory, newest first
+  -h, --help    this text`,
+
   here: `layercake here [dir]
 
 Compact summary of the effective Claude Code environment for a directory: which
@@ -316,7 +331,15 @@ async function cmdRestore(args) {
   if (result.failed.length) process.exitCode = 1;
 }
 
+async function cmdSession(args) {
+  const { values, positionals } = parse(args, { list: { type: 'boolean' } });
+  if (values.help) return out(COMMAND_HELP.session);
+  const dir = await targetDir(positionals[0]);
+  return runSession(dir, { list: Boolean(values.list), home: homeDir() });
+}
+
 const COMMANDS = {
+  session: cmdSession,
   here: cmdHere,
   tree: cmdTree,
   show: cmdShow,

@@ -1,16 +1,37 @@
 import React, { useCallback, useEffect, useState } from 'react';
 
-import { getManifest, readFile, scan } from './api.js';
+import { getManifest, getSession, listSessions, readFile, scan } from './api.js';
 import useWatch from './useWatch.js';
+import { pathKey } from './sessionFormat.js';
 import LineageTree from './components/LineageTree.jsx';
 import FileViewer from './components/FileViewer.jsx';
 import FlattenView from './components/FlattenView.jsx';
 import FileEditor from './components/FileEditor.jsx';
 import SnapshotPanel from './components/SnapshotPanel.jsx';
+import SessionsView from './components/SessionsView.jsx';
 import WatchBanner from './components/WatchBanner.jsx';
 
-// Persisted in the browser, never on disk: the tool writes nothing to the
-// filesystem, and that guarantee is worth more than server-side preferences.
+/**
+ * Which memory files the project's current session actually loaded, for the
+ * Explorer overlay. "Current" is a running session whose working directory is
+ * the scanned one, else the most recent session there. Null when there is none.
+ */
+async function loadOverlay(projectDir) {
+  const list = await listSessions(projectDir);
+  const here = list.sessions.filter((s) => pathKey(s.cwd) === pathKey(projectDir));
+  const current = here.find((s) => s.live) || here[0];
+  if (!current) return null;
+  const detail = await getSession(current.sessionId);
+  const byKey = new Map();
+  for (const i of detail.instructions) {
+    const k = pathKey(i.path);
+    if (!byKey.has(k)) byKey.set(k, i.reason);
+  }
+  return { sessionId: current.sessionId, title: current.title, live: current.live, byKey, instructions: detail.instructions };
+}
+
+// Persisted in the browser, never on disk: the server writes only config edits
+// (snapshot first) and its own data store, and UI preferences belong in neither.
 // Keys keep the old product name on purpose. Renaming them would silently drop
 // the remembered directory and recent list on first launch after the rename,
 // which is a worse trade than an inconsistent string nobody sees.
@@ -45,6 +66,7 @@ export default function App() {
   // The write policy is served, never assumed, so the UI and the guards cannot
   // disagree about what is editable.
   const [policy, setPolicy] = useState(null);
+  const [overlay, setOverlay] = useState(null);
 
   // Live filesystem events for the current scan. Reports only: re-scanning is
   // the user's call, because it replaces the lineage under whatever is open.
@@ -96,6 +118,20 @@ export default function App() {
     },
     [dir]
   );
+
+  // The overlay is a convenience on the Explorer, so a failure to read sessions
+  // simply leaves it off rather than raising an error over the lineage.
+  useEffect(() => {
+    let alive = true;
+    setOverlay(null);
+    if (!lineage?.projectDir) return undefined;
+    loadOverlay(lineage.projectDir)
+      .then((o) => alive && setOverlay(o))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [lineage]);
 
   // Scan the remembered directory once on load, so a reopened tab lands ready.
   useEffect(() => {
@@ -205,6 +241,9 @@ export default function App() {
           >
             Snapshots
           </button>
+          <button className={mode === 'sessions' ? 'active' : ''} onClick={() => setMode('sessions')}>
+            Sessions
+          </button>
         </div>
 
         {recent.length > 1 && (
@@ -236,10 +275,15 @@ export default function App() {
         />
       )}
 
+      {mode === 'sessions' ? (
+        <div className="panes single">
+          <SessionsView key={lineage?.projectDir || 'none'} projectDir={lineage?.projectDir || null} />
+        </div>
+      ) : (
       <div className="panes">
         <div className="pane-left">
           {lineage ? (
-            <LineageTree lineage={lineage} selectedPath={selected} onSelect={onSelect} />
+            <LineageTree lineage={lineage} selectedPath={selected} onSelect={onSelect} overlay={overlay} />
           ) : (
             <div className="empty-state">
               {scanning ? 'Scanning…' : 'Enter a project directory and press Scan.'}
@@ -301,6 +345,7 @@ export default function App() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

@@ -4,8 +4,9 @@ Working state for picking this up in a new session. **Disposable.** Durable rule
 `CLAUDE.md`, user-facing spec in `README.md`. If something here contradicts those, they win and this
 file is stale.
 
-Last verified: **2026-09-25**. Write/snapshot work was done 2026-09-05; file watching 2026-09-15;
-the single executable and the app-window isolation fix 2026-09-25 (see "2026-09-25" below).
+Last verified: **2026-09-26**. Write/snapshot work was done 2026-09-05; file watching 2026-09-15;
+the single executable and the app-window isolation fix 2026-09-25; session history (Phase 1 of the
+session-wrap plan) 2026-09-26 (see those sections below).
 
 ---
 
@@ -110,6 +111,38 @@ attached to. The store had not
 existed before that run; it was deleted, and the harness now refuses to run if the port is held by
 anything but the process it launched.
 
+### 2026-09-26: session history (Phase 1 and 1b of the session-wrap plan)
+
+The owner's vision: wrap a live Claude Code terminal session with everything that affects it. The
+plan (researched, measured, owner decisions recorded) is at
+`C:\Users\donal\.claude\plans\ok-let-s-keep-that-adaptive-island.md`: Phase 1 passive session
+observer, 1b optional AI summaries, Phase 2 launch and wrap (Windows Terminal companion, per-session
+status line and hooks via `--settings`), optional physical lights, and a later separate decision on
+an embedded terminal.
+
+Built (Phase 1 + 1b): the Sessions tab, `layercake session`, the Explorer loaded-memory overlay,
+and the server modules listed in CLAUDE.md's architecture. Owner decisions: retention stays at 30
+days (LayerCake keeps a card per listed session instead); AI summaries on, Haiku, click only.
+
+Measured, for the record:
+- All 44 transcripts on this machine (117 MB) parse in about 0.5 s; first `/api/sessions` 0.7 s,
+  then about 70 ms. 0 unrecognised record types on 2.1.197 to 2.1.282.
+- A default `claude -p` call starts at a median of 85K tokens of Claude Code's own context. The
+  stripped-down summarizer measured 1,091 in (for a 569-token digest), 583 out, $0.004.
+- `--bare` would break a subscription login (API key only); `--safe-mode` keeps it.
+- LayerCake adds about 0.6 GB RAM beside a session (mostly its Edge window).
+
+Verified: smoke 112 passed (session checks run over a synthetic data folder; sentinels for a pasted
+secret, a `.key` file, CLAUDE.md bodies and tool output never appear in any response); mutants
+caught: tool results counted as prompts, usage per block, unknown counter discarded,
+`pastedContents` kept, `.trash` walked. Headless Edge (puppeteer-core, scratch only) drove the
+Sessions tab and the overlay against real sessions: list, glow, gauge, rail, turn view, prompt-only
+history, no console errors.
+
+Fixed along the way, each its own commit or check: `projectSlug` (paths with `.` or a space),
+`skills/.trash` being listed as live skills, and a stale "background agent still running" line (now
+from subagent statuses, live sessions only).
+
 ---
 
 ## Decisions already made, so they do not get relitigated
@@ -171,6 +204,13 @@ Nothing blocks progress. These were flagged and not answered.
     from the code, not run). The Host guard is not a factor: Vite's string-shorthand proxy sets
     `changeOrigin: true`, so the server sees `Host: 127.0.0.1:5178` (checked in Vite's source).
     Fixing dev mode means getting the token into Vite's page, e.g. a dev-only proxy of `/`.
+10. **Next in the session-wrap plan: Phase 2, launch and wrap.** "Start Claude here" opens a
+    Windows Terminal tab running `claude --session-id <uuid> --settings <json>` beside LayerCake.
+    That adds exact context %, cost, 5-hour/weekly limits, prompt-cache expiry, "waiting for you"
+    (Notification/PermissionRequest hooks) and `InstructionsLoaded` reasons, with the per-session
+    overhead meter that must read 0 tokens. Not started; the owner has not yet said go for it.
+11. **`CLAUDE_CONFIG_DIR` is honoured nowhere in LayerCake** (pre-existing). A user who relocates
+    Claude Code's config with it gets a scan of the default location. Filed, not fixed.
 
 ---
 

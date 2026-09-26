@@ -87,7 +87,8 @@ export function restore(scanId, id, paths) {
 }
 
 /**
- * Subscribes to filesystem events for a scan. Returns a function that stops it.
+ * Opens a Server-Sent Events stream and hands each event to onEvent(name,
+ * payload). Returns a function that stops it.
  *
  * Read with fetch and a stream reader rather than EventSource, because
  * EventSource cannot set a request header. The only alternative would be
@@ -95,28 +96,24 @@ export function restore(scanId, id, paths) {
  * browser history and any future access log. Hand-parsing eight lines of SSE
  * framing is the cheaper half of that trade.
  *
- * All three callbacks are optional. `onError` is called for a refused stream
- * (an expired scan, too many tabs) and for a dropped connection, never for an
- * abort the caller asked for.
+ * onError is called for a refused stream and for a dropped or ended
+ * connection, never for an abort the caller asked for.
  */
-export function watchScan(scanId, { onReady, onChange, onError } = {}) {
+function openEventStream(url, { onEvent, onError, label, endedMessage }) {
   const controller = new AbortController();
 
   (async () => {
     let res;
     try {
-      res = await fetch(`/api/watch?scanId=${encodeURIComponent(scanId)}`, {
-        headers: { 'X-LayerCake-Token': TOKEN },
-        signal: controller.signal,
-      });
+      res = await fetch(url, { headers: { 'X-LayerCake-Token': TOKEN }, signal: controller.signal });
     } catch (err) {
-      if (!controller.signal.aborted) onError?.(err.message || 'Watch connection failed');
+      if (!controller.signal.aborted) onError?.(err.message || `${label} connection failed`);
       return;
     }
 
     if (!res.ok) {
       // A refusal is an ordinary JSON body, not a stream.
-      let message = `Watch failed (${res.status})`;
+      let message = `${label} failed (${res.status})`;
       try {
         const payload = await res.json();
         if (payload?.message) message = payload.message;
@@ -143,23 +140,22 @@ export function watchScan(scanId, { onReady, onChange, onError } = {}) {
         while (split !== -1) {
           const frame = buffer.slice(0, split);
           buffer = buffer.slice(split + 2);
-          dispatchFrame(frame, { onReady, onChange });
+          const parsed = parseFrame(frame);
+          if (parsed) onEvent(parsed.event, parsed.payload);
           split = buffer.indexOf('\n\n');
         }
       }
-      // The server only ends the stream when the scan is evicted or it shuts
-      // down. Either way the client's view is stale and should say so.
-      if (!controller.signal.aborted) onError?.('Watch stream ended. Re-scan to resume.');
+      if (!controller.signal.aborted) onError?.(endedMessage);
     } catch (err) {
-      if (!controller.signal.aborted) onError?.(err.message || 'Watch connection lost');
+      if (!controller.signal.aborted) onError?.(err.message || `${label} connection lost`);
     }
   })();
 
   return () => controller.abort();
 }
 
-/** One SSE frame to one callback. Comment-only frames (the keepalive) are dropped. */
-function dispatchFrame(frame, { onReady, onChange }) {
+/** One SSE frame to { event, payload }. Comment-only frames (the keepalive) give null. */
+function parseFrame(frame) {
   let event = null;
   const dataLines = [];
   for (const line of frame.split('\n')) {
@@ -167,14 +163,68 @@ function dispatchFrame(frame, { onReady, onChange }) {
     if (line.startsWith('event:')) event = line.slice(6).trim();
     else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
   }
-  if (!event || dataLines.length === 0) return;
-
-  let payload;
+  if (!event || dataLines.length === 0) return null;
   try {
-    payload = JSON.parse(dataLines.join('\n'));
+    return { event, payload: JSON.parse(dataLines.join('\n')) };
   } catch {
-    return;
+    return null;
   }
-  if (event === 'ready') onReady?.(payload);
-  else if (event === 'change') onChange?.(payload);
+}
+
+/**
+ * Subscribes to filesystem events for a scan. Returns a function that stops it.
+ * All three callbacks are optional.
+ */
+export function watchScan(scanId, { onReady, onChange, onError } = {}) {
+  return openEventStream(`/api/watch?scanId=${encodeURIComponent(scanId)}`, {
+    label: 'Watch',
+    // The server only ends the stream when the scan is evicted or it shuts
+    // down. Either way the client's view is stale and should say so.
+    endedMessage: 'Watch stream ended. Re-scan to resume.',
+    onError,
+    onEvent: (event, payload) => {
+      if (event === 'ready') onReady?.(payload);
+      else if (event === 'change') onChange?.(payload);
+    },
+  });
+}
+
+/* ---------------------------------------------------------------- sessions */
+
+export function listSessions(dir) {
+  return request(dir ? `/api/sessions?dir=${encodeURIComponent(dir)}` : '/api/sessions');
+}
+
+export function getSession(id) {
+  return request(`/api/session/${encodeURIComponent(id)}`);
+}
+
+export function getTurn(id, n) {
+  return request(`/api/session/${encodeURIComponent(id)}/turn/${encodeURIComponent(n)}`);
+}
+
+export function getHistory(id) {
+  return request(`/api/history/${encodeURIComponent(id)}`);
+}
+
+/** The one call in the app that spends Claude usage. Only ever from a click. */
+export function summarizeSession(id) {
+  return post(`/api/session/${encodeURIComponent(id)}/summarize`, {});
+}
+
+export function getUsage() {
+  return request('/api/usage');
+}
+
+/** Live state for one session: small updates, never content. */
+export function followSession(id, { onUpdate, onError } = {}) {
+  return openEventStream(`/api/session/${encodeURIComponent(id)}/stream`, {
+    label: 'Session stream',
+    endedMessage: 'Session stream ended.',
+    onError,
+    onEvent: (event, payload) => {
+      if (event === 'update') onUpdate?.(payload);
+      else if (event === 'error') onError?.(payload?.message || 'Session stream error');
+    },
+  });
 }

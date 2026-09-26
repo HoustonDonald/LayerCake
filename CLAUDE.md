@@ -33,6 +33,7 @@ It is disposable and goes stale; this file and `README.md` win where they disagr
 npm start          # build client if stale, then serve http://127.0.0.1:5178
 npm run app        # same, then open a chromeless app-mode browser window
 npm run cli -- here    # effective environment for the current directory
+npm run cli -- session # the current Claude Code session here (no Claude usage)
 npm run dev:server # API only on 5178
 npm run dev:client # Vite HMR on 5179, proxying /api to 5178
 npm run smoke      # end to end over the real HTTP API
@@ -50,8 +51,11 @@ serves an embedded copy through `desktop/main.js`. After touching `server/app.js
 which would lend it one), then check that a window opens, the UI loads, and closing the window ends
 `LayerCake.exe`. The exe prints nothing, so a failure there shows as an error window or as silence.
 
-Env knobs: `PORT` (default 5178), `CLAUDE_EXPLORER_DIR_TIMEOUT_MS` (default 3000), and
-`LAYERCAKE_SNAPSHOT_DIR` (default `%LOCALAPPDATA%\LayerCake\snapshots`).
+Env knobs: `PORT` (default 5178), `CLAUDE_EXPLORER_DIR_TIMEOUT_MS` (default 3000),
+`LAYERCAKE_SNAPSHOT_DIR` (default `%LOCALAPPDATA%\LayerCake\snapshots`), `LAYERCAKE_APPDATA_DIR`
+(default `%LOCALAPPDATA%\LayerCake\data`) and `LAYERCAKE_CLAUDE_DATA_DIR` (default `~/.claude`, read
+for session data only; smoke points it at a synthetic folder so real sessions are never read).
+Claude Code's own `CLAUDE_CONFIG_DIR` is not honoured anywhere yet.
 
 `npm start` builds only when `public/index.html` is older than the newest file under `client/`, so a
 change to `server/` alone does not trigger a rebuild and does not need one.
@@ -70,6 +74,14 @@ server/writefile.js the ONLY edit path; depends on snapshot.js by design
 server/security.js  localhost CSRF guard and session token
 server/app.js       express app, 127.0.0.1 bind, per-scan allowlist; builds, never listens on import
 server/index.js     terminal entry: app.js serving public/ from disk, listens on load
+server/transcript.js the ONLY reader of Claude Code session transcripts -> normalized session model
+server/jsonl.js     follows an append-only JSON Lines file by byte offset (transcripts, history)
+server/sessions.js  session discovery (the allowlist for session routes), running sessions, retention
+server/history.js   history.jsonl prompts; pastedContents never leaves it
+server/health.js    session health state + reasons, rules shipped in the payload
+server/summaries.js free summary cards; the opt-in AI summary via stripped-down claude -p
+server/appdata.js   LayerCake's own data (cards, AI summaries, usage ledger), via atomicWrite
+server/session-routes.js /api/sessions, /api/session/:id[/turn/:n|/stream|/summarize], /api/history, /api/usage
 client/             React 18 + Vite, two-pane explorer plus editor, snapshots and watch bar
 cli/                layercake CLI, imports server modules directly
 scripts/launch.js   build, serve, then open an app-mode browser window
@@ -93,7 +105,10 @@ places a mutating `fs` call may appear. Everything else in `server/` stays on `r
 `stat`, `lstat`, and `fs.open(path, 'r')`. Audit with the command in README "Write posture", and
 note it also matches the identifier `truncated`, so read the hits rather than counting them. The exe
 adds no write site: `desktop/main.js` and `desktop/window.js` write nothing, and only the build tool
-`desktop/build.mjs` writes, to `public/` and `dist/`.
+`desktop/build.mjs` writes, to `public/` and `dist/`. `server/appdata.js` writes LayerCake's own data
+through `snapshot.js`'s `atomicWrite`, so it adds a caller, not a mutating call site; it is policy
+like `writefile.js`, confined to `appDataRoot()`, and refuses a root inside `~/.claude` or the
+Claude data folder.
 
 **Every write snapshots first, and that is structural.** `writefile.js` imports `snapshot.js`, not
 the reverse, so a new route cannot skip the snapshot by forgetting to call it. Keep that direction.
@@ -125,6 +140,29 @@ notifier; reading stays on `/api/file`. The filter deciding which events reach t
 likewise read from the scan result and the manifest rather than kept as its own list, for the same
 reason the write policy is: a hand-maintained copy drifts and quietly stops matching what the scan
 actually treats as config.
+
+**Session ids come from discovery, the way file paths come from a scan.** Every `/api/session*`
+route resolves its id through `sessions.js`, which only knows ids it found as
+`<claudeDataDir>/projects/*/<uuid>.jsonl`; nothing accepts a path, and no path is ever built from a
+field inside a transcript record (subagent file names are pattern-checked agent ids). These routes
+carry content (prompts and replies), which is why they are separate from `/api/watch`, which stays
+paths and verbs only.
+
+**`transcript.js` is the only place that knows the transcript format.** Anthropic documents it as
+internal and liable to change in any release. Unrecognised record types are counted and shown in
+the UI ("Transcript read"); never silence that counter, because it is how a format change becomes
+visible instead of becoming empty panels. It keeps prompts and replies and drops CLAUDE.md bodies
+from instruction attachments, the system prompt snapshot, the account email and tool I/O bodies.
+
+**Secrets beside the session data are never read or sent.** `history.jsonl`'s `pastedContents`
+never leaves `history.js`; `sessions/<pid>.<hash>.key` files are never opened (only `<digits>.json`
+matches). Smoke plants sentinels in both and searches every response for them.
+
+**Only `summaries.js` may spend Claude usage, and only on an explicit request.** Everything else
+reads files. The AI summary runs `claude -p` with a fixed argv (Haiku, `--safe-mode`, `--tools ""`,
+own system prompt, no session persistence, a budget cap), the digest on stdin, one run at a time,
+from a POST the UI sends only on a click. Every run is written to the usage ledger, including failed
+ones. Nothing automatic may call it; adding anything that does breaks the promise the README makes.
 
 **The CSRF guard belongs on `/api` only, never on the HTML routes.** A top-level navigation carries
 `Sec-Fetch-Site: cross-site` whenever the user arrives from a bookmark, a link, or the new tab page.
@@ -214,6 +252,23 @@ partially. A truncated file restored is silent data loss.
 - **The exe's shutdown waits for handlers, not connections** (`desktop/inflight.js`). `server.close()`
   alone returned while a snapshot was still running, because the browser's sockets die with it; a
   save, snapshot or multi-file restore was then cut off. The wait is capped at 30 s (`DRAIN_MS`).
+- **The session view lags during a long reply.** Claude Code writes a main-thread transcript record
+  when each API response completes, not while it streams (subagent files do stream). Context and
+  the prompt rail catch up when the reply finishes.
+- **"Waiting for your approval" is not visible from the transcript.** A pending permission prompt is
+  not recorded, and `sessions/<pid>.json` has only been seen reporting `busy`. That signal needs
+  the documented `Notification`/`PermissionRequest` hooks, which is Phase 2 (sessions LayerCake
+  launches) in the plan.
+- **The context window is inferred from the model id** (`contextWindow` in `health.js`, rule shipped
+  with the payload): `[1m]` or a documented native-1M family is 1M, else 200K. A new model family
+  needs adding there.
+- **Session history is bounded by Claude Code's retention**, `cleanupPeriodDays`, default 30 days
+  (the owner chose to keep it). Deleted sessions survive only as LayerCake's kept card or as
+  prompts in `history.jsonl`.
+- **Cards are written from a GET.** `/api/sessions` persists changed cards as a side effect, at most
+  once a minute per session, so the index outlives the transcripts. It is a cache write, not a
+  state change anyone requested, and a failure is reported in the payload rather than failing the
+  list.
 
 ## When adding scan coverage
 

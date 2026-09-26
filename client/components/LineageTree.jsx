@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 
+import { pathKey } from '../sessionFormat.js';
+
 const CATEGORY_ORDER = [
   'memory',
   'settings',
@@ -49,6 +51,35 @@ function entryLabel(entry) {
   return entry.relPath;
 }
 
+/**
+ * Whether the project's current session loaded this memory file. The session
+ * records it; the lineage only predicts it. Absent means the session did not
+ * load it, which for a topic file under auto-memory is expected (only the index
+ * is loaded at start).
+ */
+function LoadedBadge({ reason }) {
+  if (reason === 'session_start') return <span className="loaded-badge yes" title="Loaded when the session started">loaded</span>;
+  if (reason === 'nested') return <span className="loaded-badge later" title="Loaded later, when the session entered this folder">loaded later</span>;
+  if (reason) return <span className="loaded-badge later" title={reason}>{reason}</span>;
+  return <span className="loaded-badge no" title="Not loaded by the current session">not loaded</span>;
+}
+
+/** Names the session the overlay comes from, and anything it loaded that the lineage did not predict. */
+function OverlayNote({ overlay, lineage }) {
+  const scanned = new Set(lineage.levels.flatMap((l) => l.entries).map((e) => pathKey(e.absPath)));
+  const unpredicted = overlay.instructions.filter((i) => !scanned.has(pathKey(i.path)));
+  return (
+    <div className="overlay-note">
+      Memory badges from {overlay.live ? 'the running' : 'the latest'} session here: <strong>{overlay.title}</strong>.
+      {unpredicted.length > 0 && (
+        <div className="warn">
+          Loaded but not in this lineage: {unpredicted.map((i) => i.path).join(', ')}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function formatBytes(n) {
   if (n == null) return '';
   if (n < 1024) return `${n} B`;
@@ -95,7 +126,7 @@ function OtherList({ items }) {
   );
 }
 
-function Level({ level, selectedPath, onSelect, defaultOpen }) {
+function Level({ level, selectedPath, onSelect, defaultOpen, overlay }) {
   const [open, setOpen] = useState(defaultOpen);
   const isEmpty = level.status === 'empty';
 
@@ -155,6 +186,7 @@ function Level({ level, selectedPath, onSelect, defaultOpen }) {
                     className={`dot${entry.error ? ' error' : entry.sensitive ? ' sensitive' : ''}`}
                   />
                   <span className="entry-name">{entryLabel(entry)}</span>
+                  {overlay && entry.category === 'memory' && <LoadedBadge reason={overlay.byKey.get(pathKey(entry.absPath))} />}
                   <span className="entry-size">{formatBytes(entry.size)}</span>
                 </button>
               ))}
@@ -179,7 +211,7 @@ function Level({ level, selectedPath, onSelect, defaultOpen }) {
   );
 }
 
-export default function LineageTree({ lineage, selectedPath, onSelect }) {
+export default function LineageTree({ lineage, selectedPath, onSelect, overlay }) {
   return (
     <div>
       <div className="summary-bar">
@@ -193,12 +225,14 @@ export default function LineageTree({ lineage, selectedPath, onSelect }) {
         )}
         <span>{new Date(lineage.scannedAt).toLocaleTimeString()}</span>
       </div>
+      {overlay && <OverlayNote overlay={overlay} lineage={lineage} />}
       {lineage.levels.map((level) => (
         <Level
           key={level.id}
           level={level}
           selectedPath={selectedPath}
           onSelect={onSelect}
+          overlay={overlay}
           defaultOpen={level.status === 'found' || level.status === 'partial'}
         />
       ))}

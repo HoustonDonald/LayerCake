@@ -35,6 +35,7 @@ layercake backup [dir] [--label]  take a snapshot
 layercake snapshots               list them, newest first
 layercake diff <id> [dir]         compare a snapshot against disk
 layercake restore <id> [dir]      dry run by default; --yes to write, --only to filter
+layercake session [dir] [--list]  the current Claude Code session here: state, context, memory loaded
 ```
 
 A terminal UI was considered and rejected. The level tree and the provenance tables are wide,
@@ -295,10 +296,65 @@ Known: `~/.claude.json` is a real member of the lineage and Claude Code rewrites
 seconds during a session, so it appears in the bar often. It is reported rather than filtered
 because it genuinely is config the tool tracks, and hiding a tracked file would be the worse lie.
 
+## Sessions
+
+The **Sessions** tab shows Claude Code sessions: every one still on disk for the scanned project
+(or for all projects), newest first, with the running ones marked. For the selected session:
+
+- **Summary card:** its title (yours, else the one Claude Code generated, else the first prompt),
+  Claude Code's own "while you were away" recaps, and counts: prompts, tool calls and failures,
+  files edited, subagents, compactions, API errors, tokens.
+- **Prompt rail:** every prompt, slash command and `!` shell line, filterable; pick one to read the
+  prompt, the reply (rendered as markdown), its tool calls and its subagents.
+- **Context gauge:** tokens in use against the model's window, estimated from the last API call.
+  The window comes from the model id, and the rule saying how is shown on hover.
+- **Memory this session loaded:** the CLAUDE.md and auto-memory files Claude Code recorded loading,
+  at start or later on entering a folder. The Explorer tree shows the same thing as a badge on each
+  memory file (loaded, loaded later, not loaded), from the running session in the scanned
+  directory, else the latest one, and names any file loaded that the lineage did not predict.
+- **Health glow:** the session pane's border glows by state (working, idle, context high, error,
+  not running), always with a text label as well. The rules are served with the data and shown on
+  hover. A running session is followed live.
+- **Other sections:** subagents with status and tokens, skills invoked, compactions, errors and
+  model fallbacks, files edited, and how the transcript was read (see below).
+
+Where it comes from, and what that means:
+
+- **Transcripts** under `~/.claude/projects/<project>/<session>.jsonl`, which Claude Code writes as
+  it runs. Anthropic documents their format as internal and liable to change in any release, so
+  every record type this build does not recognise is counted and listed under "Transcript read"
+  rather than dropped. A new Claude Code version that changes the format shows up there first.
+- The main transcript is written when each API response completes, so during a long reply the
+  view lags until it finishes. Subagent files are written as they stream.
+- **Retention:** Claude Code deletes a transcript after `cleanupPeriodDays` (default 30) without
+  activity. LayerCake keeps a small summary card for every session it has listed, so a deleted
+  session stays in the list ("Kept after deletion"), with its card but no prompts or replies.
+- **Prompt history only:** `~/.claude/history.jsonl` keeps every submitted prompt, across projects,
+  long after transcripts are gone. Sessions known only from there are listed with their prompts and
+  nothing else. Anything you pasted into a prompt is stored there too, and never leaves the server.
+- **Running sessions** come from `~/.claude/sessions/<pid>.json`. Each has a sibling `.key` file,
+  which is a secret and is never opened.
+
+**Usage.** Everything above reads files and spends no Claude usage. The one exception is the
+**Summarize with AI** button: on a click, and only then, it runs `claude -p` on Claude Haiku 4.5
+over the session's prompts and visible replies, stripped of Claude Code's own context (no tools,
+MCP servers, CLAUDE.md or plugins) so the call carries little besides the session. An estimate is
+shown before; the actual usage Claude Code reports is recorded after. Measured: a small session cost
+$0.004 at list price (1,091 tokens in, 583 out), and summarizing all 42 sessions on this machine once
+was estimated at under a dollar. On a subscription this draws on your plan limits, not a bill. Every
+run is listed in "LayerCake's own Claude usage", kept apart from the sessions it summarizes.
+
+LayerCake's own data (summary cards, AI summaries, the usage ledger) lives in
+`%LOCALAPPDATA%\LayerCake\data`, never under `~/.claude`. Override it with `LAYERCAKE_APPDATA_DIR`,
+and the Claude data folder read for sessions with `LAYERCAKE_CLAUDE_DATA_DIR`.
+
 ## Network posture
 
 - Binds `127.0.0.1` only, never `0.0.0.0`.
-- No outbound requests. Nothing is sent anywhere.
+- No outbound requests. Nothing is sent anywhere. The one process LayerCake can start that talks to
+  Anthropic is `claude -p`, for an AI summary you asked for (see [Sessions](#sessions)).
+- Session routes serve prompts and replies, so they accept only a session id the server itself
+  discovered on disk, never a path, the same way file routes accept only what a scan found.
 - `/api/file` and `/api/write` only touch a path the preceding scan discovered. The scan result *is*
   the allowlist, so neither is a general-purpose file reader or writer even though the scan input is
   a directory you type. Requests outside it return 403.
@@ -344,7 +400,9 @@ Unreadable paths degrade to an error badge on the affected level; the rest of th
 | Malformed YAML frontmatter | Parse error banner plus the raw block, markdown body still renders |
 | File over 2 MB | Read capped at 2 MB with a truncation notice; JSON parsing is skipped |
 
-Configurable via env: `PORT` (default 5178), `CLAUDE_EXPLORER_DIR_TIMEOUT_MS` (default 3000).
+Configurable via env: `PORT` (default 5178), `CLAUDE_EXPLORER_DIR_TIMEOUT_MS` (default 3000),
+`LAYERCAKE_SNAPSHOT_DIR`, `LAYERCAKE_APPDATA_DIR`, `LAYERCAKE_CLAUDE_DATA_DIR` (default `~/.claude`,
+for session data only).
 
 ## Layout
 
@@ -361,13 +419,22 @@ server/
   flatten.js     the four flattened views
   watch.js       filesystem watcher: directory watches, debounce, config filter
   safety.js      denylists, editable categories, size caps, timeouts, errors
-client/          React UI: explorer, viewers, editor, snapshots, watch bar
+  transcript.js  the only transcript reader: records to a normalized session model
+  jsonl.js       follows an append-only JSON Lines file by byte offset
+  sessions.js    session discovery (the allowlist), running sessions, retention
+  history.js     prompt history; pasted content never leaves it
+  health.js      session health state, with its rules
+  summaries.js   free summary cards; the opt-in AI summary (claude -p)
+  appdata.js     LayerCake's own data store, written through atomicWrite
+  session-routes.js  /api/sessions, /api/session/*, /api/history, /api/usage
+client/          React UI: explorer, viewers, editor, snapshots, watch bar, sessions
 cli/             the layercake CLI, importing server modules directly
 scripts/
   start.js            build-if-stale, then serve
   launch.js           build, serve, wait for ready, open an app-mode window
   install-shortcut.ps1  per-user Start Menu shortcut (-Desktop, -Uninstall)
   smoke.mjs           end to end test over the real HTTP API
+  smoke-sessions.mjs  its session part: a synthetic Claude data folder and checks
 desktop/
   window.js      the app window: browser, profile, isolation flags, error page
   main.js        entry of the single executable
