@@ -205,9 +205,18 @@ The app reads the whole lineage and can edit the files it found. Writes are narr
   re-reads the file through `/api/file`, the same reader as everything else, and compares its mtime
   with the one loaded. If they differ it says the file changed on disk and draws no diff, because a
   diff against the old body would not show what Save replaces, and Save would get the 409 above.
-- **An edited file is saved with LF line endings.** A browser text box turns every line break into
-  LF, so after the first keystroke the draft has no CR in it. For a CRLF file the review says so and
-  leaves line endings out of the diff, so the edit itself stays visible.
+- **An edited file keeps its line endings.** A browser text box turns every line break into LF, so
+  the editor notes the file's ending when it loads and Save writes that one back: a CRLF file (any
+  repo checked out with `core.autocrlf=true`) stays CRLF. A file that mixes CRLF and LF is saved
+  with the one it uses more, and a tie, like a file with no line break at all, is saved as LF. The
+  editor states that rule on any mixed file before you save, because a save then changes the
+  minority lines too. A lone CR is not counted and is saved as the chosen ending. Line endings alone
+  are not an unsaved change, and the review diff compares lines without their endings, so the edit
+  itself stays visible.
+- **Leaving the editor with unsaved changes asks first.** Switching to Flattened, Snapshots or
+  Sessions, selecting another file, or scanning a directory would close the editor and lose the
+  draft, so each one asks, and Cancel keeps editing. The watch bar's Rescan asks in the bar itself.
+  Closing the window does not ask.
 - **Credential files can be neither read nor written**, refused at scan time, at read time and at
   write time.
 - **Executable config requires acknowledgement.** Hook files are executed by Claude Code rather than
@@ -216,7 +225,9 @@ The app reads the whole lineage and can edit the files it found. Writes are narr
   editable file.
 
 Claude Code loads memory and settings at session start, so an edit does not reach a session that is
-already running. The UI says so after every save rather than leaving you to wonder.
+already running. The UI says so after every save rather than leaving you to wonder, beside the undo
+snapshot id and any validation warning, and that result stays on screen until the next save or until
+you leave the editor.
 
 ### What is editable
 

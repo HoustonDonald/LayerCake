@@ -151,8 +151,28 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Leaving the editor unmounts it, and the draft lives only there, so every
+  // way out asks first while there are unsaved changes: another view, another
+  // file, another scan (#52). The watch banner's Rescan asks in its own bar.
+  // Asking was chosen over keeping the draft for later: a kept draft would have
+  // to be matched back to its file after a rescan or a save elsewhere, which is
+  // the same stale-draft risk the editor's reset exists to prevent.
+  const leaveEditorOk = useCallback(
+    () =>
+      !(editing && editorDirty) ||
+      window.confirm(
+        `You have unsaved changes to ${file?.path}.\n\nOK discards them and leaves the editor. Cancel keeps editing.`
+      ),
+    [editing, editorDirty, file]
+  );
+
+  const switchMode = (next) => {
+    if (next !== mode && leaveEditorOk()) setMode(next);
+  };
+
   const onSelect = useCallback(
     async (entry) => {
+      if (!leaveEditorOk()) return;
       setSelected(entry.absPath);
       setMode('explorer');
       setEditing(false);
@@ -169,7 +189,7 @@ export default function App() {
         setFileLoading(false);
       }
     },
-    [lineage]
+    [lineage, leaveEditorOk]
   );
 
   // After a save the file on disk has a new mtime. Re-reading keeps the next
@@ -216,7 +236,7 @@ export default function App() {
           className="path-form"
           onSubmit={(e) => {
             e.preventDefault();
-            runScan();
+            if (leaveEditorOk()) runScan();
           }}
         >
           <input
@@ -234,25 +254,25 @@ export default function App() {
         <div className="modes">
           <button
             className={mode === 'explorer' ? 'active' : ''}
-            onClick={() => setMode('explorer')}
+            onClick={() => switchMode('explorer')}
           >
             Explorer
           </button>
           <button
             className={mode === 'flat' ? 'active' : ''}
-            onClick={() => setMode('flat')}
+            onClick={() => switchMode('flat')}
             disabled={!lineage}
           >
             Flattened
           </button>
           <button
             className={mode === 'snapshots' ? 'active' : ''}
-            onClick={() => setMode('snapshots')}
+            onClick={() => switchMode('snapshots')}
             disabled={!lineage}
           >
             Snapshots
           </button>
-          <button className={mode === 'sessions' ? 'active' : ''} onClick={() => setMode('sessions')}>
+          <button className={mode === 'sessions' ? 'active' : ''} onClick={() => switchMode('sessions')}>
             Sessions
           </button>
         </div>
@@ -261,7 +281,7 @@ export default function App() {
           <div className="recent">
             <span className="recent-label">recent</span>
             {recent.slice(1).map((p) => (
-              <button key={p} className="chip" onClick={() => runScan(p)} title={p}>
+              <button key={p} className="chip" onClick={() => leaveEditorOk() && runScan(p)} title={p}>
                 {p}
               </button>
             ))}
@@ -308,7 +328,7 @@ export default function App() {
           ) : mode === 'flat' && lineage ? (
             <FlattenView scanId={lineage.scanId} />
           ) : editing && file && !file.error ? (
-            <>
+            <div className="editor-view">
               <div className="viewer-head">
                 <div className="viewer-path">{file.path}</div>
                 <div className="viewer-meta">
@@ -325,7 +345,7 @@ export default function App() {
                   onCancel={() => setEditing(false)}
                 />
               </div>
-            </>
+            </div>
           ) : file || fileLoading ? (
             <FileViewer
               file={file}

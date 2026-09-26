@@ -1,17 +1,40 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 import { readFile, writeFile } from '../api.js';
 import DiffView from './DiffView.jsx';
 
 /**
- * A browser text box turns every line break into LF, so after the first
- * keystroke the draft holds no CR at all and Save writes LF. Diffing against
- * the raw body would mark every line of a CRLF file as changed and bury the
- * actual edit, so the review compares against the body as the text box shows
- * it and says separately that the line endings change.
+ * A browser text box turns every line break into LF (a lone CR too), so the
+ * draft never holds a CR. The draft starts from the body in this form, which
+ * keeps "unsaved changes" and the review diff about the text rather than about
+ * line endings: against the raw body, every line of a CRLF file would count as
+ * changed and bury the actual edit.
  */
 function asTextBoxShowsIt(text) {
   return text.replace(/\r\n?/g, '\n');
+}
+
+/**
+ * The line ending Save writes, decided from the file as it was loaded, because
+ * the text box cannot remember it. Without this, saving a CRLF file (any repo
+ * checked out with core.autocrlf=true) quietly rewrote every line of it as LF
+ * (#51).
+ *
+ * A file that mixes the two gets the one it uses more. That keeps the file's
+ * own convention when a tool has appended a few lines in the other one. A tie,
+ * like a file with no line break at all, gets LF, the text box's own. The
+ * editor states this rule on screen for any mixed file, since a save then
+ * changes the minority lines too. A lone CR (classic Mac OS) is not counted;
+ * the text box already made it a line break, and it is saved as the chosen one.
+ */
+function lineEndingOf(text) {
+  const crlf = (text.match(/\r\n/g) || []).length;
+  const lf = (text.match(/\n/g) || []).length - crlf;
+  return { eol: crlf > lf ? '\r\n' : '\n', crlf, lf, mixed: crlf > 0 && lf > 0 };
+}
+
+function withLineEnding(text, eol) {
+  return text.replace(/\r\n|\r|\n/g, eol);
 }
 
 /**
@@ -24,7 +47,7 @@ function asTextBoxShowsIt(text) {
  * to happen anyway.
  */
 export default function FileEditor({ file, scanId, onSaved, onCancel, onDirtyChange }) {
-  const [draft, setDraft] = useState(file.content ?? '');
+  const [draft, setDraft] = useState(() => asTextBoxShowsIt(file.content ?? ''));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
@@ -32,13 +55,23 @@ export default function FileEditor({ file, scanId, onSaved, onCancel, onDirtyCha
   const [reviewing, setReviewing] = useState(false);
   // What the disk said when the review opened: checking, current, changed, or error.
   const [disk, setDisk] = useState(null);
+  // What this editor last wrote, and where, so the reload that follows its own
+  // save can be told apart from any other change to the file.
+  const ownSave = useRef(null);
 
   // A different file selected while the editor is open must not inherit the
   // previous file's draft, which would write one file's contents into another.
   useEffect(() => {
-    setDraft(file.content ?? '');
+    const ours = ownSave.current;
+    ownSave.current = null;
+    setDraft(asTextBoxShowsIt(file.content ?? ''));
     setError(null);
-    setResult(null);
+    // App re-reads the file after every save so the next conflict check uses
+    // the new mtime, and that reload changes file.content. Clearing the result
+    // on it hid the undo snapshot id, the restart notice and any validation
+    // warning a moment after they appeared (#50). The reload is recognised by
+    // carrying exactly what was written; anything else still clears it.
+    if (!(ours && ours.path === file.path && ours.content === file.content)) setResult(null);
     setAcknowledge(false);
     setReviewing(false);
   }, [file.path, file.content]);
@@ -65,10 +98,10 @@ export default function FileEditor({ file, scanId, onSaved, onCancel, onDirtyCha
     };
   }, [reviewing, scanId, file.path, file.mtime]);
 
-  const loaded = file.content ?? '';
+  const loaded = asTextBoxShowsIt(file.content ?? '');
   const dirty = draft !== loaded;
   const isExecutable = file.category === 'hook';
-  const lineEndingsChange = /\r/.test(loaded) && !/\r/.test(draft);
+  const endings = lineEndingOf(file.content ?? '');
 
   // Echoed upward so the "changed on disk" banner can warn before a re-scan
   // throws the draft away. The editor still owns the state; this is a read-only
@@ -82,17 +115,19 @@ export default function FileEditor({ file, scanId, onSaved, onCancel, onDirtyCha
     setSaving(true);
     setError(null);
     setResult(null);
+    const content = withLineEnding(draft, endings.eol);
     try {
       const res = await writeFile({
         scanId,
         path: file.path,
-        content: draft,
+        content,
         // Sent so the server can refuse if something else changed the file
         // since it was opened here. The common case is the same file open in
         // an editor, not a second person.
         expectedMtime: file.mtime || null,
         acknowledgeExecutable: acknowledge,
       });
+      ownSave.current = { path: file.path, content };
       setResult(res);
       onSaved?.(res);
     } catch (err) {
@@ -134,6 +169,15 @@ export default function FileEditor({ file, scanId, onSaved, onCancel, onDirtyCha
         </div>
       )}
 
+      {endings.mixed && (
+        <div className="notice info">
+          This file mixes line endings: {endings.crlf} CRLF and {endings.lf} LF. Save writes every
+          line break as {endings.eol === '\r\n' ? 'CRLF' : 'LF'}, the ending the file uses more (a
+          tie goes to LF), so the {endings.eol === '\r\n' ? 'LF' : 'CRLF'} lines change too. The
+          review diff leaves line endings out.
+        </div>
+      )}
+
       {reviewing ? (
         <div className="editor-review">
           {disk?.state === 'checking' && <div className="spinner">Checking the file on disk…</div>}
@@ -152,14 +196,13 @@ export default function FileEditor({ file, scanId, onSaved, onCancel, onDirtyCha
           )}
           {disk?.state === 'current' && (
             <>
-              {lineEndingsChange && (
+              {endings.crlf > 0 && !endings.mixed && (
                 <div className="notice info">
-                  This file has CRLF line endings and Save writes LF, because a browser text box
-                  turns every line break into LF. The diff below leaves that difference out so the
-                  edit itself is visible.
+                  This file has CRLF line endings, and Save keeps them. A browser text box shows
+                  every line break as LF, so the diff below compares lines without their endings.
                 </div>
               )}
-              <DiffView before={asTextBoxShowsIt(loaded)} after={draft} />
+              <DiffView before={loaded} after={draft} />
             </>
           )}
         </div>
