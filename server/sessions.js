@@ -118,40 +118,67 @@ const START_QUERY_TIMEOUT_MS = 5000;
 const startChecks = new Map(); // pid -> { procStart, match: boolean | null, at }
 let startQuery = null;
 
+/**
+ * Claude Code writes procStart in one of two forms (read from the 2.1.283
+ * bundle, #82): a FILETIME from GetProcessTimes when it runs natively
+ * (about 1.3e17), or, for an npm install and older builds, .NET ticks of the
+ * local creation time from Get-CimInstance ... CreationDate.Ticks (about
+ * 6.4e17). Claude Code itself treats values on opposite sides of 3e17 as
+ * different forms. So the query returns both forms for each pid, and the
+ * comparison takes the form the file used, as BigInt (these exceed 2^53),
+ * within 1 ms: two sources of the same creation time were measured 9 ticks
+ * apart, and a reused pid is off by seconds at the very least.
+ */
+const TICKS_FORM_MIN = 300_000_000_000_000_000n;
+const SAME_START_TICKS = 10_000n; // 1 ms in 100 ns units
+
 function queryStartTimes(pids) {
   const ps = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   const ids = pids.filter((p) => Number.isInteger(p) && p > 0).join(',');
-  const script = `Get-Process -Id ${ids} -ErrorAction SilentlyContinue | ForEach-Object { try { '{0} {1}' -f $_.Id, $_.StartTime.ToFileTimeUtc() } catch {} }`;
+  const script = `Get-Process -Id ${ids} -ErrorAction SilentlyContinue | ForEach-Object { try { '{0} {1} {2}' -f $_.Id, $_.StartTime.ToFileTimeUtc(), $_.StartTime.Ticks } catch {} }`;
   return new Promise((resolve) => {
     execFile(ps, ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: START_QUERY_TIMEOUT_MS, windowsHide: true }, (_err, stdout) => {
       const out = new Map();
       for (const line of String(stdout || '').split(/\r?\n/)) {
-        const m = /^(\d+) (\d+)$/.exec(line.trim());
-        if (m) out.set(Number(m[1]), m[2]);
+        const m = /^(\d+) (\d+) (\d+)$/.exec(line.trim());
+        if (m) out.set(Number(m[1]), { fileTime: BigInt(m[2]), ticks: BigInt(m[3]) });
       }
       resolve(out); // a failed or timed-out query reads as "unknown", never as "dead"
     });
   });
 }
 
+/** true, false, or null when the pid file's value cannot be compared. */
+function sameStart(procStart, live) {
+  if (!live || !/^\d+$/.test(procStart)) return null;
+  const v = BigInt(procStart);
+  const against = v >= TICKS_FORM_MIN ? live.ticks : live.fileTime;
+  const diff = v > against ? v - against : against - v;
+  return diff <= SAME_START_TICKS;
+}
+
 async function refreshStartChecks(entries) {
-  if (!entries.length) return;
+  if (!entries.length) return undefined;
   const run = queryStartTimes(entries.map((e) => e.pid)).then((times) => {
     const at = Date.now();
-    for (const e of entries) {
-      const live = times.get(e.pid);
-      startChecks.set(e.pid, { procStart: e.procStart, match: live === undefined ? null : live === e.procStart, at });
-    }
+    for (const e of entries) startChecks.set(e.pid, { procStart: e.procStart, match: sameStart(e.procStart, times.get(e.pid)), at });
   });
-  startQuery = run.finally(() => {
-    if (startQuery === run) startQuery = null;
+  // The promise .finally returns is what startQuery holds, so that is what it
+  // must be compared with: comparing with `run` never matched, startQuery was
+  // never cleared, and no stale entry was ever refreshed (#83).
+  const tracked = run.finally(() => {
+    if (startQuery === tracked) startQuery = null;
   });
-  return run;
+  startQuery = tracked;
+  return tracked;
 }
 
 /** False only when the running process provably is not the one that wrote the pid file. */
 async function sameProcess(candidates) {
   if (process.platform !== 'win32') return () => true;
+  // One query at a time: callers that arrive while one runs wait for it and
+  // then find their pids answered, instead of each starting PowerShell (#86).
+  if (startQuery) await startQuery.catch(() => {});
   const now = Date.now();
   const missing = [];
   const stale = [];

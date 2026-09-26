@@ -11,7 +11,7 @@
  * running session's pid file. Every response is searched for all of them.
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
@@ -37,11 +37,34 @@ export const PRIOR_LAUNCH_B = { id: 'fffe0000fffe0000', secret: 'c'.repeat(48) }
  * into procStart. Windows only; elsewhere the pid file carries none.
  */
 function ownProcStart() {
+  return cimStart(process.pid, 'filetime');
+}
+
+/**
+ * A process's creation time the way Claude Code writes procStart, from CIM:
+ * 'filetime' (the native build uses GetProcessTimes, the same instant) or
+ * 'ticks', its npm build's exact expression, CreationDate.Ticks (#82).
+ * Deliberately NOT the product's Get-Process query: a fixture built by the
+ * code it checks can only agree with it (3e).
+ */
+function cimStart(pid, form) {
   if (process.platform !== 'win32') return null;
   const ps = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const r = spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${process.pid}).StartTime.ToFileTimeUtc()`], { encoding: 'utf8', timeout: 10000, windowsHide: true });
+  const expr = form === 'ticks' ? 'CreationDate.Ticks' : 'CreationDate.ToFileTimeUtc()';
+  const r = spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").${expr}`], { encoding: 'utf8', timeout: 15000, windowsHide: true });
   const v = String(r.stdout || '').trim();
   return /^\d+$/.test(v) ? v : null;
+}
+
+/** Idle processes standing in for running sessions; stopFixtureProcesses ends them. */
+const fixtureChildren = [];
+function idleProcess() {
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 600000)'], { stdio: 'ignore', windowsHide: true });
+  fixtureChildren.push(child);
+  return child;
+}
+export function stopFixtureProcesses() {
+  for (const c of fixtureChildren) c.kill();
 }
 
 /** A two-record transcript (one prompt, one reply): enough for discovery and a session view. */
@@ -77,6 +100,9 @@ export const IDS = {
   dialog: '99999999-9999-4999-8999-999999999999',
   // A model family the window table does not know, holding 350K of context.
   future: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  // npm-installed Claude Code: procStart in .NET ticks, running and reused (#82).
+  npm: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+  npmReused: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
 };
 const AGENT_BG = 'a0123456789abcdef';
 const AGENT_HANDBACK = 'afedcba9876543210';
@@ -210,6 +236,22 @@ export async function makeSessionFixture(smokeDir, proj) {
     path.join(claudeData, 'sessions', `${process.pid}.json`),
     JSON.stringify({ pid: process.pid, sessionId: IDS.onDisk, cwd: proj, status: 'busy', kind: 'interactive', version: '2.1.282', ...(procStart ? { procStart } : {}) })
   );
+  // #82: an npm-installed Claude Code writes procStart as .NET ticks. One idle
+  // process carries its true ticks and must stay live; another carries ticks
+  // two seconds off (its pid reused, as far as the check can tell) and must not.
+  if (process.platform === 'win32') {
+    for (const [id, offset] of [[IDS.npm, 0n], [IDS.npmReused, 20_000_000n]]) {
+      const child = idleProcess();
+      const ticks = cimStart(child.pid, 'ticks');
+      await minimalTranscript(projDir, id, proj, `A session of an npm-installed Claude Code (${offset ? 'pid reused' : 'running'})`);
+      if (ticks) {
+        await fs.writeFile(
+          path.join(claudeData, 'sessions', `${child.pid}.json`),
+          JSON.stringify({ pid: child.pid, sessionId: id, cwd: proj, status: 'idle', kind: 'interactive', version: '2.1.283', procStart: String(BigInt(ticks) + offset) })
+        );
+      }
+    }
+  }
   // A crashed session's pid file whose pid now belongs to another process:
   // the parent of this run is alive, but was not started at this procStart.
   await fs.writeFile(
@@ -347,7 +389,7 @@ function readStream(base, pathname, headers, ms) {
   });
 }
 
-export async function runSessionChecks({ base, token, check, proj, appData }) {
+export async function runSessionChecks({ base, token, check, skip, proj, appData }) {
   const H = { 'X-LayerCake-Token': token };
   const bodies = [];
   const json = async (pathname) => {
@@ -385,6 +427,15 @@ export async function runSessionChecks({ base, token, check, proj, appData }) {
     check('a reused pid (alive, but started at another time than procStart) does not make a session live',
       future?.live === null, JSON.stringify(future?.live));
     check('a running process that matches its procStart stays live', d?.live?.pid === process.pid, JSON.stringify(d?.live));
+    // #82: procStart as .NET ticks, the form an npm-installed Claude Code writes.
+    const npmRunning = (await json(`/api/session/${IDS.npm}`)).data;
+    const npmReused = (await json(`/api/session/${IDS.npmReused}`)).data;
+    check('an npm-installed session (procStart in .NET ticks) that is running stays live',
+      Number.isInteger(npmRunning?.live?.pid), JSON.stringify(npmRunning?.live));
+    check('an npm-format procStart two seconds off its process (a reused pid) is not live',
+      npmReused?.live === null, JSON.stringify(npmReused?.live));
+  } else {
+    skip('process start times confirm a running session (4 checks)', 'start times are read with PowerShell, Windows only');
   }
   check('memory loaded at start and on nested traversal are both recorded',
     d?.instructions.length === 2 && d.instructions.some((i) => i.reason === 'session_start') && d.instructions.some((i) => i.reason === 'nested'));
@@ -882,7 +933,7 @@ const NPM_SHIM = [
   '',
 ].join('\r\n');
 
-export async function runSummaryChecks({ base, token, check, proj, smokeDir, appData }) {
+export async function runSummaryChecks({ base, token, check, skip, proj, smokeDir, appData }) {
   const H = { 'X-LayerCake-Token': token };
   const stub = path.join(smokeDir, 'claude-stub');
 
@@ -914,6 +965,8 @@ export async function runSummaryChecks({ base, token, check, proj, smokeDir, app
     await fs.writeFile(path.join(native, 'claude.exe'), '');
     const preferred = await resolveClaudeCommand({ PATH: [native, prefix, nodeDir].join(path.delimiter) });
     check('claude.exe on PATH is used by name, before any npm shim', JSON.stringify(preferred) === '["claude"]', JSON.stringify(preferred));
+  } else {
+    skip('an npm claude.cmd shim resolves to node plus its script (2 checks)', 'claude.cmd shims are a Windows form');
   }
 
   // A claude that exits without reading a >64 KB digest used to kill the server.

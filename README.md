@@ -6,8 +6,10 @@ restore the whole environment. Useful mostly when moving between projects, when 
 CLAUDE.md is actually winning here" is not obvious.
 
 Built and verified against **Claude Code 2.1.229 on Windows 11**. Windows is the first-class target.
-The smoke test also passes on Linux (Ubuntu under WSL2, Node 22), apart from two checks skipped
-because UNC paths are a Windows form. macOS is untested. "Start Claude here" is Windows-only: it
+The smoke test also passes on Linux (Ubuntu under WSL2, Node 22). There, the checks of a
+Windows-only form (UNC paths, drive letters, the libuv watch storm, PowerShell process start times,
+`claude.cmd` shims, Windows project paths) print `SKIP` with their reason and a count, never a quiet
+pass, and the summary line counts the skipped groups. macOS is untested. "Start Claude here" is Windows-only: it
 opens Windows Terminal, and its status line uses Windows's `curl.exe`.
 
 ```
@@ -427,7 +429,10 @@ Where it comes from, and what that means:
   digest if you ask for one (to Anthropic, which already received it in the session), and, when
   it is in a session's first prompt, its first 400 characters are kept in that session's card.
 - **Running sessions** come from `~/.claude/sessions/<pid>.json`. Each has a sibling `.key` file,
-  which is a secret and is never opened.
+  which is a secret and is never opened. A pid file counts only while its process runs and, on
+  Windows, started when the file says it did (within 1 ms, in either form Claude Code records), so a
+  pid the system reused after a crash does not read as a running session. That answer is cached for
+  60 s per pid, so a reuse inside that minute can read live until it refreshes.
 
 **Usage.** Everything above reads files and spends no Claude usage. The one exception is the
 **Summarize with AI** button: on a click, and only then, it runs `claude -p` on Claude Haiku 4.5

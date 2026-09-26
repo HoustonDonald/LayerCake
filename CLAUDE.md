@@ -243,10 +243,15 @@ carries outside text needs the same check. Claude's own edits in a launched sess
 snapshot-first rule, since they are Claude Code's writes, not LayerCake's.
 
 **The processes LayerCake starts are few and fixed.** `launch.js` (wt.exe), `summaries.js`
-(`claude -p`), and `sessions.js`, which asks PowerShell for process start times so a reused PID
-cannot pass for a running session (#1). The last runs one `Get-Process` query from its absolute
-System32 path, pids validated as integers, a 5 s timeout, and the output parsed as numbers only; it
-is cached per pid for 60 s. Any new spawn needs the same shape and a line here.
+(`claude -p`), `desktop/window.js` (the app window: Edge or Chrome with `APP_FLAGS`, falling back to
+`cmd /c start`, `open` or `xdg-open` with the URL alone), and `sessions.js`, which asks PowerShell
+for process start times so a reused PID cannot pass for a running session (#1). The last runs one
+`Get-Process` query from its absolute System32 path, pids validated as integers, a 5 s timeout, and
+the output parsed as numbers only. The query returns each start time in both forms Claude Code
+writes as `procStart` (a FILETIME from native claude.exe, .NET ticks from an npm install, told apart
+at 3e17), matched within 1 ms (#82). Answers are cached per pid for 60 s, so a pid reused within
+that minute still reads live until its entry refreshes (#83), and concurrent callers share the one
+query in flight (#86). Any new spawn needs the same shape and a line here.
 
 **Only `summaries.js` may spend Claude usage, and only on an explicit request.** Everything else
 reads files. `claude` means `claude.exe` from PATH, or, for an npm install that provides only the

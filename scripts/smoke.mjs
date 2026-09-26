@@ -25,7 +25,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { projectSlug } from '../server/paths.js';
-import { makeSessionFixture, runLaunchChecks, runSessionChecks, runSummaryChecks } from './smoke-sessions.mjs';
+import { makeSessionFixture, runLaunchChecks, runSessionChecks, runSummaryChecks, stopFixtureProcesses } from './smoke-sessions.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -115,20 +115,31 @@ async function makeFixture() {
     '---\nname: reviewer\n---\n\nReview things.\n'
   );
   // Must be found and refused, never copied into a snapshot. The value is a
-  // sentinel so the snapshot tree can be searched for it afterwards.
-  await fs.writeFile(
-    path.join(proj, '.credentials.json'),
-    `{"token":"SMOKE-SENTINEL-${crypto.randomBytes(4).toString('hex')}"}`
-  );
+  // sentinel so the snapshot tree can be searched for it afterwards. The same
+  // sentinel also sits inside hooks/, a tree the scan walks and a snapshot
+  // copies: the root file is one no scan probes, so on its own the snapshot
+  // grep could not fail even with every credential guard removed (#85).
+  const credSentinel = `{"token":"SMOKE-SENTINEL-${crypto.randomBytes(4).toString('hex')}"}`;
+  await fs.writeFile(path.join(proj, '.credentials.json'), credSentinel);
+  await fs.writeFile(path.join(proj, '.claude', 'hooks', 'credentials.json'), credSentinel);
   // Claude Code's configuration home, relocated with CLAUDE_CONFIG_DIR (#7).
   // The user level is read from here, so smoke no longer scans or snapshots
-  // the real ~/.claude as its user level.
-  const configHome = path.join(smokeDir, 'claude-home');
+  // the real ~/.claude as its user level. It is the .claude folder of an
+  // ancestor on the walk, the shape ~/.claude has for a project under home,
+  // so every file in it is reached by two routes and the dedupe checks below
+  // have something to dedupe. Off the walk they could not fail (#84).
+  const configHome = path.join(smokeDir, '.claude');
   await fs.mkdir(path.join(configHome, 'agents'), { recursive: true });
   await fs.writeFile(path.join(configHome, 'CLAUDE.md'), '# user-level memory in the relocated home\n');
   await fs.writeFile(path.join(configHome, 'settings.json'), JSON.stringify({ model: 'smoke' }, null, 2));
   await fs.writeFile(path.join(configHome, '.claude.json'), JSON.stringify({ projects: {} }, null, 2));
   await fs.writeFile(path.join(configHome, 'agents', 'home-agent.md'), '---\nname: home-agent\n---\n');
+  // One MCP server in one file, which the walk reaches twice: it must read as
+  // defined once, never as shadowing itself.
+  await fs.writeFile(
+    path.join(configHome, '.mcp.json'),
+    JSON.stringify({ mcpServers: { 'smoke-two-routes': { command: 'home' } } }, null, 2)
+  );
   // A credential file inside a .claude folder on the walk, where the scan
   // lists that folder and must redact it. The redaction check used to pass on
   // Windows only because the walk crossed the real home folder and met the
@@ -244,6 +255,8 @@ try {
       'project slug replaces a space',
       projectSlug('C:\\Users\\me\\Finance Optimization') === 'C--Users-me-Finance-Optimization'
     );
+  } else {
+    skip('project slug of a Windows path (3 checks)', 'the pinned folder names are Windows paths');
   }
 
   const H = { 'X-LayerCake-Token': token, 'Content-Type': 'application/json' };
@@ -323,10 +336,12 @@ try {
   const all = lineage.levels.flatMap((l) => l.entries);
   const memo = all.find((e) => e.absPath === path.join(proj, 'CLAUDE.md'));
   const settings = all.find((e) => e.absPath === path.join(proj, '.claude', 'settings.json'));
-  const hook = all.find((e) => e.category === 'hook' && e.absPath.startsWith(proj));
+  // By path, not "the first hook": hooks/ also holds the planted credential,
+  // and a regressed redaction would otherwise hand that to the hook checks.
+  const hook = all.find((e) => e.absPath === path.join(proj, '.claude', 'hooks', 'pre.sh'));
   check('scan found the project CLAUDE.md', Boolean(memo));
   check('scan found the project settings.json', Boolean(settings));
-  check('scan found the project hook', Boolean(hook));
+  check('scan found the project hook', hook?.category === 'hook');
   check('scan lists a live skill', all.some((e) => e.category === 'skill' && e.absPath.includes('live-skill')));
   check('scan does not list a trashed skill as config', !all.some((e) => e.category === 'skill' && e.absPath.includes('.trash')));
   check(
@@ -368,8 +383,23 @@ try {
     check(`flatten "${kind}" renders`, r.status === 200);
   }
 
-  // A file reached by two routes is not a shadow of itself. The fixture lives
-  // under the home directory on Windows, so the walk re-finds home's config.
+  // A file reached by two routes is not a shadow of itself. The fixture's
+  // config home is an ancestor's .claude folder, so the walk re-finds it.
+  // Prove that precondition first: without it every check below passes on a
+  // tree that deduplicates nothing (#84).
+  const levelsHolding = (p) =>
+    lineage.levels.filter((l) => l.entries.some((e) => e.absPath.toLowerCase() === p.toLowerCase())).length;
+  check('fixture: the config home is reached by two routes',
+    levelsHolding(path.join(configHome, 'CLAUDE.md')) === 2 &&
+      levelsHolding(path.join(configHome, 'agents', 'home-agent.md')) === 2 &&
+      levelsHolding(path.join(configHome, '.mcp.json')) === 2,
+    JSON.stringify([levelsHolding(path.join(configHome, 'CLAUDE.md')), levelsHolding(path.join(configHome, '.mcp.json'))]));
+  // The walk level holding the relocated home says why its files repeat (#91).
+  const homeWalkLevel = lineage.levels.find((l) => l.kind === 'directory' && l.dir.toLowerCase() === path.dirname(configHome).toLowerCase());
+  check("the walk level whose .claude is the config home says its files repeat",
+    /configuration home/.test(homeWalkLevel?.note || '') &&
+      lineage.levels.filter((l) => /configuration home, so its files/.test(l.note || '')).length === 1,
+    JSON.stringify(homeWalkLevel?.note));
   const defs = await (
     await fetch(`${BASE}/api/flatten?scanId=${scanId}&kind=definitions`, { headers: H })
   ).json();
@@ -546,7 +576,13 @@ try {
   // Asserting the manifest omits credentials is not the same as proving no
   // credential BYTES reached the snapshot tree. Search it, with a positive
   // control so a zero result cannot be a false clean.
-  const sentinel = JSON.parse(await fs.readFile(path.join(proj, '.credentials.json'), 'utf8')).token;
+  // The sentinel's walked copy (hooks/) is the one that can reach a snapshot
+  // if a guard regresses, so the positive controls are about that copy: the
+  // walk must reach it (it is redacted, not missed) and it must hold the bytes.
+  const walkedCred = path.join(proj, '.claude', 'hooks', 'credentials.json');
+  const sentinel = JSON.parse(await fs.readFile(walkedCred, 'utf8')).token;
+  check('positive control: the walk reaches the planted credential and redacts it',
+    lineage.levels.some((l) => l.redacted.some((r) => r.absPath.toLowerCase() === walkedCred.toLowerCase())));
   let found = 0;
   async function grep(dir) {
     for (const d of await fs.readdir(dir, { withFileTypes: true })) {
@@ -559,7 +595,7 @@ try {
   check('no credential bytes anywhere in the snapshot tree', found === 0, `${found} hits`);
   check(
     'positive control: the sentinel is findable where it does exist',
-    (await fs.readFile(path.join(proj, '.credentials.json'), 'utf8')).includes(sentinel)
+    (await fs.readFile(walkedCred, 'utf8')).includes(sentinel)
   );
 
   // --- file watching -------------------------------------------------------
@@ -725,9 +761,11 @@ try {
 
   // A credential file sits in a watched directory, so it can raise an event.
   // The name is already public in level.redacted; the BYTES must never be.
-  const credPath = path.join(proj, '.credentials.json');
-  const credBytes = await fs.readFile(credPath, 'utf8');
-  await fs.writeFile(credPath, credBytes);
+  // Both copies: the root one, and the one inside an open config subtree,
+  // where events are reported for files no scan probed.
+  for (const credPath of [path.join(proj, '.credentials.json'), walkedCred]) {
+    await fs.writeFile(credPath, await fs.readFile(credPath, 'utf8'));
+  }
   await new Promise((r) => setTimeout(r, 1200));
   check(
     'no credential bytes appear in any watch frame',
@@ -1078,13 +1116,13 @@ try {
   }
 
   // --- session history -----------------------------------------------------
-  await runSessionChecks({ base: BASE, token, check, proj, appData });
+  await runSessionChecks({ base: BASE, token, check, skip, proj, appData });
 
   // --- launch and ingest (Phase 2), dry run --------------------------------
   await runLaunchChecks({ base: BASE, port: PORT, token, check, scanId: lineage.scanId, proj, appData, claudeData, reportWindowMs: REPORT_WINDOW_MS, serverStartedAt });
 
   // --- AI summaries, against a stand-in claude --------------------------------
-  await runSummaryChecks({ base: BASE, token, check, proj, smokeDir, appData });
+  await runSummaryChecks({ base: BASE, token, check, skip, proj, smokeDir, appData });
 
   check('smoke\'s own server stayed up for the whole run', serverExit === null, `exit: ${serverExit}`);
 
@@ -1092,6 +1130,7 @@ try {
   exitCode = fail ? 1 : 0;
 } finally {
   server.kill();
+  stopFixtureProcesses();
   // Only ever the directory this run created, resolved and non-empty.
   if (smokeDir && path.isAbsolute(smokeDir) && smokeDir.includes('layercake-smoke-')) {
     await fs.rm(smokeDir, { recursive: true, force: true }).catch(() => {});

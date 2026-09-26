@@ -465,11 +465,13 @@ async function scanProjectMemory(projectDir) {
 async function scanDirectory(dir, label) {
   const notes = [];
   if (isUncPath(dir)) notes.push('Network path. Scanned with a per-operation timeout.');
-  // Only when the configuration home is this directory's own .claude folder:
-  // with CLAUDE_CONFIG_DIR elsewhere, ~/.claude is an ordinary folder here.
-  if (path.resolve(dir) === path.resolve(homeDir()) && samePathKey(claudeHome()) === samePathKey(path.join(dir, '.claude'))) {
+  // Whenever the configuration home is this directory's own .claude folder:
+  // the home directory by default, or any ancestor CLAUDE_CONFIG_DIR points
+  // into (#91). With CLAUDE_CONFIG_DIR elsewhere, ~/.claude is an ordinary
+  // folder here and gets no note.
+  if (samePathKey(claudeHome()) === samePathKey(path.join(dir, '.claude'))) {
     notes.push(
-      'This is the home directory, so its files also appear at the user level above. ' +
+      "This directory's .claude folder is Claude Code's configuration home, so its files also appear at the user level above. " +
         'The repetition is real: the same files are reached by two different routes.'
     );
   }
