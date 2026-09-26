@@ -24,6 +24,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { projectSlug } from '../server/paths.js';
+import { makeSessionFixture, runSessionChecks } from './smoke-sessions.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PORT = Number(process.env.SMOKE_PORT || 5399);
@@ -119,10 +120,18 @@ async function waitForServer(timeoutMs = 20000) {
 }
 
 const { proj, snaps } = await makeFixture();
+// Synthetic Claude session data and LayerCake app data: the real ones are never read or written.
+const { claudeData, appData } = await makeSessionFixture(smokeDir, proj);
 
 const server = spawn(process.execPath, [path.join(ROOT, 'server', 'index.js')], {
   cwd: ROOT,
-  env: { ...process.env, PORT: String(PORT), LAYERCAKE_SNAPSHOT_DIR: snaps },
+  env: {
+    ...process.env,
+    PORT: String(PORT),
+    LAYERCAKE_SNAPSHOT_DIR: snaps,
+    LAYERCAKE_CLAUDE_DATA_DIR: claudeData,
+    LAYERCAKE_APPDATA_DIR: appData,
+  },
   stdio: 'ignore',
 });
 
@@ -565,6 +574,9 @@ try {
   );
 
   await watch.close();
+
+  // --- session history -----------------------------------------------------
+  await runSessionChecks({ base: BASE, token, check, proj, appData });
 
   process.stdout.write(`\n  ${pass} passed, ${fail} failed\n\n`);
   exitCode = fail ? 1 : 0;

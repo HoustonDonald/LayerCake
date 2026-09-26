@@ -116,6 +116,37 @@ export function projectMemoryDir(dir) {
 }
 
 /**
+ * Root of Claude Code's session data: projects/<slug>/<id>.jsonl transcripts,
+ * sessions/<pid>.json for running sessions, history.jsonl for prompt history.
+ *
+ * LAYERCAKE_CLAUDE_DATA_DIR overrides it, the same way LAYERCAKE_SNAPSHOT_DIR
+ * does for snapshots, so the smoke test can point it at synthetic sessions and
+ * never read the real ones. Claude Code's own CLAUDE_CONFIG_DIR is not honoured
+ * here or anywhere else in LayerCake yet; that gap predates this.
+ */
+export function claudeDataDir() {
+  if (process.env.LAYERCAKE_CLAUDE_DATA_DIR) {
+    return path.resolve(process.env.LAYERCAKE_CLAUDE_DATA_DIR);
+  }
+  return path.join(homeDir(), '.claude');
+}
+
+/**
+ * LayerCake's own data: session summary cards and the usage ledger. Beside the
+ * snapshot store, and for the same reason never under ~/.claude.
+ */
+export function appDataRoot() {
+  if (process.env.LAYERCAKE_APPDATA_DIR) {
+    return path.resolve(process.env.LAYERCAKE_APPDATA_DIR);
+  }
+  if (process.platform === 'win32') {
+    const local = process.env.LOCALAPPDATA || path.join(homeDir(), 'AppData', 'Local');
+    return path.join(local, 'LayerCake', 'data');
+  }
+  return path.join(homeDir(), '.layercake', 'data');
+}
+
+/**
  * Where snapshots live.
  *
  * Deliberately NOT under ~/.claude: that tree is a restore target, and a backup

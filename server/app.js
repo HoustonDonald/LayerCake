@@ -41,6 +41,7 @@ import {
 } from './snapshot.js';
 import { isSecret, describeError, writePolicy } from './safety.js';
 import { hostGuard, injectToken, originGuard, requireToken } from './security.js';
+import { registerSessionRoutes } from './session-routes.js';
 import {
   CLAUDE_DIR_FILE_TARGETS,
   CLAUDE_DIR_TREES,
@@ -418,6 +419,9 @@ export function createApp({ port, staticFiles }) {
     }
   });
 
+  // Session history and live sessions. Registered here, after the /api guards,
+  // so every one of them is behind the Host, origin and token checks.
+  registerSessionRoutes(app);
 
   // Assets are served normally. Only the HTML shell carries the secret, and it
   // gets it from the injector below, never from the static source.
