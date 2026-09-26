@@ -42,7 +42,7 @@ npm run app        # same, then open a chromeless app-mode browser window
 npm run cli -- here    # effective environment for the current directory
 npm run cli -- session # the current Claude Code session here (no Claude usage)
 npm run dev:server # API only on 5178
-npm run dev:client # Vite HMR on 5179, proxying /api to 5178
+npm run dev:client # Vite HMR on 5179, proxying /api/ to 5178; needs dev:server and a built client
 npm run smoke      # end to end over the real HTTP API
 npm run build:exe  # dist\LayerCake.exe, the single executable (Windows only)
 ```
@@ -243,9 +243,10 @@ what actually gates state change, and a hostile page cannot read our HTML to ste
 `security.js`). A DNS rebinding page is same-origin with us as far as the browser knows, so it can
 read the HTML and the token unless the server refuses a Host that is not `127.0.0.1:<port>` or
 `localhost:<port>`. It does not repeat the CSRF-guard mistake, because a bookmark or link to this
-server carries our own Host however the user arrived. The only HTTP consumers are the LayerCake UI
-and the readiness probe of `/` in `desktop/window.js`; the CLI imports modules and never calls the
-API. Anything new that calls the server must address it by one of those two names.
+server carries our own Host however the user arrived. Anything that calls the server must address it
+by one of those two names. The CLI imports modules and never calls the API; the dev-only token read
+of `/` and `/api/` proxy in `vite.config.js` use `127.0.0.1`, the proxy through `changeOrigin`,
+without which the Host guard refuses it.
 
 **Localhost only.** `HOST` is hardcoded `127.0.0.1`. No outbound requests exist anywhere; keep it
 that way, including in the client.

@@ -454,8 +454,9 @@ and the Claude data folder read for sessions with `LAYERCAKE_CLAUDE_DATA_DIR`.
   `localhost:<port>`.** That closes DNS rebinding: a hostile site re-points its own hostname at
   127.0.0.1, after which the browser treats this server as that site and would let its page read the
   HTML and the token in it. The Host header still names the hostile site, so the request is refused.
-  Nothing legitimate is affected: the only HTTP client is the LayerCake page itself (the CLI calls the
-  server modules directly), and a bookmark to `http://127.0.0.1:5178` sends the right Host.
+  Nothing legitimate is affected: LayerCake's own callers address the server as `127.0.0.1` (the CLI
+  calls the server modules directly and makes no HTTP call), and a bookmark to
+  `http://127.0.0.1:5178` sends the right Host.
 - None of this defends against a hostile process already running as you. It can write these files
   directly and does not need this app. The guard closes the browser path only.
 - **The app window runs with `--disable-extensions --disable-sync`.** A browser extension is not a
@@ -593,10 +594,18 @@ What to know:
 
 ```
 npm run dev:server     # API on 5178
-npm run dev:client     # Vite with HMR on 5179, proxying /api
+npm run dev:client     # Vite with HMR on 5179, proxying /api/
 npm run smoke          # end to end test over the real HTTP API
 npm run build:exe      # the single executable, see above
 ```
+
+`dev:client` needs `dev:server` already running on the same `PORT`, and a built client
+(`npm run build`, once). The page Vite serves takes its session token from the server's own page,
+the way the built page does, and the server only serves that page from `public/`. If either is
+missing, Vite's error page says which. Only this page's own requests (the browser marks them
+same-origin) are presented to the origin guard as the server's page, and Vite's CORS is off so no
+other localhost page can read the token. All of it lives in `vite.config.js` and none of it reaches a
+build.
 
 `npm run smoke` creates its own fixture tree, starts a server on its own port with its own snapshot
 store, drives the real HTTP API, and removes everything it made. It needs no framework and adds no
