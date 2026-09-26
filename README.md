@@ -371,15 +371,22 @@ adds two things:
   (Pro and Max) and prompt-cache warmth.
 - **HTTP hooks** for the documented events (prompt submitted, tool start and finish, permission
   requests, notifications, subagents, compaction, instructions loaded, session end). These make
-  **"Waiting for you"** possible: a permission prompt or an idle prompt turns the session's glow
-  amber until Claude moves again. They also show tools running right now, and why each memory
-  file loaded (at start, a path-glob match, an include, a nested folder, after compaction).
+  **"Waiting for you"** possible: a permission prompt, an idle prompt, an MCP server asking for
+  input, or a usage-limit resume waiting for Enter turns the session's glow amber until Claude
+  moves again. They also show tools running right now, and why each memory file loaded (at start,
+  a path-glob match, an include, a nested folder, after compaction).
+
+  Claude Code sends no hook when you answer a permission prompt, so LayerCake sees the answer only
+  when the tool finishes (or Claude moves on); the banner says so. A tool you stop with Esc, or
+  deny, fires no hook either; it leaves "running now" once the transcript records its result, or
+  at your next prompt.
 
 **Zero tokens, measured.** A status line is displayed, never sent to the model, and every hook is
 answered with an empty 204, which Claude Code treats as "success, no output". The same one-line
 prompt run with and without the settings file used exactly the same input (44,007 tokens each),
 and the second run read its whole prompt from cache, which a single changed byte would have
-prevented. The session view also shows "Context added by hooks this session", which should stay 0.
+prevented. The session view also counts context added by hooks, by hook name. That counts any
+hook, yours and plugins' included; LayerCake's own add none, because their answers are empty.
 
 Things to know:
 
@@ -387,7 +394,12 @@ Things to know:
   its transcript.
 - If LayerCake is closed while that session keeps running, each hook shows a "hook error" notice in
   the terminal. Claude does not see those notices (they are non-blocking errors), and the session
-  works normally. A restarted LayerCake picks the reporting back up.
+  works normally. A restarted LayerCake picks the reporting back up: it reloads its launches at
+  startup, and marks each of their sessions "not heard from since restart" until that session
+  next reports (a new message, a tool, the prompt cache expiring). It does not guess "running".
+- One terminal can carry several sessions: `/clear` starts a new one and `/resume` switches to
+  another. LayerCake keeps each session's figures separately, so an old session never shows the
+  new one's context, and once a session has ended its last status line is no longer shown as exact.
 - The status line runs through Git Bash when installed, as Claude Code does it; `curl.exe` ships
   with Windows 10 and later.
 - The window placement is approximate: Windows Terminal sizes in character cells, not pixels.

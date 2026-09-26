@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-import { followSession, getHistory, getSession, getUsage, launchClaude, listSessions, summarizeSession } from '../api.js';
+import { followSession, getHistory, getLaunches, getSession, getUsage, launchClaude, listSessions, summarizeSession } from '../api.js';
 import { clock, daysUntil, tokens, usd, when } from '../sessionFormat.js';
 import SessionDetail from './SessionDetail.jsx';
 
@@ -22,6 +22,7 @@ function Row({ s, selected, onSelect, kind }) {
         <span>{s.prompts} prompt{s.prompts === 1 ? '' : 's'}</span>
         {kind === 'session' && s.tools > 0 && <span>{s.tools} tools</span>}
         {kind === 'session' && s.errors > 0 && <span className="err">{s.errors} errors</span>}
+        {s.unconfirmed && <span className="muted" title="LayerCake restarted after launching this session and has not heard from it since">not heard from since restart</span>}
         {expiresIn != null && !s.live && expiresIn <= 7 && <span className="warn">deleted in {expiresIn}d</span>}
         {kind === 'expired' && <span className="muted">transcript gone, card kept</span>}
         {kind === 'promptOnly' && <span className="muted">prompts only</span>}
@@ -149,6 +150,7 @@ export default function SessionsView({ projectDir, scanId }) {
   const [scope, setScope] = useState(projectDir ? 'project' : 'all');
   const [launch, setLaunch] = useState(null);
   const [launchError, setLaunchError] = useState(null);
+  const [launchNote, setLaunchNote] = useState(null);
   const [list, setList] = useState(null);
   const [listError, setListError] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -196,21 +198,54 @@ export default function SessionsView({ projectDir, scanId }) {
   }, [list, selected]);
 
   // A launched session has no transcript until Claude Code writes its first
-  // record, so poll quickly until it appears, then switch to it.
+  // record, so poll until one of the launch's sessions appears, then switch to
+  // it. By then the launch may carry another id (/resume, /clear), so the ids
+  // come from /api/launches, not only the one assigned at launch. The wait
+  // always ends: on a timeout, or when every session of the launch has ended,
+  // with a note, rather than leaving the button disabled until a reload (#26).
   useEffect(() => {
     if (!launch) return undefined;
-    if (list?.sessions.some((s) => s.sessionId === launch.sessionId)) {
-      setSelected({ kind: 'session', id: launch.sessionId });
+    const ids = launch.sessionIds || [launch.sessionId];
+    const found = list?.sessions.find((s) => ids.includes(s.sessionId));
+    if (found) {
+      setSelected({ kind: 'session', id: found.sessionId });
       setLaunch(null);
       return undefined;
     }
-    if (Date.now() - launch.at > LAUNCH_WAIT_MS) return undefined;
-    const t = setTimeout(loadList, LAUNCH_POLL_MS);
+    const startedAt = new Date(launch.at).toISOString();
+    if (launch.over) {
+      setLaunch(null);
+      setLaunchNote(`The Claude Code started at ${clock(startedAt)} ended without writing a transcript, so there is nothing to show.`);
+      return undefined;
+    }
+    if (Date.now() - launch.at > LAUNCH_WAIT_MS) {
+      setLaunch(null);
+      setLaunchNote(
+        `The Claude Code started at ${clock(startedAt)} has not written a transcript in ${LAUNCH_WAIT_MS / 60000} minutes. ` +
+          'If you switched it to another session, find that one in the list.'
+      );
+      return undefined;
+    }
+    const t = setTimeout(() => {
+      getLaunches()
+        .then(({ launches }) => {
+          const mine = launches.find((l) => l.id === launch.launchId);
+          if (!mine) return;
+          const over = mine.sessions.length > 0 && mine.sessions.every((s) => s.ended);
+          const same = mine.sessionIds.length === ids.length && mine.sessionIds.every((id) => ids.includes(id));
+          if (!same || over) {
+            setLaunch((cur) => (cur && cur.launchId === launch.launchId ? { ...cur, sessionIds: mine.sessionIds, over } : cur));
+          }
+        })
+        .catch(() => {})
+        .finally(loadList);
+    }, LAUNCH_POLL_MS);
     return () => clearTimeout(t);
   }, [launch, list, loadList]);
 
   const onLaunch = useCallback(async () => {
     setLaunchError(null);
+    setLaunchNote(null);
     try {
       const r = await launchClaude(scanId);
       setLaunch({ ...r, at: Date.now() });
@@ -306,6 +341,7 @@ export default function SessionsView({ projectDir, scanId }) {
             once it writes its first record, usually after your first prompt.
           </div>
         )}
+        {launchNote && <div className="launch-note">{launchNote}</div>}
         {launchError && <div className="err-item">{launchError}</div>}
         {listError && <div className="err-item">{listError}</div>}
         {!list && !listError && <div className="empty-state">Reading sessions…</div>}

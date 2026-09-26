@@ -11,6 +11,7 @@
  * running session's pid file. Every response is searched for all of them.
  */
 
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
@@ -24,6 +25,7 @@ export const SENTINELS = {
   pasted: 'SMOKE-PASTED-SECRET',
   keyFile: 'SMOKE-KEY-FILE',
   hookToolInput: 'SMOKE-HOOK-TOOL-INPUT',
+  hookContext: 'SMOKE-HOOK-CONTEXT',
 };
 
 /** A launch made before a (simulated) restart: on disk, never registered in memory. */
@@ -111,6 +113,8 @@ function transcript(proj) {
     { type: 'system', subtype: 'away_summary', content: 'You were fixing the widget.' },
     { type: 'file-history-snapshot', snapshot: { trackedFileBackups: { 'widget.js': {} } } },
     { type: 'attachment', attachment: { type: 'hook_success', hookEvent: 'PostToolUse', exitCode: 0 } },
+    // The user's own hook adding context: counted by name, its text never kept (#25).
+    { type: 'attachment', attachment: { type: 'hook_additional_context', hookName: 'PostToolUse:Edit', hookEvent: 'PostToolUse', toolUseID: 'toolu_1', content: [SENTINELS.hookContext] } },
     { type: 'attachment', attachment: { type: 'deferred_tools_delta', failedMcpServers: ['broken-server'] } },
     // The drift canary: a record type this build has never seen.
     { type: 'future-record-type', payload: 1 },
@@ -180,7 +184,7 @@ export async function makeSessionFixture(smokeDir, proj) {
   await fs.mkdir(path.join(appData, 'launches'), { recursive: true });
   await fs.writeFile(
     path.join(appData, 'launches', `${PRIOR_LAUNCH.id}.json`),
-    JSON.stringify({ ...PRIOR_LAUNCH, dir: proj, sessionId: IDS.expired, createdAt: '2026-09-01T00:00:00.000Z' })
+    JSON.stringify({ ...PRIOR_LAUNCH, dir: proj, sessionId: IDS.launched, createdAt: '2026-09-01T00:00:00.000Z' })
   );
 
   // A card LayerCake kept for a session whose transcript has since been cleaned up.
@@ -203,6 +207,50 @@ function get(base, pathname, headers) {
       })
       .on('error', reject);
   });
+}
+
+/** Opens an SSE stream and resolves with its status once headers arrive; `close` ends it. */
+function openStream(base, pathname, headers) {
+  return new Promise((resolve) => {
+    const req = http.get(`${base}${pathname}`, { headers }, (res) => {
+      res.resume();
+      resolve({ status: res.statusCode, close: () => req.destroy() });
+    });
+    req.on('error', (e) => resolve({ status: `error ${e.code || e.message}`, close: () => {} }));
+  });
+}
+
+/** Polls `fn` until it returns true or `ms` runs out: for state the server writes after answering. */
+async function until(fn, ms = 3000) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    if (await fn()) return true;
+    if (Date.now() > deadline) return false;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+/**
+ * Claude Code runs a status line command through Git Bash when it is
+ * installed, otherwise PowerShell (docs: status line, Windows configuration).
+ */
+async function statusLineShell() {
+  if (process.platform !== 'win32') return { file: 'sh', args: ['-c'], name: 'sh' };
+  const candidates = [
+    process.env.CLAUDE_CODE_GIT_BASH_PATH,
+    path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe'),
+  ];
+  for (const c of candidates) {
+    if (c && (await fs.access(c).then(() => true, () => false))) return { file: c, args: ['-c'], name: 'Git Bash' };
+  }
+  return { file: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-Command'], name: 'PowerShell' };
+}
+
+/** Runs a generated status line command with its JSON on stdin, as Claude Code would. */
+async function runStatusLine(command, json) {
+  const sh = await statusLineShell();
+  const r = spawnSync(sh.file, [...sh.args, command], { input: JSON.stringify(json), encoding: 'utf8', timeout: 15000, windowsHide: true });
+  return { shell: sh.name, status: r.status, stdout: r.stdout || '', stderr: r.stderr || r.error?.message || '' };
 }
 
 /** Reads an SSE stream for `ms` and returns the raw text. */
@@ -284,6 +332,25 @@ export async function runSessionChecks({ base, token, check, proj, appData }) {
   check('the live stream sends an update', /event: update\ndata: \{"lastAt"/.test(stream));
   bodies.push(stream);
 
+  // #30: the slot is taken before the first await, so opens arriving together
+  // cannot all pass the limit check.
+  const opened = await Promise.all(Array.from({ length: 6 }, () => openStream(base, `/api/session/${IDS.onDisk}/stream`, H)));
+  const statuses = opened.map((o) => o.status);
+  check('six streams opened at once: four get a slot, two are refused',
+    statuses.filter((s) => s === 200).length === 4 && statuses.filter((s) => s === 429).length === 2, statuses.join(','));
+  for (const o of opened) o.close();
+  const reopened = await until(async () => {
+    const o = await openStream(base, `/api/session/${IDS.onDisk}/stream`, H);
+    o.close();
+    return o.status === 200;
+  });
+  check('closing them gives every slot back', reopened);
+
+  const detailRes = await json(`/api/session/${IDS.onDisk}`);
+  check('context added by hooks is counted by hook name (#25)',
+    detailRes.data?.hooks.contextInjections === 1 && detailRes.data?.hooks.contextByHook?.['PostToolUse:Edit'] === 1,
+    JSON.stringify(detailRes.data?.hooks));
+
   const usageRes = await json('/api/usage');
   check('LayerCake usage starts empty (no feature spent usage)', usageRes.data?.totals.runs === 0);
 
@@ -357,14 +424,18 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
   check('hooks post to this server with a launch id and secret', Boolean(m), hookUrl);
   check('every hook is an http hook with a short timeout',
     Object.values(settings.hooks).every((groups) => groups[0].hooks[0].type === 'http' && groups[0].hooks[0].timeout === 3));
-  check('the status line forwards through curl.exe to this launch',
+  check('the status line command is curl.exe posting to this launch',
     settings.statusLine.type === 'command' && /^curl\.exe /.test(settings.statusLine.command) && settings.statusLine.command.includes(`/ingest/${m?.[1]}/`));
 
   const [launchId, secret] = m ? [m[1], m[2]] : ['0', '0'];
   const ingest = (kind, body, headers) => postRaw(base, `/ingest/${launchId}/${secret}/${kind}`, body, headers);
   const sid = IDS.onDisk;
 
-  const sl = await ingest('statusline', {
+  // The generated command is RUN, the way Claude Code runs it, with the status
+  // JSON on stdin, rather than posted for it: a command that sends nothing, or
+  // sends it to the wrong route, fails here and in the exact-context check
+  // below, which reads what the server recorded (#27).
+  const sl = await runStatusLine(settings.statusLine.command, {
     session_id: sid,
     model: { id: 'claude-opus-5-5[1m]', display_name: 'Opus 5.5' },
     context_window: { used_percentage: 42.4, context_window_size: 1000000 },
@@ -372,7 +443,8 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
     rate_limits: { five_hour: { used_percentage: 12, resets_at: 1790500000 } },
     prompt_cache: { warm: true, expires_at: 1790500000 },
   });
-  check('the status line gets back the line to print', sl.status === 200 && /ctx 42%/.test(sl.body) && /\$1\.23/.test(sl.body) && /5h 12%/.test(sl.body), sl.body);
+  check('the status line command, run in a shell, prints the line LayerCake returns',
+    sl.status === 0 && /ctx 42%/.test(sl.stdout) && /\$1\.23/.test(sl.stdout) && /5h 12%/.test(sl.stdout), `${sl.shell}: ${sl.stdout || sl.stderr}`);
 
   const hooks = [
     { hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' },
@@ -415,29 +487,114 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
   bodies.push(JSON.stringify(d));
   check('a failed tool is counted and no longer running', d.wrapped.running.length === 0 && d.wrapped.toolFailures === 1);
   check('InstructionsLoaded keeps its load reason', d.wrapped.instructionsLoaded.some((i) => i.reason === 'include'));
-  check('every hook answer is 204 with an EMPTY body (nothing can reach Claude\'s context)', allEmpty);
 
   check('ingest refuses a wrong secret', (await postRaw(base, `/ingest/${launchId}/${'0'.repeat(48)}/hook`, { session_id: sid })).status === 403);
   check('ingest refuses an unknown launch', (await postRaw(base, `/ingest/0123456789abcdef/${secret}/hook`, { session_id: sid })).status === 404);
   check('ingest refuses anything a browser sent (Origin present)', (await ingest('hook', { session_id: sid }, { Origin: `http://127.0.0.1:${port}` })).status === 403);
   check('ingest refuses a foreign Host', (await ingest('hook', { session_id: sid }, { Host: `rebind.example:${port}` })).status === 403);
-  check('a launch from before a restart still reports (record read from disk)',
-    (await postRaw(base, `/ingest/${PRIOR_LAUNCH.id}/${PRIOR_LAUNCH.secret}/hook`, { session_id: IDS.expired, hook_event_name: 'Stop' })).status === 204);
 
-  check('no response carries a hook\'s tool input', !bodies.join('\n').includes(SENTINELS.hookToolInput));
+  const session = async (id) => {
+    const r = await get(base, `/api/session/${id}`, H);
+    bodies.push(r.body);
+    return JSON.parse(r.body);
+  };
+  const hookVia = async (post, h) => {
+    const r = await post('hook', h);
+    allEmpty = allEmpty && r.status === 204 && r.body.length === 0;
+    return r;
+  };
+  const hook = (h) => hookVia(ingest, { session_id: sid, ...h });
 
-  // Liveness of a launched session without a pid file comes from its hooks.
+  // --- #23: ends Claude Code never reports. toolu_4 has a result in the
+  // fixture transcript (a denied Bash call); the hooks saw it start and ask
+  // for permission, and no hook reported the answer.
+  const rmBuild = { tool_name: 'Bash', tool_input: { command: 'rm -rf build', description: 'Remove build' } };
+  await hook({ hook_event_name: 'PreToolUse', tool_use_id: 'toolu_4', ...rmBuild });
+  await hook({ hook_event_name: 'PermissionRequest', ...rmBuild });
+  d = await session(sid);
+  check('a tool whose result is already in the transcript is not "running" (Esc and denials fire no hook)',
+    !d.wrapped.running.some((t) => t.id === 'toolu_4'), JSON.stringify(d.wrapped.running));
+  check('a permission wait ends once its tool has a result in the transcript',
+    d.wrapped.waiting === null && !d.health.flags.includes('waiting'), JSON.stringify(d.wrapped.waiting));
+
+  const npmTest = { tool_name: 'Bash', tool_input: { command: 'npm test', description: 'Run the tests' } };
+  await hook({ hook_event_name: 'PreToolUse', tool_use_id: 'toolu_pending', ...npmTest });
+  await hook({ hook_event_name: 'PermissionRequest', ...npmTest });
+  d = await session(sid);
+  check('an unanswered permission request shows as waiting, marked as a permission',
+    d.health.flags.includes('waiting') && d.wrapped.waiting?.permission === true, JSON.stringify(d.wrapped.waiting));
+  await hook({ hook_event_name: 'UserPromptSubmit', prompt: 'next' });
+  d = await session(sid);
+  check('a new prompt clears tools that never reported finishing', d.wrapped.running.length === 0, JSON.stringify(d.wrapped.running));
+
+  // --- #29: the other documented "waiting on you" notifications.
+  for (const type of ['elicitation_url_dialog', 'quota_auto_resume_stale']) {
+    await hook({ hook_event_name: 'Notification', notification_type: type, message: `smoke ${type}` });
+    d = await session(sid);
+    check(`a ${type} notification marks the session as waiting`, d.health.flags.includes('waiting') && d.wrapped.waiting?.kind === type);
+    await hook({ hook_event_name: 'UserPromptSubmit', prompt: 'next' });
+  }
+
+  // --- #24 and #27: a launch from before a restart. PRIOR_LAUNCH was written
+  // to app data before this server started; its session has a transcript and
+  // no pid file, as measured for a real launch.
   const lid = IDS.launched;
-  const before = JSON.parse((await get(base, `/api/session/${lid}`, H)).body);
-  check('before it reports, a session with no pid file is not running', before.live === null);
+  const prior = (kind, body) => postRaw(base, `/ingest/${PRIOR_LAUNCH.id}/${PRIOR_LAUNCH.secret}/${kind}`, body);
+  const before = await session(lid);
+  const row = JSON.parse((await get(base, `/api/sessions?dir=${encodeURIComponent(proj)}`, H)).body).sessions.find((s) => s.sessionId === lid);
+  check('a launch from before a restart is restored at startup: its session is still marked launched',
+    before.wrapped?.launchId === PRIOR_LAUNCH.id && row?.launched === true, JSON.stringify(row));
+  check('until it reports again, it is neither called running nor "No running process"',
+    before.live === null && before.wrapped.unconfirmed === true && row?.unconfirmed === true &&
+      before.health.reasons.some((r) => /LayerCake restarted/.test(r)) && !before.health.reasons.includes('No running process'),
+    JSON.stringify(before.health.reasons));
   check('after a switch to Haiku the window is 200K, not the earlier 1M model\'s',
     before.health.context.window === 200_000, `window ${before.health.context.window}`);
-  await ingest('statusline', { session_id: lid, context_window: { used_percentage: 5, context_window_size: 200000 } });
-  let ld = JSON.parse((await get(base, `/api/session/${lid}`, H)).body);
-  check('once its status line reports, a launched session counts as running', ld.live?.source === 'hooks' && ld.health.state !== 'offline', JSON.stringify(ld.live));
-  await ingest('hook', { session_id: lid, hook_event_name: 'SessionEnd', reason: 'prompt_input_exit' });
-  ld = JSON.parse((await get(base, `/api/session/${lid}`, H)).body);
+  const priorSl = await prior('statusline', { session_id: lid, context_window: { used_percentage: 5, context_window_size: 200000 } });
+  let ld = await session(lid);
+  check('a restored launch\'s report reaches the session view, not just a 200',
+    priorSl.status === 200 && ld.health.context.source === 'status line (exact)' && Math.abs(ld.health.context.pct - 0.05) < 1e-9,
+    JSON.stringify(ld.health.context));
+  await hookVia(prior, { session_id: lid, hook_event_name: 'PreToolUse', tool_use_id: 'toolu_lid', tool_name: 'Bash', tool_input: { command: 'make', description: 'Build' } });
+  ld = await session(lid);
+  check('once it reports, the launched session counts as running', ld.live?.source === 'hooks' && ld.health.state !== 'offline', JSON.stringify(ld.live));
+  check('"busy" from hooks says so, rather than that Claude Code reported it',
+    ld.health.reasons.includes('A tool is running (from its hooks)'), JSON.stringify(ld.health.reasons));
+  await hookVia(prior, { session_id: lid, hook_event_name: 'SessionEnd', reason: 'prompt_input_exit' });
+  ld = await session(lid);
   check('its SessionEnd hook marks it not running', ld.live === null && ld.health.state === 'offline', JSON.stringify(ld.live));
+  const recordFile = path.join(appData, 'launches', `${PRIOR_LAUNCH.id}.json`);
+  const remembered = await until(async () => {
+    const r = JSON.parse(await fs.readFile(recordFile, 'utf8'));
+    return r.ended?.[lid] === 'prompt_input_exit' && r.secret === PRIOR_LAUNCH.secret;
+  });
+  check('the end is written to the launch record, so a restart remembers it', remembered);
+
+  // --- #22: one terminal, several sessions. /clear in the launched terminal
+  // ends sid, and a new session reports 3%.
+  const fresh = '66666666-6666-4666-8666-666666666666';
+  await hook({ hook_event_name: 'SessionEnd', reason: 'clear' });
+  await ingest('statusline', { session_id: fresh, context_window: { used_percentage: 3, context_window_size: 200000 }, cost: { total_cost_usd: 0.01 } });
+  d = await session(sid);
+  check('after /clear, the old session does not show the new one\'s context as exact',
+    d.health.context.source === 'transcript (estimate)' && d.wrapped.ended === true && d.wrapped.statusline?.sessionId === sid,
+    JSON.stringify({ context: d.health.context, ended: d.wrapped.ended, sl: d.wrapped.statusline?.sessionId }));
+  // /resume of that session in another terminal LayerCake launched.
+  await prior('statusline', { session_id: sid, context_window: { used_percentage: 61, context_window_size: 1000000 } });
+  d = await session(sid);
+  check('a session resumed in another launched terminal reports through that one',
+    d.wrapped.launchId === PRIOR_LAUNCH.id && d.wrapped.ended === false && Math.abs(d.health.context.pct - 0.61) < 1e-9,
+    JSON.stringify({ launch: d.wrapped.launchId, ended: d.wrapped.ended, context: d.health.context }));
+  // The other direction too: PRIOR_LAUNCH was registered first, so the check
+  // above cannot tell "latest to hear from it" from "first launch found".
+  await ingest('statusline', { session_id: lid, context_window: { used_percentage: 44, context_window_size: 200000 } });
+  ld = await session(lid);
+  check('and the other way round: the restored launch\'s session, resumed in the newer one, reports through it',
+    ld.wrapped.launchId === launchId && ld.wrapped.ended === false && Math.abs(ld.health.context.pct - 0.44) < 1e-9,
+    JSON.stringify({ launch: ld.wrapped.launchId, ended: ld.wrapped.ended, context: ld.health.context }));
+
+  check('every hook answer is 204 with an EMPTY body, on every path above', allEmpty);
+  check('no response carries a hook\'s tool input', !bodies.join('\n').includes(SENTINELS.hookToolInput));
 }
 
 /**

@@ -147,6 +147,34 @@ export async function readLaunch(id) {
   return record && record.id === id && typeof record.secret === 'string' ? record : null;
 }
 
+/**
+ * Rewrites a launch's record, never its settings file: which session ids the
+ * launch has carried (/clear and /resume change it) and which of them ended,
+ * so both survive a LayerCake restart.
+ */
+export async function updateLaunchRecord(record) {
+  if (!LAUNCH_ID_RE.test(String(record.id || ''))) throw new Error('Not a launch id.');
+  await atomicWrite(target('launches', `${record.id}.json`), JSON.stringify(record, null, 2));
+}
+
+/** Every readable launch record, so launches can be restored at startup. */
+export async function listLaunchRecords() {
+  let names;
+  try {
+    names = await withTimeout(fs.readdir(target('launches')), DIR_TIMEOUT_MS, 'launches');
+  } catch {
+    return []; // no launch yet
+  }
+  const records = [];
+  for (const name of names) {
+    const m = /^([0-9a-f]{16})\.json$/.exec(name);
+    if (!m) continue;
+    const record = await readLaunch(m[1]).catch(() => null);
+    if (record) records.push(record);
+  }
+  return records;
+}
+
 /** Where the data lives, for the UI to state. */
 export function dataRoot() {
   return root();

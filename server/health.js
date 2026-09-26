@@ -51,8 +51,11 @@ export function contextWindow(identityId, lastModel) {
 
 export function computeHealth(model, live, { now = Date.now(), mtimeMs = 0, wrapped = null } = {}) {
   // A launched session's status line reports the exact figure; everything else
-  // is estimated from the transcript's last API call.
-  const exact = wrapped?.statusline?.context;
+  // is estimated from the transcript's last API call. Only this session's own
+  // status line counts, and only while it has not ended: after /clear or an
+  // exit, the last line heard is another session's, or a stale one (#22).
+  const own = wrapped && !wrapped.ended && wrapped.statusline?.sessionId === model.sessionId;
+  const exact = own ? wrapped.statusline.context : null;
   const window = exact?.windowTokens || contextWindow(model.modelId, model.lastModel);
   const tokens = model.context?.tokens ?? null;
   const pct =
@@ -82,7 +85,12 @@ export function computeHealth(model, live, { now = Date.now(), mtimeMs = 0, wrap
     const busy = live.status === 'busy';
     const writing = mtimeMs && now - mtimeMs <= RECENT_WRITE_MS;
     base = busy || writing ? 'working' : 'idle';
-    reasons.push(busy ? 'Claude Code reports it busy' : writing ? 'Transcript written in the last 15 s' : 'Running, not busy');
+    // "busy" from hooks is LayerCake's inference from a tool in flight, not
+    // something Claude Code said (#23).
+    const busyReason = live.source === 'hooks' ? 'A tool is running (from its hooks)' : 'Claude Code reports it busy';
+    reasons.push(busy ? busyReason : writing ? 'Transcript written in the last 15 s' : 'Running, not busy');
+  } else if (wrapped?.unconfirmed) {
+    reasons.push('LayerCake restarted after launching this session; it shows as running again when it next reports');
   } else {
     reasons.push('No running process');
   }

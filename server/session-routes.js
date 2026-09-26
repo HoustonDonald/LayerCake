@@ -128,18 +128,24 @@ function sessionDetail(model) {
  * source, but it is written lazily: a session LayerCake launched had none
  * 30 s after start (measured 2026-09-26, before any prompt). For those the
  * hooks answer instead: running until its SessionEnd hook fires, busy while a
- * tool is in flight. A crash that skips SessionEnd reads as running until
- * LayerCake restarts; stated in CLAUDE.md.
+ * tool is in flight. A crash that skips SessionEnd reads as running (#4). A
+ * launch restored after a LayerCake restart counts as nothing until the
+ * session reports again: memory from before the restart is gone, and
+ * "running" would be a guess (#24).
  */
-function liveFrom(pidLive, sessionId) {
+function liveFrom(pidLive, wrapped, sessionId) {
   if (pidLive) return pidLive;
-  const w = wrappedFor(sessionId);
-  if (w && !w.ended) return { pid: null, sessionId, status: w.running.length ? 'busy' : null, source: 'hooks' };
-  return null;
+  if (!wrapped || wrapped.ended || wrapped.unconfirmed) return null;
+  return { pid: null, sessionId, status: wrapped.running.length ? 'busy' : null, source: 'hooks' };
 }
 
-async function liveFor(sessionId) {
-  return liveFrom((await liveSessions()).find((s) => s.sessionId === sessionId), sessionId);
+async function liveFor(sessionId, wrapped) {
+  return liveFrom((await liveSessions()).find((s) => s.sessionId === sessionId), wrapped, sessionId);
+}
+
+/** A launched session's reported state, with the transcript as evidence for tools that ended unreported (#23). */
+function wrappedView(reader) {
+  return wrappedFor(reader.sessionId, { toolDone: (id) => reader.toolDone(id) });
 }
 
 /**
@@ -194,8 +200,17 @@ export function registerSessionRoutes(app) {
           persistError = err.message;
         }
         if (!inScope(card.cwd)) continue;
-        const l = liveFrom(liveById.get(card.sessionId), card.sessionId);
-        sessions.push({ ...card, transcript: 'on-disk', live: Boolean(l), status: l?.status || null, pid: l?.pid || null, launched: Boolean(wrappedFor(card.sessionId)) });
+        const w = wrappedView(reader);
+        const l = liveFrom(liveById.get(card.sessionId), w, card.sessionId);
+        sessions.push({
+          ...card,
+          transcript: 'on-disk',
+          live: Boolean(l),
+          status: l?.status || null,
+          pid: l?.pid || null,
+          launched: Boolean(w),
+          unconfirmed: Boolean(!l && w?.unconfirmed),
+        });
       }
 
       const expired = [];
@@ -245,9 +260,9 @@ export function registerSessionRoutes(app) {
   app.get('/api/session/:id', async (req, res) => {
     try {
       const reader = await getReader(req.params.id);
-      const live = await liveFor(req.params.id);
+      const wrapped = wrappedView(reader);
+      const live = await liveFor(req.params.id, wrapped);
       const retention = await retentionDays();
-      const wrapped = wrappedFor(reader.sessionId);
       res.json({
         ...sessionDetail(reader.model),
         card: sessionCard(reader.model, { size: reader.size, mtimeMs: reader.mtimeMs }, retention),
@@ -305,6 +320,11 @@ export function registerSessionRoutes(app) {
     if (streams.size >= MAX_STREAMS) {
       return res.status(429).json({ message: `Already following ${MAX_STREAMS} sessions. Close another LayerCake tab.` });
     }
+    // The slot is TAKEN here too, not only checked: opens arriving together
+    // all passed a check whose slot was taken after the await (#30). Every
+    // early exit below gives it back.
+    const stream = { close: () => streams.delete(stream) };
+    streams.add(stream);
     let gone = false;
     req.on('close', () => {
       gone = true;
@@ -313,9 +333,13 @@ export function registerSessionRoutes(app) {
     try {
       reader = await getReader(req.params.id);
     } catch (err) {
+      streams.delete(stream);
       return sendError(res, err);
     }
-    if (gone) return undefined;
+    if (gone) {
+      streams.delete(stream);
+      return undefined;
+    }
     res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
     res.flushHeaders();
 
@@ -325,9 +349,9 @@ export function registerSessionRoutes(app) {
       if (closed) return;
       try {
         await reader.refresh();
-        const live = await liveFor(reader.sessionId);
         const m = reader.model;
-        const wrapped = wrappedFor(reader.sessionId);
+        const wrapped = wrappedView(reader);
+        const live = await liveFor(reader.sessionId, wrapped);
         const health = computeHealth(m, live, { mtimeMs: reader.mtimeMs, wrapped });
         const update = {
           lastAt: m.lastAt,
@@ -352,7 +376,6 @@ export function registerSessionRoutes(app) {
     const keepalive = setInterval(() => {
       if (!res.writableEnded) res.write(': keepalive\n\n');
     }, STREAM_KEEPALIVE_MS);
-    const stream = { close };
     function close() {
       if (closed) return;
       closed = true;
@@ -361,7 +384,7 @@ export function registerSessionRoutes(app) {
       streams.delete(stream);
       if (!res.writableEnded) res.end();
     }
-    streams.add(stream);
+    stream.close = close;
     req.on('close', close);
     await tick();
     return undefined;

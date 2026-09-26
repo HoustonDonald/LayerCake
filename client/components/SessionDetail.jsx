@@ -88,6 +88,23 @@ function Wrapped({ detail }) {
       {waiting && (
         <div className="waiting-banner">
           <strong>Waiting for you</strong> · {waiting.message || waiting.kind} <span className="muted">· {clock(waiting.at)}</span>
+          {waiting.permission && (
+            <div className="muted">
+              Asked at {clock(waiting.at)}. Claude Code reports no hook when you answer, so LayerCake sees the answer only
+              when the tool finishes or Claude moves on.
+            </div>
+          )}
+        </div>
+      )}
+      {w.ended && (
+        <div className="muted">
+          This session ended{w.endReason ? ` (${w.endReason.replace(/_/g, ' ')})` : ''}. The figures below are its last report.
+        </div>
+      )}
+      {w.unconfirmed && (
+        <div className="muted">
+          LayerCake restarted after launching this session and has not heard from it since. It reports again on its next
+          event: a new message, a tool, or the prompt cache expiring.
         </div>
       )}
       {w.running.length > 0 && (
@@ -124,8 +141,20 @@ function Wrapped({ detail }) {
       <div className="channels">
         <span className="launched-badge">wrapped</span> Launched from LayerCake {when(w.launchedAt)}. Status line{' '}
         {slAgo == null ? 'not heard from yet' : `updated ${slAgo}s ago`}; hooks {events ? `${events} events, last ${hookAgo}s ago` : 'not heard from yet'}.
-        {' '}Context added by hooks this session: {detail.hooks.contextInjections}
-        <span className="muted"> (LayerCake&apos;s hooks answer with an empty body, so this should stay 0)</span>
+        {' '}Context added by hooks this session, any hook: {detail.hooks.contextInjections}
+        {detail.hooks.contextInjections > 0 && (
+          <span>
+            {' '}(
+            {Object.entries(detail.hooks.contextByHook || {})
+              .map(([name, n]) => `${name} ×${n}`)
+              .join(', ')}
+            )
+          </span>
+        )}
+        <span className="muted">
+          {' '}LayerCake&apos;s own hooks answer with an empty body and never add context; anything counted here came from your
+          hooks or a plugin&apos;s.
+        </span>
         {silent && (
           <div className="warn">
             Neither the status line nor the hooks have reported. Likely causes: the folder&apos;s workspace trust has not been

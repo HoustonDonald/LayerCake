@@ -89,7 +89,8 @@ function emptyModel(sessionId) {
     instructions: [],
     skills: { listed: 0, invoked: [] },
     mcp: { servers: [], failed: [], pending: [] },
-    hooks: { runs: 0, failures: 0, contextInjections: 0, byEvent: {} },
+    // contextByHook: hook name ("PostToolUse:Edit", event plus matcher) -> count.
+    hooks: { runs: 0, failures: 0, contextInjections: 0, contextByHook: {}, byEvent: {} },
     filesEdited: [],
     toolFailures: 0,
     permissionDenials: 0,
@@ -467,9 +468,14 @@ function applyAttachment(model, a, at) {
       if (typeof a.exitCode === 'number' && a.exitCode !== 0) model.hooks.failures += 1;
       return;
     }
-    case 'hook_additional_context':
+    case 'hook_additional_context': {
+      // Any hook's: the user's own and plugins' too. LayerCake's answer is
+      // always empty, so its hooks never produce one (#25).
       model.hooks.contextInjections += 1;
+      const name = String(a.hookName || a.hookEvent || 'unknown');
+      model.hooks.contextByHook[name] = (model.hooks.contextByHook[name] || 0) + 1;
       return;
+    }
     case 'edited_text_file':
       addUnique(model.filesEdited, a.filename || a.path);
       return;
@@ -544,6 +550,11 @@ export class TranscriptReader {
     const changed = await this.tail.refresh();
     this.model.badLines = this.tail.badLines;
     return changed;
+  }
+
+  /** True once the transcript holds a result for this tool call (finished, failed, denied or interrupted). */
+  toolDone(toolUseId) {
+    return Boolean(this.state.toolsById.get(toolUseId)?.done);
   }
 
   get size() {

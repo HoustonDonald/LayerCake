@@ -93,7 +93,7 @@ server/summaries.js free summary cards; the opt-in AI summary via stripped-down 
 server/appdata.js   LayerCake's own data (cards, AI summaries, usage ledger), via atomicWrite
 server/session-routes.js /api/sessions, /api/session/:id[/turn/:n|/stream|/summarize], /api/history, /api/usage
 server/launch.js    "Start Claude here": wt.exe + claude --session-id --settings <file>; fixed argv
-server/ingest.js    /ingest/<launch>/<secret>/{statusline,hook} from launched sessions; memory only
+server/ingest.js    /ingest/<launch>/<secret>/{statusline,hook} from launched sessions; state per session
 client/             React 18 + Vite, two-pane explorer plus editor, snapshots and watch bar
 cli/                layercake CLI, imports server modules directly
 scripts/launch.js   build, serve, then open an app-mode browser window
@@ -186,6 +186,14 @@ reporting across a LayerCake restart; the settings file that Claude Code reads h
 secret under the same user ACL. The secret is also on `curl.exe`'s command line at every
 status-line refresh, because the status-line command embeds the ingest URL. Only same-user
 processes can read that, and they can already read the file (#21).
+
+**Ingest state is per session, not per launch** (#22). One terminal carries several session ids
+(`/clear`, `/resume`), and launch-wide state once showed the new session's context, labelled
+exact, on the old one. A status line counts as exact only for its own session and only until that
+session ends; a session in two launches belongs to the one that heard from it last. What the hooks
+report is memory only; the launch record is rewritten when a session id is first seen or ends, so
+a restart remembers both, and restored launches count as "not heard from since restart" until
+they report, never as running (#24).
 
 **`launch.js` starts a process with a fixed argv.** The directory comes from the scan store, never
 the request; screen numbers are validated; the settings go in a file because Windows Terminal
@@ -298,11 +306,13 @@ partially. A truncated file restored is silent data loss.
   the prompt rail catch up when the reply finishes.
 - **"Waiting for you" exists only for sessions LayerCake launched.** A pending permission prompt is
   not in the transcript, and `sessions/<pid>.json` has only been seen reporting `busy`; the signal
-  comes from the `Notification`/`PermissionRequest` hooks a launch installs.
+  comes from the `Notification`/`PermissionRequest` hooks a launch installs. Answering a permission
+  prompt fires no hook, so an approved long-running tool still reads as waiting until it finishes;
+  the banner says so. The wait also ends when the transcript records that tool's result (#23).
 - **A launched session's liveness comes from its hooks.** Claude Code writes `sessions/<pid>.json`
   lazily (none 30 s after a launch, before any prompt), so a launched session counts as running
-  until its `SessionEnd` hook fires. A crash that skips `SessionEnd` reads as running until
-  LayerCake restarts.
+  until its `SessionEnd` hook fires. A crash that skips `SessionEnd` reads as running (#4); after a
+  LayerCake restart it reads as "not heard from since restart" instead.
 - **Closing LayerCake under a launched session makes its hooks fail**, visibly: a "hook error" notice
   per event in that terminal. Claude does not see non-blocking hook errors, so it costs no tokens.
 - **The launched status line assumes Git Bash** (Claude Code's own choice when installed). Under the
