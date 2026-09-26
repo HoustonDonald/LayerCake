@@ -40,6 +40,10 @@ const SENSITIVE_BASENAMES = new Set([
  * can hold tens of full checkouts.
  */
 const NON_CONFIG_DIRS = new Set([
+  // Claude Code moves removed skills here (skills/.trash/<epoch>-<pid>-<id>/),
+  // and nothing loads from it. Seen 2026-09-26; walking it listed dozens of
+  // deleted skills as if they were live config.
+  '.trash',
   'worktrees',
   'sessions',
   'projects',

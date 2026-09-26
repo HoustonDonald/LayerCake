@@ -214,6 +214,8 @@ export async function runSessionChecks({ base, token, check, proj, appData }) {
   const hb = d?.subagents.find((s) => s.agentId === AGENT_HANDBACK);
   check('a background subagent completes through its task notification', bg?.status === 'completed' && bg.tokens === 1234, JSON.stringify(bg));
   check('a subagent completes through a peer hand-back', hb?.status === 'completed', JSON.stringify(hb));
+  // The fixture's last turn_duration still says 1 pending; the subagents say done.
+  check('running subagents come from their statuses, not the stale turn record', d?.runningSubagents === 0 && d.backgroundPending === 1, `running ${d?.runningSubagents}, pending ${d?.backgroundPending}`);
   check('an API error is recorded', d?.errors.length === 1 && d.errors[0].code === 'rate_limit');
   check('a compaction is recorded with its token counts', d?.compactions.length === 1 && d.compactions[0].preTokens === 900000);
   check('a denied tool call counts as a failure and a denial', d?.toolFailures === 1 && d.permissionDenials === 1);

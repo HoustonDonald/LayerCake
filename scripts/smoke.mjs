@@ -65,6 +65,15 @@ async function makeFixture() {
   );
   await fs.mkdir(path.join(proj, '.claude', 'hooks'), { recursive: true });
   await fs.mkdir(path.join(proj, '.claude', 'agents'), { recursive: true });
+  // A live skill beside one Claude Code has moved to its trash: only the live
+  // one is config, and the scan must say so.
+  await fs.mkdir(path.join(proj, '.claude', 'skills', 'live-skill'), { recursive: true });
+  await fs.writeFile(path.join(proj, '.claude', 'skills', 'live-skill', 'SKILL.md'), '---\nname: live-skill\n---\nUse me.\n');
+  await fs.mkdir(path.join(proj, '.claude', 'skills', '.trash', '1790446985109-30604-abc', 'old-skill'), { recursive: true });
+  await fs.writeFile(
+    path.join(proj, '.claude', 'skills', '.trash', '1790446985109-30604-abc', 'old-skill', 'SKILL.md'),
+    '---\nname: old-skill\n---\nDeleted.\n'
+  );
   await fs.writeFile(path.join(proj, 'CLAUDE.md'), '# Original project memory\n');
   await fs.writeFile(
     path.join(proj, '.claude', 'settings.json'),
@@ -242,6 +251,8 @@ try {
   check('scan found the project CLAUDE.md', Boolean(memo));
   check('scan found the project settings.json', Boolean(settings));
   check('scan found the project hook', Boolean(hook));
+  check('scan lists a live skill', all.some((e) => e.category === 'skill' && e.absPath.includes('live-skill')));
+  check('scan does not list a trashed skill as config', !all.some((e) => e.category === 'skill' && e.absPath.includes('.trash')));
   check(
     'scan excluded the credential file',
     !all.some((e) => e.name === '.credentials.json') &&
