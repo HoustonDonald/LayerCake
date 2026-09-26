@@ -353,7 +353,9 @@ export function createApp({ port, staticFiles }) {
   }
 
   function sendError(res, err) {
-    res.status(err.status || 500).json({ message: err.message, code: err.code || null });
+    // details: structured facts the UI acts on, such as the command keys a
+    // settings edit changed (#19). Never a file body.
+    res.status(err.status || 500).json({ message: err.message, code: err.code || null, details: err.details || null });
   }
 
   app.post('/api/write', async (req, res) => {

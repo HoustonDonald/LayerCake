@@ -19,7 +19,13 @@ async function request(url, options = {}) {
     throw new Error(`Unexpected response from server (${res.status})`);
   }
   if (!res.ok) {
-    throw new Error(payload?.message || `Request failed (${res.status})`);
+    // The code and details ride along, so a caller can act on a refusal (the
+    // command keys a settings edit changed, #19) instead of only showing it.
+    const err = new Error(payload?.message || `Request failed (${res.status})`);
+    err.status = res.status;
+    err.code = payload?.code || null;
+    err.details = payload?.details || null;
+    throw err;
   }
   return payload;
 }

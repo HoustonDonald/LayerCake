@@ -15,14 +15,41 @@ import {
   isEditableCategory,
   isExecutableCategory,
   isSecret,
+  commandKeysChanged,
 } from './safety.js';
-import { splitFrontmatter } from './readfile.js';
+import { readForDisplay, splitFrontmatter } from './readfile.js';
 
 function refuse(message, code, status = 403) {
   const err = new Error(message);
   err.status = status;
   err.code = code;
   return err;
+}
+
+/**
+ * A settings or MCP file edit that adds or changes something Claude Code runs
+ * (hooks, statusLine, apiKeyHelper, an MCP server command...) needs the same
+ * acknowledgement as a hook script (#19). The category alone cannot say: the
+ * same settings.json holds both a model name and a hook. So the parsed file on
+ * disk is compared with the parsed new content, through readForDisplay, the
+ * one producer of a file body. The refusal names the keys, for the UI to show.
+ */
+async function assertNoNewCommands(entry, content) {
+  let after;
+  try {
+    after = JSON.parse(content);
+  } catch {
+    return; // not JSON: validateContent has already ruled on it
+  }
+  const before = (await readForDisplay(entry.absPath)).parsed ?? null;
+  const keys = commandKeysChanged(entry.category, before, after);
+  if (!keys.length) return;
+  const err = refuse(
+    `This edit adds or changes settings Claude Code runs as commands (${keys.join(', ')}). Re-send with acknowledgeExecutable to confirm.`,
+    'EEXECUTABLE'
+  );
+  err.details = { commandKeys: keys };
+  throw err;
 }
 
 /**
@@ -137,6 +164,7 @@ export async function editFile({
   assertWritable(entry, { acknowledgeExecutable, content });
   const warnings = validateContent(entry.absPath, content);
   await assertUnchanged(entry.absPath, expectedMtime);
+  if (!acknowledgeExecutable) await assertNoNewCommands(entry, content);
 
   const undo = await createSnapshot(lineage, {
     label: `Before editing ${path.basename(entry.absPath)}`,

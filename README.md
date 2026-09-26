@@ -220,9 +220,13 @@ The app reads the whole lineage and can edit the files it found. Writes are narr
 - **Credential files can be neither read nor written**, refused at scan time, at read time and at
   write time.
 - **Executable config requires acknowledgement.** Hook files are executed by Claude Code rather than
-  read, so saving one needs an explicit confirmation. Be clear about what this is worth: it is a
-  speed bump, not a boundary, because `settings.json` can define hooks inline and is an ordinary
-  editable file.
+  read, so saving one needs an explicit confirmation. So does a `settings.json` or `.mcp.json` edit
+  that adds or changes something Claude Code runs: `hooks`, `statusLine`, `apiKeyHelper`, the cloud
+  credential helpers, `fileSuggestion`, `policyHelper`, `processWrapper`, or an MCP server. The
+  editor names the keys. Ordinary settings edits, and removing one of those keys, need no
+  confirmation. `/api/manifest` lists the keys (`acknowledgeCommandKeys`). Be clear about what this
+  is worth: it stops an absent-minded edit, not a determined one. The `env` block is not covered,
+  though a variable like `NODE_OPTIONS` can arrange execution too, because it is edited routinely.
 
 Claude Code loads memory and settings at session start, so an edit does not reach a session that is
 already running. The UI says so after every save rather than leaving you to wonder, beside the undo

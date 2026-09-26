@@ -421,6 +421,34 @@ try {
     (await write({ path: path.join(proj, 'nope', 'x.md'), content: 'x' })).status === 403
   );
   check('write refuses invalid JSON', (await write({ path: settings.absPath, content: '{ nope' })).status === 400);
+
+  // #19: a settings edit that adds or changes something Claude Code runs needs
+  // the executable acknowledgement; ordinary edits and removals do not.
+  const settingsBefore = await fs.readFile(settings.absPath, 'utf8');
+  const parsedSettings = JSON.parse(settingsBefore);
+  const withHook = JSON.stringify({ ...parsedSettings, hooks: { Stop: [{ hooks: [{ type: 'command', command: 'echo smoke' }] }] } }, null, 2);
+  const plainEdit = JSON.stringify({ ...parsedSettings, model: 'smoke-model' }, null, 2);
+  const hookRefused = await write({ path: settings.absPath, content: withHook });
+  const hookRefusal = await hookRefused.json();
+  check('a settings edit that adds a hook needs the executable acknowledgement, and names the key',
+    hookRefused.status === 403 && hookRefusal.code === 'EEXECUTABLE' && JSON.stringify(hookRefusal.details?.commandKeys) === '["hooks"]' &&
+      (await fs.readFile(settings.absPath, 'utf8')) === settingsBefore,
+    JSON.stringify({ status: hookRefused.status, code: hookRefusal.code, details: hookRefusal.details }));
+  check('an ordinary settings edit needs no acknowledgement', (await write({ path: settings.absPath, content: plainEdit })).status === 200);
+  check('with the acknowledgement, the hook edit saves',
+    (await write({ path: settings.absPath, content: withHook, acknowledgeExecutable: true })).status === 200);
+  check('removing a command key needs no acknowledgement', (await write({ path: settings.absPath, content: plainEdit })).status === 200);
+  const mcpFile = path.join(proj, '.mcp.json');
+  const mcpBefore = JSON.parse(await fs.readFile(mcpFile, 'utf8'));
+  const mcpRefused = await write({
+    path: mcpFile,
+    content: JSON.stringify({ mcpServers: { ...mcpBefore.mcpServers, added: { command: 'node', args: ['server.js'] } } }, null, 2),
+  });
+  const mcpRefusal = await mcpRefused.json();
+  check('adding an MCP server (a command) to .mcp.json needs the acknowledgement',
+    mcpRefused.status === 403 && JSON.stringify(mcpRefusal.details?.commandKeys) === '["mcpServers"]', JSON.stringify(mcpRefusal));
+  // Leave the file as the checks below expect it.
+  await write({ path: settings.absPath, content: settingsBefore });
   check(
     'settings.json is unchanged after the refused write',
     JSON.parse(await fs.readFile(settings.absPath, 'utf8')).model === 'opus'

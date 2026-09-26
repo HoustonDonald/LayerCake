@@ -349,9 +349,11 @@ partially. A truncated file restored is silent data loss.
 
 ## Known limits, stated rather than papered over
 
-- **Blocking hook edits is a speed bump, not a boundary.** `settings.json` can define hooks inline
-  and is an ordinary editable file, so anyone who can write settings can arrange execution without
-  touching a hook script. The acknowledgement stops an absent minded edit, not a determined one.
+- **The executable acknowledgement is a speed bump, not a boundary.** It covers hook scripts, and
+  settings or `.mcp.json` edits that add or change a key Claude Code runs (`COMMAND_KEYS` in
+  safety.js, served in the manifest; #19, owner decision). It does not cover `env`, which can
+  arrange execution indirectly (`NODE_OPTIONS`, `PATH`) but is edited routinely. It stops an
+  absent-minded edit, not a determined one.
 - **Snapshots contain files that can hold OAuth tokens** (`~/.claude.json`, `settings.local.json`,
   `.mcp.json`). They are flagged `sensitive` in the manifest rather than excluded, because dropping
   them would make a restore quietly incomplete. In place a snapshot inherits the same user ACL as

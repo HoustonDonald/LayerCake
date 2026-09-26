@@ -52,6 +52,9 @@ export default function FileEditor({ file, scanId, onSaved, onCancel, onDirtyCha
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
   const [acknowledge, setAcknowledge] = useState(false);
+  // Command keys the server said this edit adds or changes (#19): a settings
+  // file is not executable as a whole, only these parts of it are.
+  const [commandKeys, setCommandKeys] = useState(null);
   const [reviewing, setReviewing] = useState(false);
   // What the disk said when the review opened: checking, current, changed, or error.
   const [disk, setDisk] = useState(null);
@@ -73,6 +76,7 @@ export default function FileEditor({ file, scanId, onSaved, onCancel, onDirtyCha
     // carrying exactly what was written; anything else still clears it.
     if (!(ours && ours.path === file.path && ours.content === file.content)) setResult(null);
     setAcknowledge(false);
+    setCommandKeys(null);
     setReviewing(false);
   }, [file.path, file.content]);
 
@@ -129,9 +133,16 @@ export default function FileEditor({ file, scanId, onSaved, onCancel, onDirtyCha
       });
       ownSave.current = { path: file.path, content };
       setResult(res);
+      setCommandKeys(null);
       onSaved?.(res);
     } catch (err) {
-      setError(err.message);
+      if (err.code === 'EEXECUTABLE' && err.details?.commandKeys?.length) {
+        // Not an error to report: a question to ask. The notice below names
+        // what would run, and the same checkbox as a hook allows the save.
+        setCommandKeys(err.details.commandKeys);
+      } else {
+        setError(err.message);
+      }
     } finally {
       setSaving(false);
     }
@@ -159,6 +170,18 @@ export default function FileEditor({ file, scanId, onSaved, onCancel, onDirtyCha
               onChange={(e) => setAcknowledge(e.target.checked)}
             />
             I understand, allow saving this hook
+          </label>
+        </div>
+      )}
+
+      {!isExecutable && commandKeys && (
+        <div className="notice warn">
+          <strong>This edit adds or changes settings Claude Code runs as commands:</strong>{' '}
+          {commandKeys.map((k) => <code key={k}>{k}</code>).reduce((acc, el, i) => (i ? [...acc, ', ', el] : [el]), [])}. A
+          change here runs on your machine the next time Claude Code uses it.
+          <label className="ack">
+            <input type="checkbox" checked={acknowledge} onChange={(e) => setAcknowledge(e.target.checked)} />
+            I understand, allow saving these settings
           </label>
         </div>
       )}
@@ -220,7 +243,7 @@ export default function FileEditor({ file, scanId, onSaved, onCancel, onDirtyCha
         <button
           className="btn btn-primary"
           onClick={save}
-          disabled={saving || !dirty || (isExecutable && !acknowledge)}
+          disabled={saving || !dirty || ((isExecutable || commandKeys) && !acknowledge)}
         >
           {saving ? 'Saving…' : 'Save'}
         </button>

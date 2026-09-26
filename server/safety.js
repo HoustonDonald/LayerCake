@@ -98,6 +98,58 @@ const EDITABLE_CATEGORIES = new Set([
  */
 const EXECUTABLE_CATEGORIES = new Set(['hook']);
 
+/**
+ * Settings keys whose value Claude Code RUNS, and the categories that hold
+ * them (#19; owner decision, 2026-09-26). An edit that adds or changes one of
+ * these needs the same acknowledgement as a hook script: it is the inline
+ * route to execution the comment above describes. Removing one does not.
+ * Source: the settings reference, keys "with your own command" or that launch
+ * a program, plus statusLine and subagentStatusLine (a command the status
+ * line runs) and the MCP server tables (each entry names a command).
+ *
+ * Not covered, and said so: `env`. It can arrange execution indirectly
+ * (NODE_OPTIONS, PATH), but it is edited routinely, and the owner chose
+ * ordinary settings edits to stay free of the acknowledgement.
+ */
+const COMMAND_KEYS = [
+  'hooks',
+  'statusLine',
+  'subagentStatusLine',
+  'apiKeyHelper',
+  'awsAuthRefresh',
+  'awsCredentialExport',
+  'gcpAuthRefresh',
+  'otelHeadersHelper',
+  'fileSuggestion',
+  'policyHelper',
+  'processWrapper',
+  'mcpServers',
+  'managedMcpServers',
+];
+const COMMAND_KEY_CATEGORIES = new Set(['settings', 'mcp']);
+
+/** Stable text for a JSON value, so key order alone never reads as a change. */
+function canonical(value) {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${canonical(value[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/**
+ * The command keys an edit adds or changes, comparing the parsed file before
+ * and after. Empty for any category that cannot hold them, and for content
+ * that is not a JSON object (validation refuses that separately).
+ */
+export function commandKeysChanged(category, before, after) {
+  if (!COMMAND_KEY_CATEGORIES.has(String(category))) return [];
+  const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+  const was = obj(before);
+  const now = obj(after);
+  return COMMAND_KEYS.filter((k) => Object.hasOwn(now, k) && canonical(now[k]) !== canonical(was[k]));
+}
+
 /** Largest file body returned to the browser. Larger files are truncated. */
 export const MAX_FILE_BYTES = 2 * 1024 * 1024;
 
@@ -139,6 +191,9 @@ export function writePolicy() {
   return {
     editableCategories: [...EDITABLE_CATEGORIES].sort(),
     requiresAcknowledgement: [...EXECUTABLE_CATEGORIES].sort(),
+    // Content-dependent: an edit to one of these categories that adds or
+    // changes one of these keys needs the same acknowledgement (#19).
+    acknowledgeCommandKeys: { categories: [...COMMAND_KEY_CATEGORIES].sort(), keys: [...COMMAND_KEYS] },
     maxWriteBytes: MAX_WRITE_BYTES,
     neverWritten: [...SECRET_BASENAMES].sort(),
   };
