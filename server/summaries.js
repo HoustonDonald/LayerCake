@@ -167,9 +167,12 @@ function runClaude(input) {
     '--system-prompt',
     SYSTEM_PROMPT,
   ];
+  // LAYERCAKE_CLAUDE_CMD, a JSON array, replaces the executable for the smoke
+  // test, which must exercise this path without spending anyone's usage.
+  const [bin, ...pre] = process.env.LAYERCAKE_CLAUDE_CMD ? JSON.parse(process.env.LAYERCAKE_CLAUDE_CMD) : ['claude'];
   return new Promise((resolve, reject) => {
     // A neutral working directory, so nothing project-specific is in reach.
-    const child = spawn('claude', args, { cwd: os.tmpdir(), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(bin, [...pre, ...args], { cwd: os.tmpdir(), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
     const timer = setTimeout(() => {
@@ -178,9 +181,18 @@ function runClaude(input) {
     }, RUN_TIMEOUT_MS);
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (err += d));
+    // A claude that exits without reading stdin (one that rejects a flag, say)
+    // breaks the pipe. Without this listener that is an unhandled 'error' event
+    // and it takes the whole server down; with it, 'close' reports the failure.
+    // Measured in review: a digest over ~64 KB (11 of 44 real sessions) did it.
+    child.stdin.on('error', () => {});
     child.on('error', (e) => {
       clearTimeout(timer);
-      reject(e.code === 'ENOENT' ? new Error('The claude command was not found on PATH.') : e);
+      reject(
+        e.code === 'ENOENT'
+          ? new Error('claude.exe was not found on PATH. (An npm-installed claude.cmd is not supported for summaries.)')
+          : e
+      );
     });
     child.on('close', (code) => {
       clearTimeout(timer);

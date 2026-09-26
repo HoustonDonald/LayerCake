@@ -30,13 +30,22 @@ const CONTEXT_WARNING = 0.8;
  * else is taken as 200K, Claude Code's default.
  */
 export const CONTEXT_RULE =
-  'Window from the model id: "[1m]" or a native-1M family (Fable 5.x, Sonnet 5, Opus 4.7 and later) is 1,000,000 tokens; otherwise 200,000.';
+  'Window from the model in use now: "[1m]" or a native-1M family (Fable 5.x, Sonnet 5, Opus 4.7 and later) is 1,000,000 tokens; otherwise 200,000. Opus and Sonnet 4.6 reach 1M in Claude Code only as a "[1m]" variant.';
 
-export function contextWindow(modelId, models) {
-  const ids = [modelId, ...Object.keys(models || {})].filter(Boolean).map((s) => s.toLowerCase());
-  if (ids.some((id) => id.includes('[1m]'))) return 1_000_000;
-  const native = /fable-5|mythos-5|sonnet-5|opus-4-[7-9]|opus-5/;
-  if (ids.some((id) => native.test(id))) return 1_000_000;
+/**
+ * The model in use now decides the window, not every model the session ever
+ * used: a switch from a 1M model to Haiku (200K) must shrink it, or 180K reads
+ * as 18% and "Context high" never fires. The latest identity record carries
+ * the "[1m]" marker; it counts only while it names the model the last API
+ * call actually used.
+ */
+export function contextWindow(identityId, lastModel) {
+  const last = String(lastModel || '').toLowerCase();
+  const identity = String(identityId || '').toLowerCase();
+  const current = identity && (!last || identity.replace('[1m]', '') === last) ? identity : last;
+  if (!current) return 200_000;
+  if (current.includes('[1m]')) return 1_000_000;
+  if (/fable-5|mythos-5|sonnet-5|opus-4-[7-9]|opus-5/.test(current)) return 1_000_000;
   return 200_000;
 }
 
@@ -44,7 +53,7 @@ export function computeHealth(model, live, { now = Date.now(), mtimeMs = 0, wrap
   // A launched session's status line reports the exact figure; everything else
   // is estimated from the transcript's last API call.
   const exact = wrapped?.statusline?.context;
-  const window = exact?.windowTokens || contextWindow(model.modelId, model.models);
+  const window = exact?.windowTokens || contextWindow(model.modelId, model.lastModel);
   const tokens = model.context?.tokens ?? null;
   const pct =
     typeof exact?.usedPercentage === 'number' ? exact.usedPercentage / 100 : tokens ? tokens / window : null;

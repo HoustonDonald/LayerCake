@@ -29,10 +29,11 @@ export const DEFAULT_RETENTION_DAYS = 30;
 /** Re-listing the projects tree is cheap, but not free on every poll. */
 const DISCOVERY_TTL_MS = 2000;
 /**
- * Full models held in memory. The session list reads every transcript, so this
- * must exceed the number of sessions on disk or each listing re-parses the
- * evicted ones. Measured 2026-09-26: 44 sessions, 117 MB of transcript, parse
- * all in about 0.5 s; the models keep prompt and reply text, not tool I/O.
+ * Full models held in memory. The session list reads every transcript in
+ * order, so past this many sessions an LRU cache hits nothing and every
+ * listing re-parses all of them. Measured 2026-09-26: 44 sessions, 117 MB of
+ * transcript, parse all in about 0.5 s; the models keep prompt and reply text,
+ * not tool I/O.
  */
 const MAX_READERS = 256;
 

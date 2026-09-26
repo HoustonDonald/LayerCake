@@ -24,7 +24,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { projectSlug } from '../server/paths.js';
-import { makeSessionFixture, runLaunchChecks, runSessionChecks } from './smoke-sessions.mjs';
+import { makeSessionFixture, runLaunchChecks, runSessionChecks, runSummaryChecks } from './smoke-sessions.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PORT = Number(process.env.SMOKE_PORT || 5399);
@@ -142,6 +142,12 @@ const server = spawn(process.execPath, [path.join(ROOT, 'server', 'index.js')], 
     LAYERCAKE_APPDATA_DIR: appData,
     // Launches build their argv and settings but never start Windows Terminal.
     LAYERCAKE_LAUNCH_DRY_RUN: '1',
+    // AI summaries run a stand-in for claude: no usage is ever spent here.
+    LAYERCAKE_CLAUDE_CMD: JSON.stringify([
+      process.execPath,
+      path.join(ROOT, 'scripts', 'smoke-claude-stub.mjs'),
+      path.join(smokeDir, 'claude-stub'),
+    ]),
   },
   stdio: 'ignore',
 });
@@ -593,6 +599,9 @@ try {
 
   // --- launch and ingest (Phase 2), dry run --------------------------------
   await runLaunchChecks({ base: BASE, port: PORT, token, check, scanId: lineage.scanId, proj, appData });
+
+  // --- AI summaries, against a stand-in claude --------------------------------
+  await runSummaryChecks({ base: BASE, token, check, proj, smokeDir });
 
   process.stdout.write(`\n  ${pass} passed, ${fail} failed\n\n`);
   exitCode = fail ? 1 : 0;

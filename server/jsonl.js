@@ -33,10 +33,23 @@ export class JsonlTail {
     this.partial = Buffer.alloc(0);
     this.mtimeMs = 0;
     this.badLines = 0;
+    this.pending = Promise.resolve();
   }
 
-  /** Reads anything appended since the last call. Returns true if anything was read. */
-  async refresh() {
+  /**
+   * Reads anything appended since the last call. Returns true if anything was
+   * read. Calls are serialized: the offset advances after each await, so two
+   * overlapping reads would both consume the same bytes and push the offset
+   * past them, and those records would be lost for good. Shown in review with
+   * two streams polling one live session.
+   */
+  refresh() {
+    const run = this.pending.then(() => this.readAppended());
+    this.pending = run.catch(() => {});
+    return run;
+  }
+
+  async readAppended() {
     const st = await withTimeout(fs.stat(this.file), DIR_TIMEOUT_MS, this.file);
     if (st.size < this.offset) {
       this.offset = 0;

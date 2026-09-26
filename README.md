@@ -312,6 +312,8 @@ The **Sessions** tab shows Claude Code sessions: every one still on disk for the
   at start or later on entering a folder. The Explorer tree shows the same thing as a badge on each
   memory file (loaded, loaded later, not loaded), from the running session in the scanned
   directory, else the latest one, and names any file loaded that the lineage did not predict.
+  Claude Code records this only from about 2.1.265; for an older session the tree shows no badges
+  and says why, rather than calling every file "not loaded".
 - **Health glow:** the session pane's border glows by state (working, idle, context high, error,
   not running), always with a text label as well. The rules are served with the data and shown on
   hover. A running session is followed live.
@@ -331,7 +333,12 @@ Where it comes from, and what that means:
   session stays in the list ("Kept after deletion"), with its card but no prompts or replies.
 - **Prompt history only:** `~/.claude/history.jsonl` keeps every submitted prompt, across projects,
   long after transcripts are gone. Sessions known only from there are listed with their prompts and
-  nothing else. Anything you pasted into a prompt is stored there too, and never leaves the server.
+  nothing else. That file also keeps a separate copy of anything you pasted, which LayerCake
+  never sends to the page.
+- **Pasted text is part of the prompt.** Claude Code writes a paste into the transcript's prompt
+  itself, so it is shown in the prompt rail like any other prompt text, goes into an AI summary's
+  digest if you ask for one (to Anthropic, which already received it in the session), and, when
+  it is in a session's first prompt, its first 400 characters are kept in that session's card.
 - **Running sessions** come from `~/.claude/sessions/<pid>.json`. Each has a sibling `.key` file,
   which is a secret and is never opened.
 

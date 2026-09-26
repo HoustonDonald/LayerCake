@@ -68,6 +68,15 @@ function LoadedBadge({ reason }) {
 function OverlayNote({ overlay, lineage }) {
   const scanned = new Set(lineage.levels.flatMap((l) => l.entries).map((e) => pathKey(e.absPath)));
   const unpredicted = overlay.instructions.filter((i) => !scanned.has(pathKey(i.path)));
+  if (!overlay.recorded) {
+    return (
+      <div className="overlay-note">
+        No memory badges: {overlay.live ? 'the running' : 'the latest'} session here (<strong>{overlay.title}</strong>, Claude
+        Code {overlay.version || 'unknown version'}) did not record which memory files it loaded. Claude Code records that from
+        about 2.1.265.
+      </div>
+    );
+  }
   return (
     <div className="overlay-note">
       Memory badges from {overlay.live ? 'the running' : 'the latest'} session here: <strong>{overlay.title}</strong>.
@@ -186,7 +195,7 @@ function Level({ level, selectedPath, onSelect, defaultOpen, overlay }) {
                     className={`dot${entry.error ? ' error' : entry.sensitive ? ' sensitive' : ''}`}
                   />
                   <span className="entry-name">{entryLabel(entry)}</span>
-                  {overlay && entry.category === 'memory' && <LoadedBadge reason={overlay.byKey.get(pathKey(entry.absPath))} />}
+                  {overlay?.recorded && entry.category === 'memory' && <LoadedBadge reason={overlay.byKey.get(pathKey(entry.absPath))} />}
                   <span className="entry-size">{formatBytes(entry.size)}</span>
                 </button>
               ))}

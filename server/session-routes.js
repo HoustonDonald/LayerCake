@@ -201,7 +201,10 @@ export function registerSessionRoutes(app) {
       const expired = [];
       for (const card of stored.values()) {
         if (found.has(card.sessionId) || !inScope(card.cwd)) continue;
-        expired.push({ ...card, transcript: 'expired', live: false });
+        // An AI summary was paid for once; it must outlive the transcript it
+        // summarized, which is the whole point of keeping the card.
+        const aiSummary = await readAiSummary(card.sessionId).catch(() => null);
+        expired.push({ ...card, transcript: 'expired', live: false, aiSummary });
       }
 
       const byId = new Map();
@@ -295,15 +298,24 @@ export function registerSessionRoutes(app) {
    * small state, not content: the client refetches the detail when lastAt moves.
    */
   app.get('/api/session/:id/stream', async (req, res) => {
+    // The slot is checked and the disconnect noticed BEFORE the first await. A
+    // client that gave up while the reader loaded otherwise left a slot taken
+    // forever, with its poller running (shown in review: four early aborts,
+    // then "Already following 4 sessions" with none open).
+    if (streams.size >= MAX_STREAMS) {
+      return res.status(429).json({ message: `Already following ${MAX_STREAMS} sessions. Close another LayerCake tab.` });
+    }
+    let gone = false;
+    req.on('close', () => {
+      gone = true;
+    });
     let reader;
     try {
       reader = await getReader(req.params.id);
     } catch (err) {
       return sendError(res, err);
     }
-    if (streams.size >= MAX_STREAMS) {
-      return res.status(429).json({ message: `Already following ${MAX_STREAMS} sessions. Close another LayerCake tab.` });
-    }
+    if (gone) return undefined;
     res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
     res.flushHeaders();
 
@@ -358,9 +370,11 @@ export function registerSessionRoutes(app) {
   /** The one route that spends Claude usage. One run at a time. */
   app.post('/api/session/:id/summarize', async (req, res) => {
     if (summarizing) return res.status(409).json({ message: 'A summary is already running.' });
+    // Taken before the first await: two requests arriving together would
+    // otherwise both pass the check above and both run.
+    summarizing = String(req.params.id);
     try {
       const reader = await getReader(req.params.id);
-      summarizing = reader.sessionId;
       const summary = await summarizeWithClaude(reader.model);
       return res.json(summary);
     } catch (err) {

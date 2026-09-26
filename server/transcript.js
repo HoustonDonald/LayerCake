@@ -62,6 +62,8 @@ function emptyModel(sessionId) {
   return {
     sessionId,
     cwd: null,
+    lastCwd: null,
+    lastModel: null,
     gitBranch: null,
     version: null,
     entrypoint: null,
@@ -224,7 +226,13 @@ export function applyRecord(model, r, state) {
     if (!model.firstAt) model.firstAt = at;
     model.lastAt = at;
   }
-  if (r.cwd) model.cwd = r.cwd;
+  // A session's directory is where it started. Claude can cd into a subfolder
+  // mid-session (15 of 44 real sessions did), and taking the latest cwd made a
+  // running session vanish from its own project's overlay and CLI.
+  if (r.cwd) {
+    if (!model.cwd) model.cwd = r.cwd;
+    model.lastCwd = r.cwd;
+  }
   if (r.gitBranch) model.gitBranch = r.gitBranch;
   if (r.version) model.version = r.version;
   if (r.entrypoint) model.entrypoint = r.entrypoint;
@@ -380,7 +388,10 @@ function applyAssistant(model, r, at, state) {
       model.context = { tokens: context, at };
       turn.contextTokens = context;
     }
-    if (m.model && m.model !== '<synthetic>') model.models[m.model] = (model.models[m.model] || 0) + 1;
+    if (m.model && m.model !== '<synthetic>') {
+      model.models[m.model] = (model.models[m.model] || 0) + 1;
+      model.lastModel = m.model;
+    }
   }
 
   for (const block of Array.isArray(m.content) ? m.content : []) {

@@ -74,6 +74,14 @@ function KeptCard({ card }) {
         <div className="stat"><div className="stat-value">{card.filesEdited ?? '–'}</div><div className="stat-label">files edited</div></div>
         <div className="stat"><div className="stat-value">{tokens(card.tokens?.output)}</div><div className="stat-label">tokens out</div></div>
       </div>
+      {card.aiSummary && (
+        <div className="ai-summary">
+          <div className="ai-summary-head">
+            AI summary <span className="muted">· {clock(card.aiSummary.at)} · {card.aiSummary.model}</span>
+          </div>
+          <div className="ai-summary-text">{card.aiSummary.text}</div>
+        </div>
+      )}
       {card.firstPrompt && (
         <div className="turn-prompt">
           <div className="turn-label">First prompt</div>
@@ -155,13 +163,20 @@ export default function SessionsView({ projectDir, scanId }) {
 
   const dir = scope === 'project' ? projectDir : null;
 
+  // Only the latest listing may land: a slow one for the previous scope would
+  // otherwise replace the list the user just switched to.
+  const listSeq = useRef(0);
   const loadList = useCallback(() => {
+    const seq = ++listSeq.current;
     listSessions(dir)
       .then((l) => {
+        if (seq !== listSeq.current) return;
         setList(l);
         setListError(null);
       })
-      .catch((e) => setListError(e.message));
+      .catch((e) => {
+        if (seq === listSeq.current) setListError(e.message);
+      });
     getUsage()
       .then(setUsage)
       .catch(() => {});
@@ -205,14 +220,23 @@ export default function SessionsView({ projectDir, scanId }) {
     }
   }, [scanId]);
 
+  // Responses arrive in any order. One for a session that is no longer
+  // selected (a slow session clicked before a fast one, a summary that
+  // finished after the user moved on) must not paint over the current one.
+  const currentId = useRef(null);
+  currentId.current = selected?.kind === 'session' ? selected.id : null;
+
   const loadDetail = useCallback((id) => {
     lastFetch.current = Date.now();
     return getSession(id)
       .then((d) => {
+        if (currentId.current !== id) return;
         setDetail(d);
         setDetailError(null);
       })
-      .catch((e) => setDetailError(e.message));
+      .catch((e) => {
+        if (currentId.current === id) setDetailError(e.message);
+      });
   }, []);
 
   useEffect(() => {
@@ -239,13 +263,14 @@ export default function SessionsView({ projectDir, scanId }) {
 
   const onSummarize = useCallback(async () => {
     if (!detail) return;
+    const id = detail.sessionId;
     setSummarizing(true);
     setSummaryError(null);
     try {
-      await summarizeSession(detail.sessionId);
-      await loadDetail(detail.sessionId);
+      await summarizeSession(id);
+      if (currentId.current === id) await loadDetail(id);
     } catch (e) {
-      setSummaryError(e.message);
+      if (currentId.current === id) setSummaryError(e.message);
     } finally {
       setSummarizing(false);
       getUsage().then(setUsage).catch(() => {});

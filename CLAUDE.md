@@ -55,7 +55,10 @@ Env knobs: `PORT` (default 5178), `CLAUDE_EXPLORER_DIR_TIMEOUT_MS` (default 3000
 `LAYERCAKE_SNAPSHOT_DIR` (default `%LOCALAPPDATA%\LayerCake\snapshots`), `LAYERCAKE_APPDATA_DIR`
 (default `%LOCALAPPDATA%\LayerCake\data`) and `LAYERCAKE_CLAUDE_DATA_DIR` (default `~/.claude`, read
 for session data only; smoke points it at a synthetic folder so real sessions are never read).
-Claude Code's own `CLAUDE_CONFIG_DIR` is not honoured anywhere yet.
+Claude Code's own `CLAUDE_CONFIG_DIR` is not honoured anywhere yet. Two more exist for smoke only:
+`LAYERCAKE_LAUNCH_DRY_RUN=1` (launch builds its argv and settings but starts nothing) and
+`LAYERCAKE_CLAUDE_CMD` (a JSON array replacing `claude` for AI summaries, pointed at
+`scripts/smoke-claude-stub.mjs`, so no usage is ever spent testing).
 
 `npm start` builds only when `public/index.html` is older than the newest file under `client/`, so a
 change to `server/` alone does not trigger a rebuild and does not need one.
@@ -155,6 +158,8 @@ internal and liable to change in any release. Unrecognised record types are coun
 the UI ("Transcript read"); never silence that counter, because it is how a format change becomes
 visible instead of becoming empty panels. It keeps prompts and replies and drops CLAUDE.md bodies
 from instruction attachments, the system prompt snapshot, the account email and tool I/O bodies.
+A tool call keeps a one-line summary: its description, or for a shell call with none (151 of 3,866
+here), the first 160 characters of the command line, which can therefore reach the page.
 
 **Secrets beside the session data are never read or sent.** `history.jsonl`'s `pastedContents`
 never leaves `history.js`; `sessions/<pid>.<hash>.key` files are never opened (only `<digits>.json`
@@ -180,9 +185,13 @@ snapshot-first rule, since they are Claude Code's writes, not LayerCake's.
 
 **Only `summaries.js` may spend Claude usage, and only on an explicit request.** Everything else
 reads files. The AI summary runs `claude -p` with a fixed argv (Haiku, `--safe-mode`, `--tools ""`,
-own system prompt, no session persistence, a budget cap), the digest on stdin, one run at a time,
-from a POST the UI sends only on a click. Every run is written to the usage ledger, including failed
-ones. Nothing automatic may call it; adding anything that does breaks the promise the README makes.
+own system prompt, no session persistence, a budget cap), the digest on stdin, one run at a time
+(the lock is taken before the first await), from a POST the UI sends only on a click. Every run that
+finishes, succeeded or failed, is written to the usage ledger; the one gap is the exe shutting down
+mid-run (its drain waits 30 s, a run may take up to 180 s), which ends the run before its entry.
+A `claude` that exits without reading stdin must not take the server down: `child.stdin` has an
+error listener for exactly that, and smoke proves it with a stand-in claude (`LAYERCAKE_CLAUDE_CMD`).
+Nothing automatic may call it; adding anything that does breaks the promise the README makes.
 
 **The CSRF guard belongs on `/api` only, never on the HTML routes.** A top-level navigation carries
 `Sec-Fetch-Site: cross-site` whenever the user arrives from a bookmark, a link, or the new tab page.

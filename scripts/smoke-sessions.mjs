@@ -114,6 +114,9 @@ function transcript(proj) {
     { type: 'attachment', attachment: { type: 'deferred_tools_delta', failedMcpServers: ['broken-server'] } },
     // The drift canary: a record type this build has never seen.
     { type: 'future-record-type', payload: 1 },
+    // Claude cd'd into a subfolder and the session ended there: the LAST
+    // record's cwd is the subfolder, so "latest" and "first" genuinely differ.
+    { type: 'mode', mode: 'normal', cwd: path.join(proj, 'sub') },
   ];
   const lines = records.map((r) => JSON.stringify(rec({ cwd: proj, gitBranch: 'main', ...r })));
   // A line written twice (same uuid) must not add a prompt, and a torn line
@@ -130,10 +133,30 @@ export async function makeSessionFixture(smokeDir, proj) {
   const projDir = path.join(claudeData, 'projects', projectSlug(proj));
   await fs.mkdir(path.join(projDir, IDS.onDisk, 'subagents'), { recursive: true });
   await fs.writeFile(path.join(projDir, `${IDS.onDisk}.jsonl`), transcript(proj));
+  // The launched fixture also carries a mid-session model switch (a 1M model,
+  // then Haiku at 200K) and a prompt over 64 KB, which is what broke the pipe
+  // to a claude that exits without reading.
+  const now = Date.now();
+  const lrec = (i, fields) =>
+    JSON.stringify({ uuid: `00000000-0000-4000-8000-99999999999${i}`, sessionId: IDS.launched, cwd: proj, timestamp: new Date(now + i * 1000).toISOString(), ...fields });
   await fs.writeFile(
     path.join(projDir, `${IDS.launched}.jsonl`),
-    `${JSON.stringify({ type: 'user', uuid: '00000000-0000-4000-8000-999999999999', sessionId: IDS.launched, cwd: proj, timestamp: new Date().toISOString(), origin: { kind: 'human' }, message: { role: 'user', content: 'A launched session' } })}\n`
+    [
+      lrec(0, { type: 'user', origin: { kind: 'human' }, message: { role: 'user', content: `A launched session ${'y'.repeat(120_000)}` } }),
+      lrec(1, { type: 'assistant', message: { id: 'l1', model: 'claude-opus-5', role: 'assistant', content: [{ type: 'text', text: 'On Opus.' }], usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 150000, output_tokens: 1 } } }),
+      lrec(2, { type: 'attachment', attachment: { type: 'model', identity: { modelId: 'claude-haiku-4-5', marketingName: 'Haiku 4.5' } } }),
+      lrec(3, { type: 'assistant', message: { id: 'l2', model: 'claude-haiku-4-5', role: 'assistant', content: [{ type: 'text', text: 'On Haiku.' }], usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 170000, output_tokens: 1 } } }),
+    ].join('\n') + '\n'
   );
+  // An AI summary made while the expired session's transcript still existed.
+  await fs.mkdir(path.join(appData, 'summaries'), { recursive: true });
+  await fs.writeFile(
+    path.join(appData, 'summaries', `${IDS.expired}.json`),
+    JSON.stringify({ text: '- kept summary', at: '2026-08-01T00:00:00.000Z', model: 'claude-haiku-4-5', usage: {}, turns: 4 })
+  );
+  // Control folder for the stand-in claude (smoke-claude-stub.mjs).
+  await fs.mkdir(path.join(smokeDir, 'claude-stub'), { recursive: true });
+  await fs.writeFile(path.join(smokeDir, 'claude-stub', 'mode'), 'ok');
   await fs.writeFile(path.join(projDir, IDS.onDisk, 'subagents', `agent-${AGENT_BG}.jsonl`), '{"type":"user"}\n');
 
   // A running session: this smoke process's own pid is guaranteed alive.
@@ -390,12 +413,57 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
 
   // Liveness of a launched session without a pid file comes from its hooks.
   const lid = IDS.launched;
-  check('before it reports, a session with no pid file is not running',
-    JSON.parse((await get(base, `/api/session/${lid}`, H)).body).live === null);
+  const before = JSON.parse((await get(base, `/api/session/${lid}`, H)).body);
+  check('before it reports, a session with no pid file is not running', before.live === null);
+  check('after a switch to Haiku the window is 200K, not the earlier 1M model\'s',
+    before.health.context.window === 200_000, `window ${before.health.context.window}`);
   await ingest('statusline', { session_id: lid, context_window: { used_percentage: 5, context_window_size: 200000 } });
   let ld = JSON.parse((await get(base, `/api/session/${lid}`, H)).body);
   check('once its status line reports, a launched session counts as running', ld.live?.source === 'hooks' && ld.health.state !== 'offline', JSON.stringify(ld.live));
   await ingest('hook', { session_id: lid, hook_event_name: 'SessionEnd', reason: 'prompt_input_exit' });
   ld = JSON.parse((await get(base, `/api/session/${lid}`, H)).body);
   check('its SessionEnd hook marks it not running', ld.live === null && ld.health.state === 'offline', JSON.stringify(ld.live));
+}
+
+/**
+ * AI summaries against the stand-in claude (smoke-claude-stub.mjs): the crash
+ * path, the exact stripped-down call, the ledger, and a summary outliving its
+ * transcript. No usage is spent.
+ */
+export async function runSummaryChecks({ base, token, check, proj, smokeDir }) {
+  const H = { 'X-LayerCake-Token': token };
+  const stub = path.join(smokeDir, 'claude-stub');
+
+  // A claude that exits without reading a >64 KB digest used to kill the server.
+  await fs.writeFile(path.join(stub, 'mode'), 'exit-early');
+  const crashed = await postRaw(base, `/api/session/${IDS.launched}/summarize`, {}, H).catch((e) => ({ status: `request failed: ${e.code || e.message}` }));
+  check('a claude that exits without reading gives an error, not a dead server', crashed.status === 502, `status ${crashed.status}`);
+  const alive = await get(base, '/', {}).catch((e) => ({ status: `request failed: ${e.code || e.message}` }));
+  check('the server is still up afterwards', alive.status === 200, `status ${alive.status}`);
+  if (alive.status !== 200) return;
+  let usage = JSON.parse((await get(base, '/api/usage', H)).body);
+  check('the failed run is in the ledger', usage.totals.runs === 1 && usage.totals.failed === 1, JSON.stringify(usage.totals));
+
+  await fs.writeFile(path.join(stub, 'mode'), 'ok');
+  const ok = await postRaw(base, `/api/session/${IDS.onDisk}/summarize`, {}, H);
+  check('a summary run returns its text', ok.status === 200 && JSON.parse(ok.body).text === '- stub summary: the widget was fixed', ok.body.slice(0, 120));
+  const run = JSON.parse(await fs.readFile(path.join(stub, 'last-run.json'), 'utf8'));
+  const at = (flag) => run.args[run.args.indexOf(flag) + 1];
+  check('it runs claude -p on Haiku, stripped down',
+    run.args[0] === '-p' && at('--model') === 'haiku' && run.args.includes('--safe-mode') && at('--tools') === '' &&
+      run.args.includes('--no-session-persistence') && run.args.includes('--strict-mcp-config') && at('--max-budget-usd') === '0.50',
+    run.args.join(' '));
+  check('the digest carries the prompts and replies, not tool output',
+    run.input.includes('First prompt: fix the widget') && run.input.includes('Fixed it.') && !run.input.includes(SENTINELS.toolOutput));
+  usage = JSON.parse((await get(base, '/api/usage', H)).body);
+  check('the successful run is in the ledger with the usage claude reported', usage.totals.runs === 2 && usage.totals.outputTokens === 12);
+  const d = JSON.parse((await get(base, `/api/session/${IDS.onDisk}`, H)).body);
+  check('the summary is kept and shown with the session', d.aiSummary?.text === '- stub summary: the widget was fixed');
+
+  const list = JSON.parse((await get(base, `/api/sessions?dir=${encodeURIComponent(proj)}`, H)).body);
+  check('a kept card still shows its AI summary after the transcript is gone',
+    list.expired.find((e) => e.sessionId === IDS.expired)?.aiSummary?.text === '- kept summary');
+  check('a session keeps the directory it started in after Claude cd\'s into a subfolder', d.cwd === proj, d.cwd);
+  const page = await new Promise((resolve) => http.get(`${base}/`, (res) => { res.resume(); resolve(res.headers['content-security-policy'] || ''); }));
+  check('the page forbids images from anywhere but itself (no outbound fetch from markdown)', /img-src 'self' data:/.test(page), page);
 }

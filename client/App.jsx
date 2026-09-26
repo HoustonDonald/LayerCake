@@ -27,7 +27,18 @@ async function loadOverlay(projectDir) {
     const k = pathKey(i.path);
     if (!byKey.has(k)) byKey.set(k, i.reason);
   }
-  return { sessionId: current.sessionId, title: current.title, live: current.live, byKey, instructions: detail.instructions };
+  return {
+    sessionId: current.sessionId,
+    title: current.title,
+    live: current.live,
+    version: detail.version,
+    // No record is not the same as "nothing loaded": Claude Code writes the
+    // instruction record only from about 2.1.265, and 28 of 44 real sessions
+    // predate it. Badges appear only when the session recorded its loads.
+    recorded: detail.instructions.length > 0,
+    byKey,
+    instructions: detail.instructions,
+  };
 }
 
 // Persisted in the browser, never on disk: the server writes only config edits

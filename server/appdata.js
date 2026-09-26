@@ -34,6 +34,12 @@ function inside(child, parent) {
 
 function root() {
   const r = appDataRoot();
+  // A UNC or device path (\\server\share, \\localhost\C$, \\?\C:) can name
+  // the forbidden tree in a spelling the check below would not recognise.
+  // LayerCake's data belongs on a local drive, so those are refused outright.
+  if (/^[\\/]{2}/.test(r)) {
+    throw new Error(`LayerCake data must be on a local drive path, not ${r}.`);
+  }
   for (const forbidden of [claudeDataDir(), path.join(homeDir(), '.claude')]) {
     if (inside(r, forbidden)) {
       throw new Error(`Refusing to keep LayerCake data inside ${forbidden}; set LAYERCAKE_APPDATA_DIR elsewhere.`);
@@ -92,9 +98,22 @@ export async function writeAiSummary(sessionId, summary) {
   await atomicWrite(target('summaries', `${sessionId}.json`), JSON.stringify(summary, null, 2));
 }
 
+/**
+ * The ledger's entries. A missing file is an empty ledger; any other failure
+ * (locked, timed out, unparseable, over the read cap) throws, because treating
+ * it as empty would let the next append overwrite every recorded run.
+ */
 export async function readLedger() {
-  const data = await readJson(target('usage-ledger.json'));
-  return Array.isArray(data?.entries) ? data.entries : [];
+  const result = await readForDisplay(target('usage-ledger.json'));
+  if (result.error?.code === 'ENOENT') return [];
+  if (result.error || result.truncated || !Array.isArray(result.parsed?.entries)) {
+    const err = new Error(
+      `The usage ledger could not be read (${result.error?.code || (result.truncated ? 'too large' : 'unparseable')}); it was left untouched.`
+    );
+    err.status = 500;
+    throw err;
+  }
+  return result.parsed.entries;
 }
 
 export async function appendLedger(entry) {
