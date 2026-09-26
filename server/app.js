@@ -48,6 +48,9 @@ import {
   CLAUDE_DIR_FILE_TARGETS,
   CLAUDE_DIR_TREES,
   DIR_FILE_TARGETS,
+  claudeHome,
+  claudeHomeSource,
+  globalConfigFile,
   homeDir,
   managedCandidates,
   snapshotRoot,
@@ -155,6 +158,11 @@ export function createApp({ port, staticFiles }) {
     res.json({
       platform: process.platform,
       home: homeDir(),
+      // Claude Code's configuration home and where it came from (#7): the user
+      // level, plugins, session data and .claude.json all follow CLAUDE_CONFIG_DIR.
+      claudeHome: claudeHome(),
+      claudeHomeSource: claudeHomeSource(),
+      globalConfigFile: globalConfigFile(),
       directoryTargets: DIR_FILE_TARGETS.map((t) => t.name),
       claudeDirFiles: CLAUDE_DIR_FILE_TARGETS.map((t) => t.name),
       claudeDirTrees: CLAUDE_DIR_TREES.map((t) => ({
@@ -164,9 +172,9 @@ export function createApp({ port, staticFiles }) {
       })),
       managedCandidates: managedCandidates(),
       homeExtras: [
-        path.join(homeDir(), '.claude.json'),
+        globalConfigFile(),
         path.join(homeDir(), 'CLAUDE.md'),
-        path.join(homeDir(), '.claude', 'plugins'),
+        path.join(claudeHome(), 'plugins'),
       ],
       neverRead: writePolicy().neverWritten,
       // Stated rather than implied, so the UI can show the write policy instead of

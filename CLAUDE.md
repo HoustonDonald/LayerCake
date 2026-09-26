@@ -60,9 +60,12 @@ which would lend it one), then check that a window opens, the UI loads, and clos
 
 Env knobs: `PORT` (default 5178), `CLAUDE_EXPLORER_DIR_TIMEOUT_MS` (default 3000),
 `LAYERCAKE_SNAPSHOT_DIR` (default `%LOCALAPPDATA%\LayerCake\snapshots`), `LAYERCAKE_APPDATA_DIR`
-(default `%LOCALAPPDATA%\LayerCake\data`) and `LAYERCAKE_CLAUDE_DATA_DIR` (default `~/.claude`, read
-for session data only; smoke points it at a synthetic folder so real sessions are never read).
-Claude Code's own `CLAUDE_CONFIG_DIR` is not honoured anywhere yet. Three more exist for smoke only:
+(default `%LOCALAPPDATA%\LayerCake\data`) and `LAYERCAKE_CLAUDE_DATA_DIR` (default: Claude Code's
+configuration home, read for session data only; smoke points it at a synthetic folder so real
+sessions are never read). Claude Code's own `CLAUDE_CONFIG_DIR` is honoured the way Claude Code
+reads it (#7): every `~/.claude` path, and `.claude.json` inside it, come from `claudeHome()` and
+`globalConfigFile()` in paths.js, never from `homeDir()` directly. Smoke sets it to a synthetic
+config home, so its user level is never the real one. Three more exist for smoke only:
 `LAYERCAKE_LAUNCH_DRY_RUN=1` (launch builds its argv and settings but starts nothing),
 `LAYERCAKE_CLAUDE_CMD` (a JSON array replacing `claude` for AI summaries, pointed at
 `scripts/smoke-claude-stub.mjs`, so no usage is ever spent testing), and

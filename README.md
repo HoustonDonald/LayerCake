@@ -80,6 +80,15 @@ Existence-probed on all three platforms, never assumed:
 ~\CLAUDE.md                       flagged: only inherited when the project sits under home
 ```
 
+If `CLAUDE_CONFIG_DIR` is set, as Claude Code reads it, the `~\.claude` part of every path above
+(and the plugins, project memory, sessions and history below) is that directory instead, and
+`.claude.json` moves inside it too: Claude Code resolves it as `CLAUDE_CONFIG_DIR\.claude.json`.
+`~\CLAUDE.md` does not move; it is a file in the home directory. The level says which location it
+used and why, and `/api/manifest` states `claudeHome`, `claudeHomeSource` and `globalConfigFile`.
+A `CLAUDE_CONFIG_DIR` that is not an absolute path is ignored, as Claude Code refuses it too. One
+case is not covered: a `CLAUDE_CONFIG_DIR` set inside a settings file's `env` block, which Claude
+Code also honours.
+
 ### 02 Plugins
 
 ```

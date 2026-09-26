@@ -120,7 +120,17 @@ async function makeFixture() {
     path.join(proj, '.credentials.json'),
     `{"token":"SMOKE-SENTINEL-${crypto.randomBytes(4).toString('hex')}"}`
   );
-  return { proj, snaps: path.join(smokeDir, 'snaps') };
+  // Claude Code's configuration home, relocated with CLAUDE_CONFIG_DIR (#7).
+  // The user level is read from here, so smoke no longer scans or snapshots
+  // the real ~/.claude as its user level.
+  const configHome = path.join(smokeDir, 'claude-home');
+  await fs.mkdir(path.join(configHome, 'agents'), { recursive: true });
+  await fs.writeFile(path.join(configHome, 'CLAUDE.md'), '# user-level memory in the relocated home\n');
+  await fs.writeFile(path.join(configHome, 'settings.json'), JSON.stringify({ model: 'smoke' }, null, 2));
+  await fs.writeFile(path.join(configHome, '.claude.json'), JSON.stringify({ projects: {} }, null, 2));
+  await fs.writeFile(path.join(configHome, 'agents', 'home-agent.md'), '---\nname: home-agent\n---\n');
+
+  return { proj, snaps: path.join(smokeDir, 'snaps'), configHome };
 }
 
 /**
@@ -162,7 +172,7 @@ async function waitForServer(timeoutMs = 20000) {
   return false;
 }
 
-const { proj, snaps } = await makeFixture();
+const { proj, snaps, configHome } = await makeFixture();
 // Synthetic Claude session data and LayerCake app data: the real ones are never read or written.
 const { claudeData, appData } = await makeSessionFixture(smokeDir, proj);
 
@@ -174,6 +184,8 @@ const server = spawn(process.execPath, [path.join(ROOT, 'server', 'index.js')], 
     PORT: String(PORT),
     LAYERCAKE_SNAPSHOT_DIR: snaps,
     LAYERCAKE_CLAUDE_DATA_DIR: claudeData,
+    // Claude Code's own variable: the user level must follow it (#7).
+    CLAUDE_CONFIG_DIR: configHome,
     LAYERCAKE_APPDATA_DIR: appData,
     // Launches build their argv and settings but never start Windows Terminal.
     LAYERCAKE_LAUNCH_DRY_RUN: '1',
@@ -316,6 +328,25 @@ try {
     !all.some((e) => e.name === '.credentials.json') &&
       lineage.levels.some((l) => l.redacted.some((r) => r.absPath.endsWith('.credentials.json')))
   );
+
+  // #7: CLAUDE_CONFIG_DIR relocates the user level, plugins and .claude.json,
+  // exactly as Claude Code reads it; ~/CLAUDE.md stays in the home directory.
+  const userLevel = lineage.levels.find((l) => l.kind === 'user');
+  const pluginsLevel = lineage.levels.find((l) => l.kind === 'plugins');
+  const userFiles = userLevel?.entries.map((e) => e.absPath) || [];
+  const realHome = path.join(os.homedir(), '.claude');
+  check('CLAUDE_CONFIG_DIR: the user level is read from the relocated config home',
+    userLevel?.dir === configHome && userFiles.includes(path.join(configHome, 'CLAUDE.md')) &&
+      userFiles.includes(path.join(configHome, 'agents', 'home-agent.md')) &&
+      !userFiles.some((p) => p.toLowerCase().startsWith(realHome.toLowerCase() + path.sep)),
+    JSON.stringify({ dir: userLevel?.dir, files: userFiles.length }));
+  check('CLAUDE_CONFIG_DIR: .claude.json is read from inside it, and plugins beneath it',
+    userFiles.includes(path.join(configHome, '.claude.json')) && pluginsLevel?.dir === path.join(configHome, 'plugins'),
+    JSON.stringify({ plugins: pluginsLevel?.dir }));
+  check('CLAUDE_CONFIG_DIR: the manifest states the location and its source',
+    manifest.claudeHome === configHome && manifest.claudeHomeSource === 'CLAUDE_CONFIG_DIR' &&
+      manifest.globalConfigFile === path.join(configHome, '.claude.json'),
+    JSON.stringify({ home: manifest.claudeHome, source: manifest.claudeHomeSource }));
 
   const scanId = lineage.scanId;
   const write = (body) =>

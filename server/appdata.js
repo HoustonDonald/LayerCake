@@ -17,7 +17,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { appDataRoot, claudeDataDir, homeDir, samePathKey } from './paths.js';
+import { appDataRoot, claudeDataDir, claudeHome, homeDir, samePathKey } from './paths.js';
 import { readForDisplay } from './readfile.js';
 import { DIR_TIMEOUT_MS, withTimeout } from './safety.js';
 import { atomicWrite } from './snapshot.js';
@@ -40,7 +40,7 @@ function root() {
   if (/^[\\/]{2}/.test(r)) {
     throw new Error(`LayerCake data must be on a local drive path, not ${r}.`);
   }
-  for (const forbidden of [claudeDataDir(), path.join(homeDir(), '.claude')]) {
+  for (const forbidden of [claudeDataDir(), claudeHome(), path.join(homeDir(), '.claude')]) {
     if (inside(r, forbidden)) {
       throw new Error(`Refusing to keep LayerCake data inside ${forbidden}; set LAYERCAKE_APPDATA_DIR elsewhere.`);
     }

@@ -20,11 +20,15 @@ import {
   CLAUDE_DIR_FILE_TARGETS,
   CLAUDE_DIR_TREES,
   ancestorChain,
+  claudeHome,
+  claudeHomeSource,
+  globalConfigFile,
   homeDir,
   isUncPath,
   managedCandidates,
   projectMemoryDir,
   projectSlug,
+  samePathKey,
 } from './paths.js';
 import {
   DIR_TIMEOUT_MS,
@@ -204,15 +208,24 @@ async function scanManaged() {
   return finalizeLevel(level);
 }
 
-/** ~/.claude plus ~/.claude.json and ~/CLAUDE.md. */
+/**
+ * Claude Code's configuration home (~/.claude, or CLAUDE_CONFIG_DIR) plus its
+ * global config file and ~/CLAUDE.md. The first two follow CLAUDE_CONFIG_DIR;
+ * ~/CLAUDE.md does not, because it is reached as a file in the home directory,
+ * not as part of the configuration home (#7).
+ */
 async function scanUser() {
   const home = homeDir();
-  const claudeDir = path.join(home, '.claude');
+  const claudeDir = claudeHome();
+  const source = claudeHomeSource();
   const level = newLevel({
     kind: 'user',
     label: 'User / home',
     dir: claudeDir,
-    note: 'Applies to every project for this OS user.',
+    note:
+      source === 'CLAUDE_CONFIG_DIR'
+        ? 'Applies to every project for this OS user. Located by CLAUDE_CONFIG_DIR, as Claude Code does.'
+        : `Applies to every project for this OS user. Location: ${source}.`,
   });
 
   for (const target of CLAUDE_DIR_FILE_TARGETS) {
@@ -245,7 +258,7 @@ async function scanUser() {
   }
 
   await probeFile(
-    path.join(home, '.claude.json'),
+    globalConfigFile(),
     'home-config',
     level,
     'Home config blob: per-project state and MCP servers. Often very large.'
@@ -260,9 +273,9 @@ async function scanUser() {
   return finalizeLevel(level);
 }
 
-/** ~/.claude/plugins: marketplaces, installed set, and cached skill/agent trees. */
+/** <config home>/plugins: marketplaces, installed set, and cached skill/agent trees. */
 async function scanPlugins() {
-  const pluginsDir = path.join(homeDir(), '.claude', 'plugins');
+  const pluginsDir = path.join(claudeHome(), 'plugins');
   const level = newLevel({
     kind: 'plugins',
     label: 'Plugins (user level)',
@@ -379,7 +392,9 @@ async function scanProjectMemory(projectDir) {
 async function scanDirectory(dir, label) {
   const notes = [];
   if (isUncPath(dir)) notes.push('Network path. Scanned with a per-operation timeout.');
-  if (path.resolve(dir) === path.resolve(homeDir())) {
+  // Only when the configuration home is this directory's own .claude folder:
+  // with CLAUDE_CONFIG_DIR elsewhere, ~/.claude is an ordinary folder here.
+  if (path.resolve(dir) === path.resolve(homeDir()) && samePathKey(claudeHome()) === samePathKey(path.join(dir, '.claude'))) {
     notes.push(
       'This is the home directory, so its files also appear at the user level above. ' +
         'The repetition is real: the same files are reached by two different routes.'

@@ -41,6 +41,47 @@ export function homeDir() {
 }
 
 /**
+ * CLAUDE_CONFIG_DIR as Claude Code reads it, or null. Claude Code requires an
+ * absolute path and refuses to start with anything else, so an empty or
+ * relative value is not a location to report: the reason is kept for the
+ * manifest instead (#7).
+ */
+export function claudeConfigDirEnv() {
+  const raw = String(process.env.CLAUDE_CONFIG_DIR || '').trim();
+  return raw && path.isAbsolute(raw) ? path.resolve(raw) : null;
+}
+
+/**
+ * Claude Code's configuration home: CLAUDE_CONFIG_DIR when set, else
+ * ~/.claude. Docs: "If you set CLAUDE_CONFIG_DIR, every ~/.claude path lives
+ * under that directory instead", which covers settings, CLAUDE.md, agents,
+ * skills, plugins, projects/ (transcripts and auto memory), sessions/ and
+ * history.jsonl. Every one of those is built from here, never from homeDir().
+ */
+export function claudeHome() {
+  return claudeConfigDirEnv() || path.join(homeDir(), '.claude');
+}
+
+/**
+ * The global config file. It moves with CLAUDE_CONFIG_DIR too, into that
+ * directory rather than beside it: read from the 2.1.28x bundle,
+ * join(process.env.CLAUDE_CONFIG_DIR || homedir(), '.claude.json'). The docs
+ * sentence above names ~/.claude paths only, so this was checked, not assumed.
+ */
+export function globalConfigFile() {
+  return path.join(claudeConfigDirEnv() || homeDir(), '.claude.json');
+}
+
+/** Where claudeHome() came from, for the UI to state rather than leave implied. */
+export function claudeHomeSource() {
+  if (claudeConfigDirEnv()) return 'CLAUDE_CONFIG_DIR';
+  if (String(process.env.CLAUDE_CONFIG_DIR || '').trim()) {
+    return 'default (CLAUDE_CONFIG_DIR is set but not an absolute path, which Claude Code refuses)';
+  }
+  return 'default';
+}
+
+/**
  * Managed / enterprise settings candidates for all three platforms.
  * Every candidate is probed for existence; none is assumed.
  */
@@ -112,23 +153,24 @@ export function projectSlug(dir) {
 }
 
 export function projectMemoryDir(dir) {
-  return path.join(homeDir(), '.claude', 'projects', projectSlug(dir), 'memory');
+  return path.join(claudeHome(), 'projects', projectSlug(dir), 'memory');
 }
 
 /**
  * Root of Claude Code's session data: projects/<slug>/<id>.jsonl transcripts,
  * sessions/<pid>.json for running sessions, history.jsonl for prompt history.
+ * Claude Code keeps it in its configuration home, so it follows
+ * CLAUDE_CONFIG_DIR (claudeHome).
  *
  * LAYERCAKE_CLAUDE_DATA_DIR overrides it, the same way LAYERCAKE_SNAPSHOT_DIR
  * does for snapshots, so the smoke test can point it at synthetic sessions and
- * never read the real ones. Claude Code's own CLAUDE_CONFIG_DIR is not honoured
- * here or anywhere else in LayerCake yet; that gap predates this.
+ * never read the real ones.
  */
 export function claudeDataDir() {
   if (process.env.LAYERCAKE_CLAUDE_DATA_DIR) {
     return path.resolve(process.env.LAYERCAKE_CLAUDE_DATA_DIR);
   }
-  return path.join(homeDir(), '.claude');
+  return claudeHome();
 }
 
 /**
