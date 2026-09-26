@@ -226,6 +226,19 @@ These were the user's calls, made explicitly on 2026-09-05. Do not reopen withou
    running from source. Electron remains the answer only if the window's own identity (taskbar,
    toast attribution) starts to matter; SEA does not change either.
 
+Made by the owner on 2026-09-26, when asked about the open issues:
+
+5. **Hook errors in a launched terminal after LayerCake closes stay as they are (#5, closed).**
+   Restarting LayerCake stops them. Silent command hooks were rejected: a process spawn per tool
+   call, and the zero-token claim would need re-measuring.
+6. **The watch bar gets a per-file mute (#13).** A muted file is still counted and shown as muted;
+   it stops re-lighting the bar. Nothing is hidden.
+7. **Snapshots keep the files that can hold OAuth tokens (#18, closed)**, flagged `sensitive` and
+   documented, so a restore is always complete. No redaction option.
+8. **Settings edits that add or change something that runs a command need the executable
+   acknowledgement (#19)**: hooks, statusLine, apiKeyHelper and the like. Ordinary settings edits
+   stay free of it.
+
 ---
 
 ## Open work lives in GitHub issues
