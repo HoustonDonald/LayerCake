@@ -289,7 +289,9 @@ partially. A truncated file restored is silent data loss.
 - Comments explain *why*, especially for platform quirks. Match that density; it is deliberate.
   Windows-specific behavior (case folding, `UNKNOWN` errno on a dead share, ProgramData variants)
   gets a comment naming the quirk.
-- Dependencies are deliberately few: express, js-yaml, react, react-markdown. Adding one needs a
+- Dependencies are deliberately few: express, js-yaml, react, react-markdown, and `diff` (jsdiff,
+  the editor's review-before-save view, #16: Myers' diff is a solved problem, BSD-3, no dependencies
+  of its own, client bundle only). Adding one needs a
   reason, and anything that could reach the network needs a strong one. Build-only dev dependencies
   follow the same rule; `resedit` (the exe's icon and version resource) was admitted because it and
   its one dependency import no Node builtin (no filesystem, no network), run no install script, and
