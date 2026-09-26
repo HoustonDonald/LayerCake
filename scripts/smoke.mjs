@@ -129,6 +129,12 @@ async function makeFixture() {
   await fs.writeFile(path.join(configHome, 'settings.json'), JSON.stringify({ model: 'smoke' }, null, 2));
   await fs.writeFile(path.join(configHome, '.claude.json'), JSON.stringify({ projects: {} }, null, 2));
   await fs.writeFile(path.join(configHome, 'agents', 'home-agent.md'), '---\nname: home-agent\n---\n');
+  // A credential file inside a .claude folder on the walk, where the scan
+  // lists that folder and must redact it. The redaction check used to pass on
+  // Windows only because the walk crossed the real home folder and met the
+  // real ~/.claude/.credentials.json; on Linux (/tmp is not under home) it
+  // failed. Planted here, it tests the fixture, not the machine (#17).
+  await fs.writeFile(path.join(proj, '.claude', '.credentials.json'), JSON.stringify({ planted: 'SMOKE-PROJECT-CREDENTIAL' }));
 
   return { proj, snaps: path.join(smokeDir, 'snaps'), configHome };
 }

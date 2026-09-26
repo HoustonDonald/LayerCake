@@ -799,11 +799,15 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
   // the next post. Read-only makes the atomic rename over it fail (EPERM).
   const lateFile = path.join(appData, 'launches', `${late.id}.json`);
   const retryId = '88888888-8888-4888-8888-888888888888';
-  await fs.chmod(lateFile, 0o444);
+  // Windows refuses a rename over a read-only file; POSIX allows it, and
+  // refuses instead when the directory is read-only (#17, found running smoke
+  // on Linux).
+  const blockTarget = process.platform === 'win32' ? lateFile : path.dirname(lateFile);
+  await fs.chmod(blockTarget, process.platform === 'win32' ? 0o444 : 0o555);
   await postRaw(base, `/ingest/${late.id}/${late.secret}/statusline`, { session_id: retryId });
   const failedShown = await until(async () =>
     Boolean(JSON.parse((await get(base, '/api/launches', H)).body).launches.find((x) => x.id === late.id)?.persistError));
-  await fs.chmod(lateFile, 0o644);
+  await fs.chmod(blockTarget, process.platform === 'win32' ? 0o644 : 0o755);
   await postRaw(base, `/ingest/${late.id}/${late.secret}/statusline`, { session_id: retryId });
   const recovered = await until(async () => {
     const rec = JSON.parse(await fs.readFile(lateFile, 'utf8'));

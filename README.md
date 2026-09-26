@@ -5,8 +5,10 @@ inherited, from where, and in what order. Browse every level, edit the files, an
 restore the whole environment. Useful mostly when moving between projects, when the answer to "which
 CLAUDE.md is actually winning here" is not obvious.
 
-Built and verified against **Claude Code 2.1.229 on Windows 11**. POSIX paths are handled, but
-Windows is the first-class target.
+Built and verified against **Claude Code 2.1.229 on Windows 11**. Windows is the first-class target.
+The smoke test also passes on Linux (Ubuntu under WSL2, Node 22), apart from two checks skipped
+because UNC paths are a Windows form. macOS is untested. "Start Claude here" is Windows-only: it
+opens Windows Terminal, and its status line uses Windows's `curl.exe`.
 
 ```
 npm install
