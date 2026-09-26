@@ -30,7 +30,28 @@ export const SENTINELS = {
 
 /** A launch made before a (simulated) restart: on disk, never registered in memory. */
 export const PRIOR_LAUNCH = { id: 'feedfacecafebeef', secret: 'a'.repeat(48) };
-const PRIOR_LAUNCH_OLDER = { id: 'abad1deaabad1dea', secret: 'c'.repeat(48) };
+export const PRIOR_LAUNCH_B = { id: 'fffe0000fffe0000', secret: 'c'.repeat(48) };
+
+/** A two-record transcript (one prompt, one reply): enough for discovery and a session view. */
+export async function minimalTranscript(projDir, sessionId, proj, text) {
+  const at = (s) => new Date(Date.now() - 60_000 + s * 1000).toISOString();
+  const base = { sessionId, cwd: proj, version: '2.1.282', entrypoint: 'cli' };
+  await fs.writeFile(
+    path.join(projDir, `${sessionId}.jsonl`),
+    [
+      { ...base, uuid: `${sessionId.slice(0, 24)}000000000001`, timestamp: at(0), type: 'user', origin: { kind: 'human' }, message: { role: 'user', content: text } },
+      {
+        ...base,
+        uuid: `${sessionId.slice(0, 24)}000000000002`,
+        timestamp: at(1),
+        type: 'assistant',
+        message: { id: `m_${sessionId.slice(0, 8)}`, model: 'claude-opus-5', role: 'assistant', content: [{ type: 'text', text: 'Ok.' }], usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 1000, output_tokens: 1 } },
+      },
+    ]
+      .map((r) => JSON.stringify(r))
+      .join('\n') + '\n'
+  );
+}
 
 export const IDS = {
   onDisk: '11111111-1111-4111-8111-111111111111',
@@ -40,6 +61,8 @@ export const IDS = {
   // A launched session: transcript on disk but no pid file, as measured for a
   // real launch, so its liveness can only come from the hooks.
   launched: '55555555-5555-4555-8555-555555555555',
+  // Another launched session with no pid file, left at a permission prompt.
+  dialog: '99999999-9999-4999-8999-999999999999',
 };
 const AGENT_BG = 'a0123456789abcdef';
 const AGENT_HANDBACK = 'afedcba9876543210';
@@ -185,33 +208,38 @@ export async function makeSessionFixture(smokeDir, proj) {
   await fs.mkdir(path.join(appData, 'launches'), { recursive: true });
   await fs.writeFile(
     path.join(appData, 'launches', `${PRIOR_LAUNCH.id}.json`),
-    // Written as by a previous run: it also carried the on-disk session, which
-    // ended there. Restoring must keep that end (#40).
+    // Written as by a previous run: it also carried the on-disk session,
+    // taken on 2026-09-01, and never saw it end.
     JSON.stringify({
       ...PRIOR_LAUNCH,
       dir: proj,
       sessionId: IDS.launched,
       createdAt: '2026-09-01T00:00:00.000Z',
       sessionIds: [IDS.launched, IDS.onDisk],
-      ended: { [IDS.onDisk]: 'prompt_input_exit' },
       since: { [IDS.launched]: '2026-09-01T00:00:00.000Z', [IDS.onDisk]: '2026-09-01T00:00:01.000Z' },
     })
   );
-  // An older launch that carried the on-disk session EARLIER and never saw it
-  // end. After a restart nothing has been heard from either, so the session
-  // must belong to the launch that took it on last (#35). Its id sorts first,
-  // so "first launch found" would pick it.
+  // A launch CREATED earlier that took the on-disk session on LATER
+  // (2026-09-02, by /resume) and saw it end there. After a restart nothing
+  // has been heard from either, so the session belongs to this one: the tie
+  // key is when a launch took the session on, not when it was created (#35,
+  // #46). Its id sorts after PRIOR_LAUNCH's, so "first launch found" picks
+  // the wrong one too. Restoring must also keep the end (#40).
   await fs.writeFile(
-    path.join(appData, 'launches', `${PRIOR_LAUNCH_OLDER.id}.json`),
+    path.join(appData, 'launches', `${PRIOR_LAUNCH_B.id}.json`),
     JSON.stringify({
-      ...PRIOR_LAUNCH_OLDER,
+      ...PRIOR_LAUNCH_B,
       dir: proj,
       sessionId: IDS.onDisk,
       createdAt: '2026-08-31T00:00:00.000Z',
       sessionIds: [IDS.onDisk],
-      since: { [IDS.onDisk]: '2026-08-31T00:00:00.000Z' },
+      ended: { [IDS.onDisk]: 'prompt_input_exit' },
+      since: { [IDS.onDisk]: '2026-09-02T00:00:00.000Z' },
     })
   );
+  // A launched session with a transcript and no pid file that will sit at a
+  // permission prompt (#41).
+  await minimalTranscript(projDir, IDS.dialog, proj, 'A session that will wait at a prompt');
 
   // A card LayerCake kept for a session whose transcript has since been cleaned up.
   await fs.mkdir(path.join(appData, 'cards'), { recursive: true });
@@ -413,15 +441,17 @@ function postRaw(base, pathname, body, headers = {}) {
  * Launch and ingest, with the server in dry-run mode (LAYERCAKE_LAUNCH_DRY_RUN=1):
  * everything except starting Windows Terminal.
  */
-export async function runLaunchChecks({ base, port, token, check, scanId, proj, appData, reportWindowMs }) {
+export async function runLaunchChecks({ base, port, token, check, scanId, proj, appData, claudeData, reportWindowMs, serverStartedAt }) {
   const H = { 'X-LayerCake-Token': token };
   const bodies = [];
 
-  // #40 (M1): restored from a record that says the on-disk session ended.
-  // First, before anything in this run posts for that session.
+  // #40 (M1) and #35: restored from two records that both carry the on-disk
+  // session. It belongs to the launch that took it on last, which was
+  // created first, and that record says it ended. First, before anything in
+  // this run posts for that session.
   const restoredEnd = JSON.parse((await get(base, `/api/session/${IDS.onDisk}`, H)).body);
-  check('a launch record that says a session ended restores it as ended',
-    restoredEnd.wrapped?.launchId === PRIOR_LAUNCH.id && restoredEnd.wrapped.ended === true && restoredEnd.wrapped.endReason === 'prompt_input_exit',
+  check('after a restart a session belongs to the launch that took it on last, and its recorded end is kept',
+    restoredEnd.wrapped?.launchId === PRIOR_LAUNCH_B.id && restoredEnd.wrapped.ended === true && restoredEnd.wrapped.endReason === 'prompt_input_exit',
     JSON.stringify({ launch: restoredEnd.wrapped?.launchId, ended: restoredEnd.wrapped?.ended, reason: restoredEnd.wrapped?.endReason }));
 
   check('launch refuses a request with no token', (await postRaw(base, '/api/launch', { scanId })).status === 403);
@@ -461,13 +491,24 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
     Object.values(settings.hooks).every((groups) => groups[0].hooks[0].type === 'http' && groups[0].hooks[0].timeout === 3));
   check('the status line command is curl.exe posting to this launch',
     settings.statusLine.type === 'command' && /^curl\.exe /.test(settings.statusLine.command) && settings.statusLine.command.includes(`/ingest/${m?.[1]}/`));
-  check('the status line re-runs on a timer, so silence means stopped (#31)',
+  check('the status line re-runs on a timer shorter than the report window (#31)',
     Number.isInteger(settings.statusLine.refreshInterval) && settings.statusLine.refreshInterval >= 1 &&
       settings.statusLine.refreshInterval * 1000 < 45_000, `refreshInterval ${settings.statusLine.refreshInterval}`);
 
   const [launchId, secret] = m ? [m[1], m[2]] : ['0', '0'];
   const ingest = (kind, body, headers) => postRaw(base, `/ingest/${launchId}/${secret}/${kind}`, body, headers);
   const sid = IDS.onDisk;
+
+  // #42: a launch whose status line and hooks never report (disableAllHooks,
+  // a managed policy, an untrusted folder) while its session writes a
+  // transcript. First, before anything posts for this launch.
+  await minimalTranscript(path.join(claudeData, 'projects', projectSlug(proj)), l.sessionId, proj, 'A session whose channels are blocked');
+  const blocked = JSON.parse((await get(base, `/api/session/${l.sessionId}`, H)).body);
+  const blockedRow = JSON.parse((await get(base, `/api/sessions?dir=${encodeURIComponent(proj)}`, H)).body).sessions.find((x) => x.sessionId === l.sessionId);
+  check('a launch that never reported says its channels are blocked, not that it crashed',
+    blocked.live === null && blocked.wrapped?.neverReported === true && blocked.health.reasons.some((r) => /never reported/.test(r)) &&
+      !blocked.health.reasons.some((r) => /crashed/.test(r)) && blockedRow?.quiet === 'blocked',
+    JSON.stringify({ reasons: blocked.health?.reasons, quiet: blockedRow?.quiet }));
 
   // The generated command is RUN, the way Claude Code runs it, with the status
   // JSON on stdin, rather than posted for it: a command that sends nothing, or
@@ -578,13 +619,18 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
   // no pid file, as measured for a real launch.
   const lid = IDS.launched;
   const prior = (kind, body) => postRaw(base, `/ingest/${PRIOR_LAUNCH.id}/${PRIOR_LAUNCH.secret}/${kind}`, body);
+  // Past the report window since the server started, so the reason must be
+  // the "most likely stopped" one, not "moments ago" (#31, #46).
+  const uptime = Date.now() - serverStartedAt;
+  if (uptime < reportWindowMs + 300) await new Promise((r) => setTimeout(r, reportWindowMs + 300 - uptime));
   const before = await session(lid);
   const row = JSON.parse((await get(base, `/api/sessions?dir=${encodeURIComponent(proj)}`, H)).body).sessions.find((s) => s.sessionId === lid);
   check('a launch from before a restart is restored at startup: its session is still marked launched',
     before.wrapped?.launchId === PRIOR_LAUNCH.id && row?.launched === true, JSON.stringify(row));
-  check('until it reports again, it is neither called running nor "No running process"',
+  check('silent since a restart, past the window: neither "running" nor "No running process", but "most likely stopped"',
     before.live === null && before.wrapped.quiet === true && row?.quiet === 'restart' &&
-      before.health.reasons.some((r) => /LayerCake restarted/.test(r)) && !before.health.reasons.includes('No running process'),
+      before.health.reasons.some((r) => /^No report since LayerCake restarted;.*most likely stopped/.test(r)) &&
+      !before.health.reasons.includes('No running process'),
     JSON.stringify({ reasons: before.health.reasons, quiet: row?.quiet }));
   check('after a switch to Haiku the window is 200K, not the earlier 1M model\'s',
     before.health.context.window === 200_000, `window ${before.health.context.window}`);
@@ -612,10 +658,17 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
   await hook({ hook_event_name: 'SessionEnd', reason: 'resume' });
   d = await session(sid);
   const endedByResume = d.wrapped.ended === true && d.wrapped.launchId === launchId;
+  const revivedFrom = new Date().toISOString();
   await hook({ hook_event_name: 'UserPromptSubmit', prompt: 'back again' });
   d = await session(sid);
   check('a session /resumed back into the same terminal is no longer ended',
     endedByResume && d.wrapped.ended === false && d.wrapped.launchId === launchId, JSON.stringify({ endedByResume, ended: d.wrapped.ended }));
+  // #47: taken on again now, so the record's tie key moves with it.
+  const retaken = await until(async () => {
+    const rec = JSON.parse(await fs.readFile(path.join(appData, 'launches', `${launchId}.json`), 'utf8'));
+    return typeof rec.since?.[sid] === 'string' && rec.since[sid] >= revivedFrom;
+  });
+  check('reviving a session records when it was taken on again', retaken);
 
   // --- #22: one terminal, several sessions. /clear in the launched terminal
   // ends sid, and a new session reports 3%.
@@ -626,6 +679,11 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
   check('after /clear, the old session does not show the new one\'s context as exact',
     d.health.context.source === 'transcript (estimate)' && d.wrapped.ended === true && d.wrapped.statusline?.sessionId === sid,
     JSON.stringify({ context: d.health.context, ended: d.wrapped.ended, sl: d.wrapped.statusline?.sessionId }));
+
+  // #44: a status line already in flight when the session ended lands after it.
+  await ingest('statusline', { session_id: sid, context_window: { used_percentage: 50, context_window_size: 1000000 } });
+  d = await session(sid);
+  check('a status line landing just after SessionEnd does not revive the session', d.wrapped.ended === true, JSON.stringify({ ended: d.wrapped.ended }));
 
   // #36: an async event arriving after the end does not revive it.
   await hook({ hook_event_name: 'Notification', notification_type: 'idle_prompt', message: 'late' });
@@ -705,17 +763,44 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
   const recovered = await until(async () => {
     const rec = JSON.parse(await fs.readFile(lateFile, 'utf8'));
     const shown = JSON.parse((await get(base, '/api/launches', H)).body).launches.find((x) => x.id === late.id);
-    return rec.sessionIds?.includes(retryId) && !shown?.persistError;
+    // #46: the tie key is written too.
+    return rec.sessionIds?.includes(retryId) && typeof rec.since?.[retryId] === 'string' && !shown?.persistError;
   });
   check('a failed record write is shown, then retried on the next post', failedShown && recovered, JSON.stringify({ failedShown, recovered }));
 
+  // #41: another launched session, no pid file, reaches a permission prompt.
+  // Claude Code hides the status line while a prompt is open and stops its
+  // refresh, so it goes silent. One wait covers this and the next check.
+  const dlg = IDS.dialog;
+  await ingest('statusline', { session_id: dlg, context_window: { used_percentage: 20, context_window_size: 200000 } });
+  await hookVia(ingest, { session_id: dlg, hook_event_name: 'PreToolUse', tool_use_id: 'toolu_dlg', ...npmTest });
+  await hookVia(ingest, { session_id: dlg, hook_event_name: 'PermissionRequest', ...npmTest });
+
   // #31 and #4: silence past the report window reads as not running. lid last
-  // reported through the dry-run launch above; wait the window out.
+  // reported through the dry-run launch above, with no prompt open.
   await new Promise((r) => setTimeout(r, reportWindowMs + 400));
   ld = await session(lid);
-  check('a launched session that stops reporting reads as not running, not running forever',
-    ld.live === null && ld.wrapped.quiet === true && ld.health.state === 'offline' && ld.health.reasons.some((r) => /No report for over/.test(r)),
+  check('a launched session that stops reporting with no prompt open reads as not running, not running forever',
+    ld.live === null && ld.wrapped.quiet === true && ld.health.state === 'offline' && ld.health.reasons.some((r) => /No report for over .* most likely stopped/.test(r)),
     JSON.stringify({ live: ld.live, quiet: ld.wrapped.quiet, reasons: ld.health.reasons }));
+  const dd = await session(dlg);
+  check('silent at an open permission prompt: still running and still waiting for you',
+    dd.live?.source === 'hooks' && dd.health.flags.includes('waiting') && dd.health.state === 'waiting' && dd.health.context.source === 'status line (exact)',
+    JSON.stringify({ live: dd.live, state: dd.health.state, flags: dd.health.flags }));
+
+  // #33 (#46): hostile fields with a VALID session id reach applyHook and
+  // toolSummary, and what they record is checked, not just the answer: the
+  // catch alone would also answer 204.
+  const badField = { toString: null };
+  await hookVia(ingest, { session_id: lid, hook_event_name: badField });
+  await hookVia(ingest, { session_id: lid, hook_event_name: 'PreToolUse', tool_use_id: 'toolu_h', tool_name: 'Bash', tool_input: { description: badField, command: badField } });
+  // #48: an event named after an Object.prototype member is just a name.
+  await hookVia(ingest, { session_id: lid, hook_event_name: 'constructor' });
+  ld = await session(lid);
+  check('hostile hook fields are recorded as safe values, not dropped by a throw',
+    ld.wrapped.hookCounts.unknown === 1 && ld.wrapped.running.some((t) => t.id === 'toolu_h' && t.summary === ''),
+    JSON.stringify({ counts: ld.wrapped.hookCounts, running: ld.wrapped.running }));
+  check('an event named "constructor" is counted as a number', ld.wrapped.hookCounts.constructor === 1, JSON.stringify(ld.wrapped.hookCounts));
 
   check('every hook answer is 204 with an EMPTY body, on every path above', allEmpty);
   check('no response carries a hook\'s tool input', !bodies.join('\n').includes(SENTINELS.hookToolInput));

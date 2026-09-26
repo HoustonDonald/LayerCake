@@ -3,3 +3,6 @@ node_modules/
 public/
 # Single-executable build output and its intermediates (npm run build:exe).
 dist/
+# Claude Code's personal project settings, and the git worktrees its agents work in.
+.claude/settings.local.json
+.claude/worktrees/

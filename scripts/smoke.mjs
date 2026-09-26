@@ -159,6 +159,7 @@ const { proj, snaps } = await makeFixture();
 // Synthetic Claude session data and LayerCake app data: the real ones are never read or written.
 const { claudeData, appData } = await makeSessionFixture(smokeDir, proj);
 
+const serverStartedAt = Date.now();
 const server = spawn(process.execPath, [path.join(ROOT, 'server', 'index.js')], {
   cwd: ROOT,
   env: {
@@ -640,7 +641,7 @@ try {
   await runSessionChecks({ base: BASE, token, check, proj, appData });
 
   // --- launch and ingest (Phase 2), dry run --------------------------------
-  await runLaunchChecks({ base: BASE, port: PORT, token, check, scanId: lineage.scanId, proj, appData, reportWindowMs: REPORT_WINDOW_MS });
+  await runLaunchChecks({ base: BASE, port: PORT, token, check, scanId: lineage.scanId, proj, appData, claudeData, reportWindowMs: REPORT_WINDOW_MS, serverStartedAt });
 
   // --- AI summaries, against a stand-in claude --------------------------------
   await runSummaryChecks({ base: BASE, token, check, proj, smokeDir });

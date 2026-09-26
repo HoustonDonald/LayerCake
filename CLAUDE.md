@@ -200,10 +200,15 @@ post without a valid session id is answered and changes nothing, and only a stat
 prompt/tool event revives an ended session, because Notification and InstructionsLoaded are async
 and can land after the end (#35, #36, #37).
 
-**A launched session is running only while it reports.** Its status line re-runs every 15 s
-(`refreshInterval`, `STATUS_REFRESH_S` in ingest.js), so silence past 45 s means it is not running,
-whether it crashed, its tab closed, or LayerCake restarted and has not heard from it since (#31,
-#4). Never infer "running" from memory or from the absence of an end.
+**A launched session's liveness is evidence, never memory.** Claude Code's own pid file decides
+when there is one. Without one, the session's reports decide: its status line re-runs every 15 s
+(`refreshInterval`, `STATUS_REFRESH_S` in ingest.js), EXCEPT while a dialog such as a permission
+prompt is open, when Claude Code hides the status line and its timer stops (docs; #41). So it
+counts as running while it reported in the last 45 s, or while a wait or a tool it reported is
+still open. Silence past that reads as "most likely stopped" (a crash, a closed tab, or not heard
+from since a LayerCake restart), and a launch that never reported at all reads as "channels
+blocked" (#31, #4, #42). Never infer "running" from memory or from the absence of an end, and
+never claim a silent session "is not running": the evidence supports "most likely".
 
 **Ingest bodies are untrusted even with the secret: errors are values here too.** Only strings are
 read as text (`str()`), because `String()` on an object whose `toString` is not a function throws,
@@ -325,10 +330,11 @@ partially. A truncated file restored is silent data loss.
   prompt fires no hook, so an approved long-running tool still reads as waiting until it finishes;
   the banner says so. The wait also ends when the transcript records that tool's result (#23).
 - **A launched session's liveness comes from its reports.** Claude Code writes `sessions/<pid>.json`
-  lazily (none 30 s after a launch, before any prompt), so without a pid file a launched session
-  counts as running only while its status line and hooks keep reporting (every 15 s at least).
-  Sessions launched before that refresh existed report only on activity and read as not running
-  while idle.
+  lazily (none 30 s after a launch, before any prompt; sessions with prompts on this machine had
+  one), so without a pid file a launched session counts as running only while it reports, or has
+  a wait or tool open. A crash while a prompt is open therefore reads as waiting until LayerCake
+  restarts. Sessions launched before the refresh existed report only on activity and read as
+  most likely stopped while idle.
 - **Closing LayerCake under a launched session makes its hooks fail**, visibly: a "hook error" notice
   per event in that terminal. Claude does not see non-blocking hook errors, so it costs no tokens.
 - **The launched status line assumes Git Bash** (Claude Code's own choice when installed). Under the

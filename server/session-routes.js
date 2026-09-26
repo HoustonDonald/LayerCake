@@ -208,8 +208,9 @@ export function registerSessionRoutes(app) {
           status: l?.status || null,
           pid: l?.pid || null,
           launched: Boolean(w),
-          // Launched, not ended, and silent: since a restart, or since it last reported.
-          quiet: !l && w?.quiet ? (w.restored && !w.lastSeenAt ? 'restart' : 'silent') : null,
+          // Launched, not ended, not running by its reports: never reported
+          // (blocked channels), not since a restart, or stopped reporting.
+          quiet: !l && w?.quiet ? (w.neverReported ? 'blocked' : w.restored && !w.lastSeenAt ? 'restart' : 'silent') : null,
         });
       }
 
@@ -363,7 +364,9 @@ export function registerSessionRoutes(app) {
         };
         // A launched session changes without writing its transcript (a tool starts, a
         // permission prompt appears), so the hook activity is part of the key.
-        const key = JSON.stringify([update.lastAt, update.turns, health.state, live?.status || null, wrapped?.lastHookAt || null, wrapped?.statuslineAt || null]);
+        // The reasons too: some change with time alone, the state unchanged
+        // ("restarted moments ago" becoming "most likely stopped", #45).
+        const key = JSON.stringify([update.lastAt, update.turns, health.state, health.reasons, live?.status || null, wrapped?.lastHookAt || null, wrapped?.statuslineAt || null]);
         if (key !== lastKey) {
           lastKey = key;
           if (!res.writableEnded) res.write(`event: update\ndata: ${JSON.stringify(update)}\n\n`);

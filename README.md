@@ -368,9 +368,13 @@ adds two things:
 - **A status line** that forwards Claude Code's status JSON to LayerCake with `curl.exe` and prints
   the line LayerCake sends back (`LayerCake · ctx 42% · $1.23 · 5h 12% · cache warm`) under the
   prompt. This is the only source of exact context use, cost, the 5-hour and weekly plan limits
-  (Pro and Max) and prompt-cache warmth. It also re-runs every 15 seconds (`refreshInterval`), so a
-  running session always reports within 15 s, and a session silent for 45 s counts as not
-  running. That is how a crash or a closed tab stops reading as "running".
+  (Pro and Max) and prompt-cache warmth. It also re-runs every 15 seconds (`refreshInterval`), so
+  a running session reports at least that often, except while a dialog such as a permission
+  prompt is open: Claude Code hides the status line then. So a session with no pid file counts as
+  running while it has reported in the last 45 s, or while a prompt or tool it reported is still
+  open. Silence past that reads as "most likely stopped", which is how a crash or a closed tab
+  stops reading as "running". Once Claude Code writes its own pid file for the session, that
+  decides instead.
 - **HTTP hooks** for the documented events (prompt submitted, tool start and finish, permission
   requests, notifications, subagents, compaction, instructions loaded, session end). These make
   **"Waiting for you"** possible: a permission prompt, an idle prompt, an MCP server asking for
@@ -398,7 +402,8 @@ Things to know:
 - If LayerCake is closed while that session keeps running, each hook shows a "hook error" notice in
   the terminal. Claude does not see those notices (they are non-blocking errors), and the session
   works normally. The status line just goes blank. A restarted LayerCake picks the reporting back
-  up: it reloads its launches at startup, and a running session reports again within 15 s. Until
+  up: it reloads its launches at startup, and a running session reports again within 15 s (unless
+  a dialog is open in it). Until
   then, and for good if it does not, the session reads "no report since restart"; LayerCake never
   guesses "running". A session launched by a LayerCake from before the 15-second refresh reports
   only on activity, so while idle it reads as not running.

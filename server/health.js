@@ -11,7 +11,7 @@ export const HEALTH_STATES = [
   {
     state: 'waiting',
     label: 'Waiting for you',
-    rule: 'Launched by LayerCake, and Claude Code reported a permission request or that it is waiting for input, with nothing since. Sessions LayerCake did not launch cannot report this.',
+    rule: 'Launched by LayerCake and running, and Claude Code reported a permission request or that it is waiting for input, with nothing since. An open prompt keeps the session counted as running even though Claude Code hides the status line while it is shown. Sessions LayerCake did not launch cannot report this.',
   },
   { state: 'warning', label: 'Context high', rule: 'Context at or above 80% of the model window.' },
   { state: 'working', label: 'Working', rule: 'Running, and Claude Code reports it busy or it wrote to its transcript in the last 15 seconds.' },
@@ -54,7 +54,9 @@ export function computeHealth(model, live, { now = Date.now(), mtimeMs = 0, wrap
   // is estimated from the transcript's last API call. Only this session's own
   // status line counts, and only while it has not ended: after /clear or an
   // exit, the last line heard is another session's, or a stale one (#22).
-  const own = wrapped && wrapped.reporting && wrapped.statusline?.sessionId === model.sessionId;
+  // Liveness, not recent reports: a dialog hides the status line, so a live
+  // session at a permission prompt keeps its last exact reading (#41).
+  const own = live && wrapped && !wrapped.ended && wrapped.statusline?.sessionId === model.sessionId;
   const exact = own ? wrapped.statusline.context : null;
   const window = exact?.windowTokens || contextWindow(model.modelId, model.lastModel);
   const tokens = model.context?.tokens ?? null;
@@ -63,7 +65,7 @@ export function computeHealth(model, live, { now = Date.now(), mtimeMs = 0, wrap
   const source = typeof exact?.usedPercentage === 'number' ? 'status line (exact)' : 'transcript (estimate)';
   const reasons = [];
   const flags = new Set();
-  if (live && wrapped?.reporting && wrapped.waiting) {
+  if (live && wrapped && !wrapped.ended && wrapped.waiting) {
     flags.add('waiting');
     reasons.push(wrapped.waiting.message || 'Waiting for you');
   }
@@ -90,18 +92,26 @@ export function computeHealth(model, live, { now = Date.now(), mtimeMs = 0, wrap
     const busyReason = live.source === 'hooks' ? 'A tool is running (from its hooks)' : 'Claude Code reports it busy';
     reasons.push(busy ? busyReason : writing ? 'Transcript written in the last 15 s' : 'Running, not busy');
   } else if (wrapped?.quiet) {
-    // A launched session's status line re-runs every refreshS seconds while
-    // it runs, so silence past the window is evidence it is not (#31).
-    const every = `a running launched session reports every ${wrapped.refreshS} s`;
-    if (wrapped.restored && !wrapped.lastSeenAt) {
+    // A launched session's status line re-runs every refreshS seconds except
+    // while a dialog is open, and an open dialog LayerCake knows of keeps it
+    // counted as running, so silence past the window is strong evidence, not
+    // proof: hence "most likely" (#31, #41).
+    const every = `a running launched session reports every ${wrapped.refreshS} s unless a dialog is open`;
+    if (wrapped.neverReported) {
+      // Both channels silent from the start: something blocks them (#42).
+      reasons.push(
+        'Launched from LayerCake, but its status line and hooks have never reported: workspace trust not accepted, ' +
+          '--safe-mode, disableAllHooks, or a managed hook policy silences both'
+      );
+    } else if (wrapped.restored && !wrapped.lastSeenAt) {
       const sinceRestart = now - Date.parse(wrapped.registeredAt);
       reasons.push(
         sinceRestart <= wrapped.reportWindowS * 1000
           ? `LayerCake restarted moments ago; waiting for this session's next report (${every})`
-          : `No report since LayerCake restarted; ${every}, so this one is not running`
+          : `No report since LayerCake restarted; ${every}, so it has most likely stopped`
       );
     } else {
-      reasons.push(`No report for over ${wrapped.reportWindowS} s; ${every}, so this one is not running (it crashed, or its terminal closed)`);
+      reasons.push(`No report for over ${wrapped.reportWindowS} s and no prompt open; ${every}, so it has most likely stopped (it crashed, or its terminal closed)`);
     }
   } else {
     reasons.push('No running process');

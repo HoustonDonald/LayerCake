@@ -28,12 +28,15 @@
  * one, /resume switches to another. Launch-wide state showed the new
  * session's numbers, labelled exact, on the old one.
  *
- * Liveness is evidence, not memory (#31, #4). The launch's status line
- * re-runs every STATUS_REFRESH_S seconds (statusLine.refreshInterval, docs:
- * status line), so a running session reports at least that often. A launched
- * session counts as running only if it reported within REPORT_WINDOW_MS; a
- * crash, a closed tab, or a restart of LayerCake all read as "no report since
- * ..." rather than as running forever.
+ * Liveness is evidence, not memory (#31, #4). Claude Code's own pid file is
+ * the first source (session-routes.js); this is the one used when there is
+ * none. The launch's status line re-runs every STATUS_REFRESH_S seconds
+ * (statusLine.refreshInterval, docs: status line), EXCEPT while a dialog such
+ * as a permission prompt is open: the status line hides then, and its timer
+ * stops with it (docs; #41). So a session reports "running" while it has
+ * reported within REPORT_WINDOW_MS, or while a wait (a prompt it is showing)
+ * or a tool is open. Past that, silence reads as "no report since ...",
+ * never as running forever.
  */
 
 import crypto from 'node:crypto';
@@ -54,6 +57,12 @@ const MAX_EVENTS = 200;
 const PREVIEW_CHARS = 200;
 /** Sessions remembered per launch; past this the oldest ended ones go (#39). */
 const MAX_SESSIONS = 200;
+/**
+ * A status line landing this soon after its own session's SessionEnd was
+ * already in flight (a spawned shell plus curl, against a direct post), so it
+ * does not revive the session (#44).
+ */
+const REVIVE_GRACE_MS = 3000;
 
 /** launchId -> launch. Populated by launch.js and, at startup, from app data. */
 const launches = new Map();
@@ -81,9 +90,11 @@ function blankSession(since = null) {
     running: new Map(),
     toolFailures: 0,
     instructionsLoaded: [],
-    hookCounts: {},
+    // No prototype: an event named "constructor" is a count, not Object (#48).
+    hookCounts: Object.create(null),
     ended: false,
     endReason: null,
+    endedAt: null,
   };
 }
 
@@ -331,17 +342,23 @@ export function wrappedFor(sessionId, { toolDone = () => false, now = Date.now()
   const { l, s } = found;
   const running = [...s.running.entries()].filter(([id]) => !toolDone(id)).map(([id, t]) => ({ id, ...t }));
   const waiting = s.waiting && !(s.waiting.toolUseId && toolDone(s.waiting.toolUseId)) ? s.waiting : null;
-  const reporting = Boolean(s.lastSeenAt) && now - Date.parse(s.lastSeenAt) <= REPORT_WINDOW_MS;
+  const recent = Boolean(s.lastSeenAt) && now - Date.parse(s.lastSeenAt) <= REPORT_WINDOW_MS;
+  // A dialog silences the status line (#41): an open wait or a tool in flight
+  // is itself evidence the session was alive when it went quiet.
+  const reporting = !s.ended && Boolean(s.lastSeenAt) && (recent || Boolean(waiting) || running.length > 0);
   return {
     launchId: l.id,
     launchedAt: l.createdAt,
     ended: s.ended,
     endReason: s.endReason,
-    // Reported recently enough to be running. Not ended, and silent past the
-    // window, is `quiet`: a crash, a closed tab, or not heard from since a
-    // LayerCake restart (`restored` says which of the last two).
-    reporting: !s.ended && reporting,
+    // Reporting: running, as far as the reports go. Not ended and not
+    // reporting is `quiet`, for one of three reasons the UI names:
+    //   never reported, fresh launch -> the channels are blocked (#42)
+    //   restored, not heard from     -> LayerCake restarted
+    //   heard from, silent since     -> it most likely stopped
+    reporting,
     quiet: !s.ended && !reporting,
+    neverReported: !s.lastSeenAt && !l.restored,
     restored: l.restored,
     registeredAt: l.registeredAt,
     lastSeenAt: s.lastSeenAt,
@@ -436,10 +453,14 @@ function applyPost(l, kind, body, at) {
   }
   s.lastSeenAt = at;
   const event = kind === 'hook' ? str(body.hook_event_name) : '';
-  if (s.ended && (kind === 'statusline' || REVIVING.has(event))) {
-    // Active again after an end: /resume back into this session.
+  const lateStatusline = kind === 'statusline' && s.endedAt && Date.parse(at) - Date.parse(s.endedAt) < REVIVE_GRACE_MS;
+  if (s.ended && (REVIVING.has(event) || (kind === 'statusline' && !lateStatusline))) {
+    // Active again after an end: /resume back into this session. It is taken
+    // on again now, which is what the restart tie-break needs to know (#47).
     s.ended = false;
     s.endReason = null;
+    s.endedAt = null;
+    s.since = at;
     changed = true;
   }
   if (kind === 'statusline') {
@@ -450,6 +471,7 @@ function applyPost(l, kind, body, at) {
     if (event === 'SessionEnd') {
       s.ended = true;
       s.endReason = clip(body.reason, 40) || null;
+      s.endedAt = at;
       changed = true;
     }
   }

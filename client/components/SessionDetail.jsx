@@ -80,11 +80,13 @@ function Wrapped({ detail }) {
   const slAgo = secondsAgo(w.statuslineAt);
   const hookAgo = secondsAgo(w.lastHookAt);
   const events = Object.values(w.hookCounts || {}).reduce((a, b) => a + b, 0);
-  // Silence from both channels while the transcript moves means something is
-  // blocking them: trust not accepted, --safe-mode, or a managed hook policy.
-  // Not for a launch restored after a restart: its silence says only that it
-  // has not reported since, not that something blocks it (#32).
-  const silent = detail.live && !w.restored && !w.statuslineAt && !w.lastHookAt && Date.now() - Date.parse(w.launchedAt) > 30000;
+  // Never a report from either channel since launch means something is
+  // blocking them: trust not accepted, --safe-mode, disableAllHooks, or a
+  // managed hook policy. Keyed on the reports themselves, not on liveness,
+  // which without a pid file comes from those very reports (#42). Not for a
+  // launch restored after a restart: its silence says only that it has not
+  // reported since, not that something blocks it (#32).
+  const silent = w.neverReported && !w.ended && Date.now() - Date.parse(w.launchedAt) > 30000;
   const heard = w.restored ? 'not heard from since LayerCake restarted' : 'not heard from yet';
   return (
     <div className="wrapped">
@@ -104,13 +106,15 @@ function Wrapped({ detail }) {
           This session ended{w.endReason ? ` (${w.endReason.replace(/_/g, ' ')})` : ''}. The figures below are its last report.
         </div>
       )}
-      {w.quiet && (
+      {/* Only when not running: with a live pid file, quiet reports mean a dialog, not a stop (#43). */}
+      {w.quiet && !w.neverReported && !detail.live && (
         <div className="muted">
           {w.restored && !w.lastSeenAt
             ? `No report from this session since LayerCake restarted (${clock(w.registeredAt)}).`
             : `No report from this session since ${clock(w.lastSeenAt)}.`}{' '}
-          A running launched session reports every {w.refreshS} s, so after {w.reportWindowS} s of silence it counts as not
-          running. Sessions started by a LayerCake from before that refresh existed report only on activity.
+          A running launched session reports every {w.refreshS} s unless a dialog is open, so after {w.reportWindowS} s of
+          silence with no prompt open it counts as not running. Sessions started by a LayerCake from before that refresh
+          existed report only on activity.
         </div>
       )}
       {w.persistError && (

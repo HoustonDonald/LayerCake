@@ -23,7 +23,8 @@ function Row({ s, selected, onSelect, kind }) {
         {kind === 'session' && s.tools > 0 && <span>{s.tools} tools</span>}
         {kind === 'session' && s.errors > 0 && <span className="err">{s.errors} errors</span>}
         {s.quiet === 'restart' && <span className="muted" title="Launched from LayerCake, and no report from it since LayerCake restarted">no report since restart</span>}
-        {s.quiet === 'silent' && <span className="muted" title="Launched from LayerCake; its status line has stopped reporting, so it is not running">stopped reporting</span>}
+        {s.quiet === 'silent' && <span className="muted" title="Launched from LayerCake; it stopped reporting with no prompt open, so it has most likely stopped">stopped reporting</span>}
+        {s.quiet === 'blocked' && <span className="warn" title="Launched from LayerCake, but its status line and hooks never reported: trust, --safe-mode, disableAllHooks or a managed policy">never reported</span>}
         {expiresIn != null && !s.live && expiresIn <= 7 && <span className="warn">deleted in {expiresIn}d</span>}
         {kind === 'expired' && <span className="muted">transcript gone, card kept</span>}
         {kind === 'promptOnly' && <span className="muted">prompts only</span>}
