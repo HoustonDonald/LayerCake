@@ -22,9 +22,13 @@
  */
 
 import { spawn } from 'node:child_process';
+import fs from 'node:fs/promises';
 import os from 'node:os';
+import path from 'node:path';
 
 import { appendLedger, writeAiSummary } from './appdata.js';
+import { readForDisplay } from './readfile.js';
+import { DIR_TIMEOUT_MS, withTimeout } from './safety.js';
 
 export const SUMMARY_MODEL = 'haiku';
 /**
@@ -169,8 +173,8 @@ function runClaude(input) {
   ];
   // LAYERCAKE_CLAUDE_CMD, a JSON array, replaces the executable for the smoke
   // test, which must exercise this path without spending anyone's usage.
-  const [bin, ...pre] = process.env.LAYERCAKE_CLAUDE_CMD ? JSON.parse(process.env.LAYERCAKE_CLAUDE_CMD) : ['claude'];
-  return new Promise((resolve, reject) => {
+  const command = process.env.LAYERCAKE_CLAUDE_CMD ? Promise.resolve(JSON.parse(process.env.LAYERCAKE_CLAUDE_CMD)) : resolveClaudeCommand();
+  return command.then(([bin, ...pre]) => new Promise((resolve, reject) => {
     // A neutral working directory, so nothing project-specific is in reach.
     const child = spawn(bin, [...pre, ...args], { cwd: os.tmpdir(), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let out = '';
@@ -190,7 +194,7 @@ function runClaude(input) {
       clearTimeout(timer);
       reject(
         e.code === 'ENOENT'
-          ? new Error('claude.exe was not found on PATH. (An npm-installed claude.cmd is not supported for summaries.)')
+          ? new Error('Claude Code was not found on PATH: neither claude.exe nor an npm claude.cmd whose script and node.exe could be found.')
           : e
       );
     });
@@ -209,7 +213,41 @@ function runClaude(input) {
       resolve(parsed);
     });
     child.stdin.end(input);
-  });
+  }));
+}
+
+/**
+ * The program that runs `claude`, as an argv prefix (#6). The native installer
+ * puts claude.exe on PATH, which spawn finds by name. An npm global install
+ * provides only claude.cmd, a batch shim that spawn cannot start without a
+ * shell, and a shell would put the fixed argv through cmd.exe parsing. So the
+ * shim is read for the script it runs (npm's cmd-shim names it relative to
+ * %dp0%), and that script is started with node directly: the same program,
+ * with no shell in between. `env` is a parameter so smoke can point PATH at a
+ * synthetic npm prefix. Falls back to plain 'claude', whose ENOENT is then
+ * reported with a message naming both forms.
+ */
+export async function resolveClaudeCommand(env = process.env) {
+  if (process.platform !== 'win32') return ['claude'];
+  const exists = (p) => withTimeout(fs.access(p), DIR_TIMEOUT_MS, p).then(() => true, () => false);
+  const dirs = String(env.PATH ?? env.Path ?? '').split(path.delimiter).map((d) => d.trim().replace(/^"(.*)"$/, '$1')).filter(Boolean);
+  for (const d of dirs) {
+    if (await exists(path.join(d, 'claude.exe'))) return ['claude'];
+  }
+  for (const d of dirs) {
+    const shim = path.join(d, 'claude.cmd');
+    if (!(await exists(shim))) continue;
+    const { content } = await readForDisplay(shim);
+    const rel = /"%(?:~dp0|dp0%)\\?([^"%]+?\.[cm]?js)"/i.exec(content || '')?.[1];
+    if (!rel) continue;
+    const script = path.resolve(d, rel);
+    if (!(await exists(script))) continue;
+    for (const nodeDir of [d, ...dirs]) {
+      const node = path.join(nodeDir, 'node.exe');
+      if (await exists(node)) return [node, script];
+    }
+  }
+  return ['claude'];
 }
 
 /**

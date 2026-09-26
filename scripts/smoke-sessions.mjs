@@ -856,9 +856,61 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
  * path, the exact stripped-down call, the ledger, and a summary outliving its
  * transcript. No usage is spent.
  */
+/** npm's cmd-shim output for a package bin, as `npm install -g` writes claude.cmd. */
+const NPM_SHIM = [
+  '@ECHO off',
+  'GOTO start',
+  ':find_dp0',
+  'SET dp0=%~dp0',
+  'EXIT /b',
+  ':start',
+  'SETLOCAL',
+  'CALL :find_dp0',
+  '',
+  'IF EXIST "%dp0%\\node.exe" (',
+  '  SET "_prog=%dp0%\\node.exe"',
+  ') ELSE (',
+  '  SET "_prog=node"',
+  '  SET PATHEXT=%PATHEXT:;.JS;=;%',
+  ')',
+  '',
+  'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*',
+  '',
+].join('\r\n');
+
 export async function runSummaryChecks({ base, token, check, proj, smokeDir }) {
   const H = { 'X-LayerCake-Token': token };
   const stub = path.join(smokeDir, 'claude-stub');
+
+  // #6: an npm global install provides claude.cmd, not claude.exe, and spawn
+  // cannot start a .cmd without a shell. The shim is resolved to node plus its
+  // script and run with no shell in between, so the argv (an empty --tools
+  // value included) arrives exactly as given.
+  if (process.platform === 'win32') {
+    const { resolveClaudeCommand } = await import('../server/summaries.js');
+    const prefix = path.join(smokeDir, 'npm-prefix');
+    const pkg = path.join(prefix, 'node_modules', '@anthropic-ai', 'claude-code');
+    await fs.mkdir(pkg, { recursive: true });
+    await fs.writeFile(path.join(pkg, 'cli.js'), 'process.stdout.write(JSON.stringify({ shim: true, args: process.argv.slice(2) }));\n');
+    await fs.writeFile(path.join(prefix, 'claude.cmd'), NPM_SHIM);
+    const nodeDir = path.dirname(process.execPath);
+    const resolved = await resolveClaudeCommand({ PATH: [prefix, nodeDir].join(path.delimiter) });
+    // Run only what points into the synthetic prefix: a broken resolver falls
+    // back to plain 'claude', and smoke must never start the real Claude Code.
+    const intoPrefix = resolved.length === 2 && resolved[1].startsWith(prefix);
+    const ran = intoPrefix
+      ? spawnSync(resolved[0], [...resolved.slice(1), '-p', '--tools', ''], { encoding: 'utf8', timeout: 15000, windowsHide: true })
+      : { stdout: '', stderr: `not run: resolved to ${JSON.stringify(resolved)}` };
+    const said = (() => { try { return JSON.parse(ran.stdout); } catch { return null; } })();
+    check('an npm-installed claude.cmd resolves to node plus its script, and runs with the argv intact',
+      resolved.length === 2 && said?.shim === true && JSON.stringify(said.args) === JSON.stringify(['-p', '--tools', '']),
+      JSON.stringify({ resolved, said, stderr: String(ran.stderr || '').slice(0, 200) }));
+    const native = path.join(smokeDir, 'native-bin');
+    await fs.mkdir(native, { recursive: true });
+    await fs.writeFile(path.join(native, 'claude.exe'), '');
+    const preferred = await resolveClaudeCommand({ PATH: [native, prefix, nodeDir].join(path.delimiter) });
+    check('claude.exe on PATH is used by name, before any npm shim', JSON.stringify(preferred) === '["claude"]', JSON.stringify(preferred));
+  }
 
   // A claude that exits without reading a >64 KB digest used to kill the server.
   await fs.writeFile(path.join(stub, 'mode'), 'exit-early');

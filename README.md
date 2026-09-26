@@ -385,8 +385,9 @@ Where it comes from, and what that means:
 **Usage.** Everything above reads files and spends no Claude usage. The one exception is the
 **Summarize with AI** button: on a click, and only then, it runs `claude -p` on Claude Haiku 4.5
 over the session's prompts and visible replies, stripped of Claude Code's own context (no tools,
-MCP servers, CLAUDE.md or plugins) so the call carries little besides the session. An estimate is
-shown before; the actual usage Claude Code reports is recorded after. Measured: a small session cost
+MCP servers, CLAUDE.md or plugins) so the call carries little besides the session. It finds Claude
+Code as `claude.exe` on PATH (the native installer) or through the `claude.cmd` an npm install
+creates. An estimate is shown before; the actual usage Claude Code reports is recorded after. Measured: a small session cost
 $0.004 at list price (1,091 tokens in, 583 out), and summarizing all 42 sessions on this machine once
 was estimated at under a dollar. On a subscription this draws on your plan limits, not a bill. Every
 run is listed in "LayerCake's own Claude usage", kept apart from the sessions it summarizes.

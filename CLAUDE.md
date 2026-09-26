@@ -236,7 +236,10 @@ System32 path, pids validated as integers, a 5 s timeout, and the output parsed 
 is cached per pid for 60 s. Any new spawn needs the same shape and a line here.
 
 **Only `summaries.js` may spend Claude usage, and only on an explicit request.** Everything else
-reads files. The AI summary runs `claude -p` with a fixed argv (Haiku, `--safe-mode`, `--tools ""`,
+reads files. `claude` means `claude.exe` from PATH, or, for an npm install that provides only the
+`claude.cmd` shim, node plus the script the shim names, started with no shell in between so the argv
+is not re-parsed by cmd.exe (`resolveClaudeCommand`, #6; launch.js uses it too). The AI summary runs
+`claude -p` with a fixed argv (Haiku, `--safe-mode`, `--tools ""`,
 own system prompt, no session persistence, a budget cap), the digest on stdin, one run at a time
 (the lock is taken before the first await), from a POST the UI sends only on a click. Every run that
 finishes, succeeded or failed, is written to the usage ledger; the one gap is the exe shutting down
