@@ -27,6 +27,13 @@ update it in the same change.
 `HANDOFF.md` holds transient working state: what was just built, what is open, and what to do next.
 It is disposable and goes stale; this file and `README.md` win where they disagree.
 
+**Every problem found is filed as a GitHub issue in `HoustonDonald/LayerCake`. Mandatory unless the
+owner says otherwise** (Donald, 2026-09-26). That covers bugs, review findings, gaps, unverified
+claims and owner decisions, including ones found while doing something else. Say whether it was
+reproduced or reasoned, and classify reachability (a) or (b) as in `C:\dev\CLAUDE.md` 3c. A fix
+commit closes its issue (`Fixes #n`). Issues are the list of what is open; `HANDOFF.md` points at
+them rather than restating them. Pass bodies with `--body-file`, never as a shell argument.
+
 ## Commands
 
 ```

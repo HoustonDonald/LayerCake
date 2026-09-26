@@ -179,9 +179,9 @@ by `LAYERCAKE_CLAUDE_CMD`), so the stripped-down argv and the digest are asserte
 Verified: smoke 153 passed; five review-fix mutants caught; the reviewer's stream-leak reproduction
 gets 200; overlay checked in headless Edge on three real projects; exe rebuilt, launch suite passes.
 
-Named limits, not fixed: `child.kill` on the summary timeout does not reach grandchildren; a reused
-PID can make a dead session read as live until its pid file goes; an exe shutdown mid-summary leaves
-that run out of the ledger (stated in CLAUDE.md).
+Named limits, not fixed, now issues: summary timeout does not reach grandchildren (#2); a reused PID
+can make a dead session read as live (#1); an exe shutdown mid-summary leaves that run out of the
+ledger (#3).
 
 ---
 
@@ -202,74 +202,27 @@ These were the user's calls, made explicitly on 2026-09-05. Do not reopen withou
 
 ---
 
-## Open, awaiting the user
+## Open work lives in GitHub issues
 
-Nothing blocks progress. These were flagged and not answered.
+Since 2026-09-26 every open problem is an issue in `HoustonDonald/LayerCake` (`gh issue list`), so
+this file no longer restates them. Owner decisions carry the `question` label and a title starting
+"Decide:". The biggest feature gap is #15: config files can be edited but not created or deleted.
 
-1. **Snapshots contain files that can hold OAuth tokens** (`~/.claude.json`, `settings.local.json`,
-   `.mcp.json`). Flagged `sensitive` in the manifest rather than excluded, because excluding them
-   makes a restore quietly incomplete. Safe in place (same user ACL as the originals), exposed the
-   moment a snapshot is copied to a share, a USB stick or another machine. Alternative if he wants
-   it: an opt-in `--redact-sensitive` that omits them and records the omission loudly.
-2. **Hook-edit blocking is a speed bump, not a boundary**, and is documented as such.
-   `settings.json` defines hooks inline and is ordinary editable config, so anyone who can write
-   settings can arrange execution anyway. Closing this properly means treating `settings.json` as
-   executable config too, which is a real UX cost.
-3. **The product was renamed to LayerCake** (was "Claude Explorer"). Package name, title, UI brand,
+## Noted for the owner, not problems
+
+1. **The product was renamed to LayerCake** (was "Claude Explorer"). Package name, title, UI brand,
    server banner. Reversible. `localStorage` keys deliberately kept the old `claude-explorer.*`
    prefix so the remembered directory survives; there is a comment saying so in `client/App.jsx`.
-4. **`scripts/smoke.mjs` was the assistant's addition, not requested.** Justified only because one
+2. **`scripts/smoke.mjs` was the assistant's addition, not requested.** Justified only because one
    bug in this work was silent (green suite, completely broken app). Kill it in one line if the
    owner disagrees.
-5. **`~/.claude.json` lights the watch bar every few seconds during an active Claude Code session.**
-   It is a genuine member of the lineage and it genuinely changes, so it is reported rather than
-   filtered: hiding a file the tool tracks would be the worse lie. If the churn is more annoying
-   than the signal is useful, the options are a per-file mute in the bar, or a "quiet" toggle that
-   keeps counting but stops re-lighting. Both are product calls, not technical ones. Nothing was
-   built for this.
-6. **Desktop notifications were built opt-in and background-only**, behind a "Notify me" button.
+3. **Desktop notifications were built opt-in and background-only**, behind a "Notify me" button.
    The toast is attributed to Edge or Chrome, not LayerCake, because app identity needs a registered
    AppUserModelID, which a browser page cannot have. The SEA exe did not change this (the window is
    still Edge's); only Electron would.
-7. **The watcher declines UNC paths.** `fs.watch` binds its handle eagerly with no timeout, so a
-   dead share could block the event loop, and every other filesystem call here is wrapped in
-   `withTimeout` precisely because that was a known failure. They are reported in the bar's
-   "not watched" list rather than silently dropped. A project on a network share therefore gets a
-   scan but no live events for the share-side levels.
-8. **The exe carries node.exe's icon and version resource**, so Task Manager calls it "Node.js
-   JavaScript Runtime". Setting both at build time needs one dev dependency (e.g. `resedit`). Not
-   built: nobody asked, and the process is findable as `LayerCake.exe`.
-9. **`npm run dev:client` cannot call the API**, and could not before 2026-09-25 either: Vite
-    serves `client/index.html` without the session token, so every `/api` call is refused (reasoned
-    from the code, not run). The Host guard is not a factor: Vite's string-shorthand proxy sets
-    `changeOrigin: true`, so the server sees `Host: 127.0.0.1:5178` (checked in Vite's source).
-    Fixing dev mode means getting the token into Vite's page, e.g. a dev-only proxy of `/`.
-10. **Next in the session-wrap plan: optional physical lights** (ASUS Aura REST drives the case
-    fans; a WLED strip would be the real monitor-edge option), then the separately decided
-    embedded terminal. Phase 2 (launch and wrap) is done; see its section above. Not started.
-11. **`CLAUDE_CONFIG_DIR` is honoured nowhere in LayerCake** (pre-existing). A user who relocates
-    Claude Code's config with it gets a scan of the default location. Filed, not fixed.
-
----
-
-## The most obvious gap, if you want the next feature
-
-**You cannot create or delete files, only edit existing ones.** This is structural, not an
-oversight: `/api/write` resolves its target through `requireEntry`, which looks the path up in the
-scan result, and the scan only reports files that exist. So there is no path to "add a new agent" or
-"remove this skill" from either surface.
-
-That is a real limit for a tool sold as managing the environment. Doing it properly needs a
-different mechanism than the allowlist, because the allowlist is keyed on existence. Likely shape: a
-create endpoint constrained to a known-good directory (`<level>/.claude/agents/` and friends) plus a
-category, rather than an arbitrary path. Worth designing deliberately, since it widens the write
-surface that the current design deliberately narrowed.
-
-Smaller known gaps:
-
-- No diff of your own pending edit before saving. You see the file, not what you changed.
-- POSIX is handled in code but untested. Windows is the only verified platform.
-- `other`-category files are deliberately not editable. That is by design, not a gap.
+4. **Next in the session-wrap plan: optional physical lights** (ASUS Aura REST drives the case
+   fans; a WLED strip would be the real monitor-edge option), then the separately decided
+   embedded terminal. Phase 2 (launch and wrap) is done; see its section above. Not started.
 
 ---
 
