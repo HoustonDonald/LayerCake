@@ -34,13 +34,38 @@ const FILES_DIR = 'files';
  * A crash mid-write therefore leaves either the old file or the new one, never
  * a half-written config that Claude Code would fail to parse on next start.
  */
+/**
+ * Windows refuses to rename over a file another process has open (EPERM,
+ * EACCES, EBUSY): antivirus, the search indexer, Claude Code reading a
+ * settings file, LayerCake's own reads. Measured: 99 of 300 writes failed
+ * with a reader polling the target, 0 of 300 without (#49). The rename is
+ * retried with backoff, as graceful-fs does, which is safe because the temp
+ * file still exists and the target is untouched until it succeeds. Windows
+ * only: elsewhere those codes are real permission errors, not a race.
+ */
+const RENAME_RETRY_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
+const RENAME_RETRY_MS = 2000;
+
+async function renameRetrying(from, to) {
+  let waited = 0;
+  for (let delay = 10; ; delay = Math.min(delay * 2, 200)) {
+    try {
+      return await fs.rename(from, to);
+    } catch (err) {
+      if (process.platform !== 'win32' || !RENAME_RETRY_CODES.has(err.code) || waited >= RENAME_RETRY_MS) throw err;
+      await new Promise((r) => setTimeout(r, delay));
+      waited += delay;
+    }
+  }
+}
+
 export async function atomicWrite(absPath, data) {
   const dir = path.dirname(absPath);
   const temp = path.join(dir, `.layercake-tmp-${crypto.randomBytes(6).toString('hex')}`);
   await fs.mkdir(dir, { recursive: true });
   try {
     await fs.writeFile(temp, data);
-    await fs.rename(temp, absPath);
+    await renameRetrying(temp, absPath);
   } catch (err) {
     // Best effort cleanup. The original is untouched either way, because the
     // rename is what publishes the change.

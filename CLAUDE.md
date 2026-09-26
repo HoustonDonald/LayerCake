@@ -127,7 +127,9 @@ Claude data folder.
 **Every write snapshots first, and that is structural.** `writefile.js` imports `snapshot.js`, not
 the reverse, so a new route cannot skip the snapshot by forgetting to call it. Keep that direction.
 Writes land via temp file plus rename in the same directory, so a crash leaves the old file or the
-new one, never a half-written config that breaks every future session.
+new one, never a half-written config that breaks every future session. On Windows the rename is
+retried for up to 2 s on EPERM/EACCES/EBUSY, because a rename over a file another process has open
+fails: without it, 99 of 300 writes failed with a reader polling the target (#49).
 
 **The snapshot store must never live under `~/.claude`.** That tree is a restore target, and a
 backup the restore can overwrite is not a backup. See `snapshotRoot()`.

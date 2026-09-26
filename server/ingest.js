@@ -377,15 +377,14 @@ export function wrappedFor(sessionId, { toolDone = () => false, now = Date.now()
   };
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Writes which session ids the launch carried, since when, and which ended.
  * Chained, so two posts close together cannot land their writes out of order.
- * A failure is retried with a short backoff (Windows can refuse a rename
- * while another process has the file open, measured about 1 in 300 back to
- * back), then kept, shown in the session view, and retried on the next post
- * (#34). It never reaches the answer: the hook was answered already.
+ * The transient Windows refusal (a reader holding the file) is retried inside
+ * atomicWrite (#49); a failure that outlasts that is kept, shown in the
+ * session view, and retried on the next post (#34). It never reaches the
+ * answer: the hook was answered already.
  */
 function persist(l) {
   const ended = {};
@@ -404,18 +403,8 @@ function persist(l) {
     ended,
     since,
   };
-  const attempt = async () => {
-    for (let i = 0; ; i += 1) {
-      try {
-        return await updateLaunchRecord(record);
-      } catch (err) {
-        if (i >= 2) throw err;
-        await sleep(100 * (i + 1));
-      }
-    }
-  };
   l.persisting = l.persisting
-    .then(attempt)
+    .then(() => updateLaunchRecord(record))
     .then(() => {
       l.persistError = null;
     })

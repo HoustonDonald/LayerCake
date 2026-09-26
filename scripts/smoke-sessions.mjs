@@ -667,17 +667,26 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
   await hook({ hook_event_name: 'SessionEnd', reason: 'resume' });
   d = await session(sid);
   const endedByResume = d.wrapped.ended === true && d.wrapped.launchId === launchId;
-  const revivedFrom = new Date().toISOString();
+  // The record's own value before the revival: comparing against this
+  // process's clock failed 1 run in 6, because two processes on Windows can
+  // read the time a millisecond apart.
+  const dryRunRecord = path.join(appData, 'launches', `${launchId}.json`);
+  const readSince = async () => JSON.parse(await fs.readFile(dryRunRecord, 'utf8')).since?.[sid] ?? null;
+  let sinceBefore = null;
+  await until(async () => Boolean((sinceBefore = await readSince())));
   await hook({ hook_event_name: 'UserPromptSubmit', prompt: 'back again' });
   d = await session(sid);
   check('a session /resumed back into the same terminal is no longer ended',
     endedByResume && d.wrapped.ended === false && d.wrapped.launchId === launchId, JSON.stringify({ endedByResume, ended: d.wrapped.ended }));
   // #47: taken on again now, so the record's tie key moves with it.
+  let lastSince = null;
   const retaken = await until(async () => {
-    const rec = JSON.parse(await fs.readFile(path.join(appData, 'launches', `${launchId}.json`), 'utf8'));
-    return typeof rec.since?.[sid] === 'string' && rec.since[sid] >= revivedFrom;
+    lastSince = await readSince();
+    return typeof lastSince === 'string' && lastSince > sinceBefore;
   });
-  check('reviving a session records when it was taken on again', retaken);
+  const launchNow = JSON.parse((await get(base, '/api/launches', H)).body).launches.find((x) => x.id === launchId);
+  check('reviving a session records when it was taken on again', retaken,
+    JSON.stringify({ sinceBefore, lastSince, persistError: launchNow?.persistError, ended: launchNow?.sessions.find((x) => x.id === sid)?.ended }));
 
   // --- #22: one terminal, several sessions. /clear in the launched terminal
   // ends sid, and a new session reports 3%.

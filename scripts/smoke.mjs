@@ -412,6 +412,26 @@ try {
     (await write({ path: memo.absPath, content: 'x', expectedMtime: '2000-01-01T00:00:00.000Z' })).status === 409
   );
 
+  // #49: Windows refuses to rename over a file another process has open, so a
+  // save failed whenever something (antivirus, Claude Code, an editor) was
+  // reading the file. Save repeatedly while this process reads it in a loop.
+  let reading = true;
+  let reads = 0;
+  const reader = (async () => {
+    while (reading) {
+      await fs.readFile(memo.absPath).catch(() => {});
+      reads += 1;
+    }
+  })();
+  const raced = [];
+  for (let i = 0; i < 40; i++) raced.push((await write({ path: memo.absPath, content: `# Edited by smoke test\n${i}\n` })).status);
+  reading = false;
+  await reader;
+  check('saves succeed while something else is reading the file', raced.every((s) => s === 200) && reads > 20,
+    `${raced.filter((s) => s !== 200).length} of 40 failed (${[...new Set(raced)].join(',')}); ${reads} reads`);
+  // Leave the file as the checks below expect it.
+  await write({ path: memo.absPath, content: '# Edited by smoke test\n' });
+
   // --- snapshot and restore ----------------------------------------------
   const snapRes = await fetch(`${BASE}/api/snapshot`, {
     method: 'POST',
