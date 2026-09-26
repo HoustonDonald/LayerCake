@@ -43,7 +43,14 @@ function ContextGauge({ health }) {
       }
     >
       <div className="gauge-head">
-        <span>Context <span className="muted">· {c.source}</span></span>
+        <span>
+          Context <span className="muted">· {c.source}</span>
+          {c.windowSource === 'observed usage' && (
+            <span className="muted" title="The session holds more context than its model's listed window, so the window is at least 1M">
+              {' '}· window inferred from usage
+            </span>
+          )}
+        </span>
         <span>
           {tokens(c.tokens)} of {tokens(c.window)} ({Math.round(pct * 100)}%)
         </span>

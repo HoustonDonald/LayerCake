@@ -33,7 +33,7 @@ export const PRIOR_LAUNCH = { id: 'feedfacecafebeef', secret: 'a'.repeat(48) };
 export const PRIOR_LAUNCH_B = { id: 'fffe0000fffe0000', secret: 'c'.repeat(48) };
 
 /** A two-record transcript (one prompt, one reply): enough for discovery and a session view. */
-export async function minimalTranscript(projDir, sessionId, proj, text) {
+export async function minimalTranscript(projDir, sessionId, proj, text, { model = 'claude-opus-5', contextTokens = 1001 } = {}) {
   const at = (s) => new Date(Date.now() - 60_000 + s * 1000).toISOString();
   const base = { sessionId, cwd: proj, version: '2.1.282', entrypoint: 'cli' };
   await fs.writeFile(
@@ -45,7 +45,7 @@ export async function minimalTranscript(projDir, sessionId, proj, text) {
         uuid: `${sessionId.slice(0, 24)}000000000002`,
         timestamp: at(1),
         type: 'assistant',
-        message: { id: `m_${sessionId.slice(0, 8)}`, model: 'claude-opus-5', role: 'assistant', content: [{ type: 'text', text: 'Ok.' }], usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 1000, output_tokens: 1 } },
+        message: { id: `m_${sessionId.slice(0, 8)}`, model, role: 'assistant', content: [{ type: 'text', text: 'Ok.' }], usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: contextTokens - 1, output_tokens: 1 } },
       },
     ]
       .map((r) => JSON.stringify(r))
@@ -63,6 +63,8 @@ export const IDS = {
   launched: '55555555-5555-4555-8555-555555555555',
   // Another launched session with no pid file, left at a permission prompt.
   dialog: '99999999-9999-4999-8999-999999999999',
+  // A model family the window table does not know, holding 350K of context.
+  future: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
 };
 const AGENT_BG = 'a0123456789abcdef';
 const AGENT_HANDBACK = 'afedcba9876543210';
@@ -240,6 +242,7 @@ export async function makeSessionFixture(smokeDir, proj) {
   // A launched session with a transcript and no pid file that will sit at a
   // permission prompt (#41).
   await minimalTranscript(projDir, IDS.dialog, proj, 'A session that will wait at a prompt');
+  await minimalTranscript(projDir, IDS.future, proj, 'A session on a model the table does not know', { model: 'claude-future-9', contextTokens: 350_000 });
 
   // A card LayerCake kept for a session whose transcript has since been cleaned up.
   await fs.mkdir(path.join(appData, 'cards'), { recursive: true });
@@ -350,6 +353,12 @@ export async function runSessionChecks({ base, token, check, proj, appData }) {
   check('session detail loads', detail.status === 200, `got ${detail.status}`);
   check('context is the last call: input + cache creation + cache read', d?.context?.tokens === 29103, `got ${d?.context?.tokens}`);
   check('a 1M model id gives a 1M window', d?.health.context.window === 1_000_000);
+  // #12: the model table cannot know a family that shipped after it was written.
+  const future = (await json(`/api/session/${IDS.future}`)).data;
+  check('a model the table does not know, holding 350K of context, gets a 1M window from observed usage',
+    future?.health.context.window === 1_000_000 && future.health.context.windowSource === 'observed usage' &&
+      Math.abs(future.health.context.pct - 0.35) < 1e-9 && !future.health.flags.includes('warning'),
+    JSON.stringify(future?.health.context && { window: future.health.context.window, source: future.health.context.windowSource, pct: future.health.context.pct }));
   check('memory loaded at start and on nested traversal are both recorded',
     d?.instructions.length === 2 && d.instructions.some((i) => i.reason === 'session_start') && d.instructions.some((i) => i.reason === 'nested'));
   const bg = d?.subagents.find((s) => s.agentId === AGENT_BG);

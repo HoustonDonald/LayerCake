@@ -30,7 +30,7 @@ const CONTEXT_WARNING = 0.8;
  * else is taken as 200K, Claude Code's default.
  */
 export const CONTEXT_RULE =
-  'Window from the model in use now: "[1m]" or a native-1M family (Fable 5.x, Sonnet 5, Opus 4.7 and later) is 1,000,000 tokens; otherwise 200,000. Opus and Sonnet 4.6 reach 1M in Claude Code only as a "[1m]" variant.';
+  'Window from the model in use now: "[1m]" or a native-1M family (Fable 5.x, Sonnet 5, Opus 4.7 and later) is 1,000,000 tokens; otherwise 200,000. Opus and Sonnet 4.6 reach 1M in Claude Code only as a "[1m]" variant. If the session already holds more context than that, the window must be larger, so it is taken as 1,000,000: a new model family the list does not know yet shows up this way.';
 
 /**
  * The model in use now decides the window, not every model the session ever
@@ -58,8 +58,14 @@ export function computeHealth(model, live, { now = Date.now(), mtimeMs = 0, wrap
   // session at a permission prompt keeps its last exact reading (#41).
   const own = live && wrapped && !wrapped.ended && wrapped.statusline?.sessionId === model.sessionId;
   const exact = own ? wrapped.statusline.context : null;
-  const window = exact?.windowTokens || contextWindow(model.modelId, model.lastModel);
   const tokens = model.context?.tokens ?? null;
+  // The model-id table goes stale when a new 1M family ships, and a stale
+  // 200K reads a 350K session as 175% (#12). Context the session already
+  // holds is proof the window is at least that big, whatever the table says.
+  const inferred = contextWindow(model.modelId, model.lastModel);
+  const observedLarger = typeof tokens === 'number' && tokens > inferred;
+  const window = exact?.windowTokens || (observedLarger ? 1_000_000 : inferred);
+  const windowSource = exact?.windowTokens ? 'status line' : observedLarger ? 'observed usage' : 'model id';
   const pct =
     typeof exact?.usedPercentage === 'number' ? exact.usedPercentage / 100 : tokens ? tokens / window : null;
   const source = typeof exact?.usedPercentage === 'number' ? 'status line (exact)' : 'transcript (estimate)';
@@ -126,7 +132,7 @@ export function computeHealth(model, live, { now = Date.now(), mtimeMs = 0, wrap
     state,
     reasons,
     flags: [...flags],
-    context: { tokens, window, pct, source, rule: CONTEXT_RULE },
+    context: { tokens, window, windowSource, pct, source, rule: CONTEXT_RULE },
     states: HEALTH_STATES,
   };
 }
