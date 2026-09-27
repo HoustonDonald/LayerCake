@@ -8,7 +8,7 @@
 
 import path from 'node:path';
 
-import { samePathKey, settingsSourceFiles } from './paths.js';
+import { projectConfigKey, samePathKey, settingsSourceFiles } from './paths.js';
 import { readForDisplay, splitFrontmatter } from './readfile.js';
 
 /** Levels ordered weakest to strongest for settings merging. */
@@ -402,6 +402,13 @@ async function flattenDefinitions(lineage) {
   };
 }
 
+/** The `projects` keys naming this project: exactly, or ignoring case on Windows. */
+function projectKeysFor(projects, wanted) {
+  if (!projects || typeof projects !== 'object') return [];
+  const fold = (k) => (process.platform === 'win32' ? k.toLowerCase() : k);
+  return Object.keys(projects).filter((k) => fold(k) === fold(wanted));
+}
+
 /** MCP server definitions across the chain. */
 async function flattenMcp(lineage) {
   const servers = new Map();
@@ -423,6 +430,9 @@ async function flattenMcp(lineage) {
     }
     return names;
   };
+
+  const keyDir = lineage.gitRoot?.dir || lineage.projectDir;
+  const wantedKey = projectConfigKey(keyDir);
 
   for (const level of lineage.levels) {
     // .claude.json is included because servers added through the Claude app land
@@ -457,16 +467,20 @@ async function flattenMcp(lineage) {
         })
       );
 
-      // ~/.claude.json also carries a per-project block keyed by absolute path.
-      const projectBlock = parsed?.projects?.[lineage.projectDir]?.mcpServers;
-      const projectNames = addServers(projectBlock, {
-        levelTitle: levelTitle(level),
-        precedence: level.precedence + 0.5, // project-scoped beats the global block
-        path: entry.absPath,
-        scope: `project block for ${lineage.projectDir}`,
-      });
-      source.serverNames.push(...projectNames);
-      if (projectNames.length) source.hasProjectBlock = true;
+      // ~/.claude.json also carries per-project blocks, keyed the way
+      // projectConfigKey says (#120). Claude Code reads the one spelled like
+      // the directory it was started in; a scan cannot know that spelling, so
+      // on Windows every key equal to it ignoring case is read, each named.
+      for (const key of projectKeysFor(parsed?.projects, wantedKey)) {
+        const projectNames = addServers(parsed.projects[key]?.mcpServers, {
+          levelTitle: levelTitle(level),
+          precedence: level.precedence + 0.5, // project-scoped beats the global block
+          path: entry.absPath,
+          scope: `project block "${key}"`,
+        });
+        source.serverNames.push(...projectNames);
+        if (projectNames.length) source.hasProjectBlock = true;
+      }
 
       if (read.truncated) {
         source.jsonError =
@@ -502,10 +516,22 @@ async function flattenMcp(lineage) {
     heading: 'MCP servers',
     rule:
       'Collected from every .mcp.json on the chain, plus the global and per-project mcpServers blocks ' +
-      'in ~/.claude.json. A server defined at more than one level is flagged; the definition closest ' +
-      'to the project is shown as the winner. Servers still awaiting per-project approval are listed ' +
-      'here even though Claude Code will not have loaded them. A file reachable by two routes is ' +
-      'listed once.',
+      `in ~/.claude.json. The per-project block is the one keyed "${wantedKey}": ` +
+      (lineage.gitRoot?.dir
+        ? `the git repository's root${lineage.gitRoot.via === 'worktree' ? ' (the main repository, since this is a worktree)' : ''}, ` +
+          'which is where Claude Code keeps local-scope servers for any folder inside it. '
+        : lineage.gitRoot?.error
+          ? `the project directory, since ${lineage.gitRoot.error.path} could not be read to find a git root. `
+          : 'the project directory, which is in no git repository. ') +
+      (process.platform === 'win32'
+        ? 'Claude Code reads only the key spelled like the folder it was started in, forward slashes and ' +
+          'letter case included; a key differing from this one only in case is listed too. '
+        : '') +
+      'A server defined at more than one level is flagged; the definition closest to the project is shown ' +
+      'as the winner. Servers still awaiting per-project approval are listed here even though Claude Code ' +
+      'will not have loaded them. A file reachable by two routes is listed once.',
+    projectKey: wantedKey,
+    gitRoot: lineage.gitRoot,
     // Weakest first, so a file keeps its first sighting, as the chain view does.
     sources: collapseRoutes(sources, (s) => samePathKey(s.path)),
     servers: list,

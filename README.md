@@ -182,7 +182,7 @@ Four chains, each stating its own merge rule in the UI rather than leaving it im
 | **CLAUDE.md chain** | `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `MEMORY.md` concatenated top to bottom with per-level headers. Individual per-project memory files are excluded: they are recalled on demand, not loaded every session, and sweeping in 60+ of them would bury the actual instruction set. |
 | **settings.json chain** | Every settings file in precedence order, plus a computed effective merge and a table naming the level that won each key. |
 | **Agents & skills** | Definitions grouped by declared name (frontmatter `name`, else filename or skill folder), showing which level's version shadows the others. |
-| **MCP servers** | Every `.mcp.json` on the chain, plus the global and per-project `mcpServers` blocks in `~/.claude.json`, with shadowed definitions flagged. |
+| **MCP servers** | Every `.mcp.json` on the chain, plus the global and per-project `mcpServers` blocks in `~/.claude.json` (the per-project key is described below), with shadowed definitions flagged. |
 
 The settings merge is **computed by this tool**, not read back out of Claude Code, and it follows
 what Claude Code 2.1.283 was observed to read for a session started in the project directory:
@@ -208,6 +208,18 @@ API, so no request left the machine and no usage was spent. The hooks that fired
 read; the `model` in the request names the precedence winner. Re-run that when Claude Code's
 settings loader changes. The UI states the rule above the result so a wrong assumption is visible
 rather than silent.
+
+The MCP view's per-project block in `~/.claude.json` (where `claude mcp add --scope local` puts a
+server) is the one Claude Code 2.1.283 was measured to use (#120): keyed by the git repository's
+root when the project is inside one, the main repository's root for a worktree, else the project
+directory itself, with forward slashes on Windows (`C:/dev/app`). A backslash key is never read,
+though `.claude.json` holds many. The key's letter case is the case the folder was typed in when
+Claude Code started, which a scan cannot know, so on Windows every key equal to it ignoring case is
+listed, each named. The git root is found from the filesystem (`.git`, and a worktree's `gitdir:`
+and `commondir`), never by running git; a submodule's is its own folder, which is reasoned, not
+measured. How it was established: a scratch config home, then `claude mcp add --scope local` and
+`claude mcp list` from a repository's root, a subfolder, a worktree, a folder in no repository and
+the same folders typed in lower case. Neither command calls the model.
 
 ---
 

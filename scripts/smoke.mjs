@@ -178,7 +178,31 @@ async function makeFixture() {
     fallbackModel: ['local-fallback'],
     modelPicker: { fromLocal: true },
   }, null, 2));
-  await fs.writeFile(path.join(configHome, '.claude.json'), JSON.stringify({ projects: {} }, null, 2));
+  // Local-scope MCP servers (#120), in folders of their own so proj's MCP view
+  // is unchanged. Claude Code keys a project by its git root (a worktree by
+  // the main repository's) with forward slashes, and never reads a backslash
+  // key; each server below is one it would or would not load. The .git folder
+  // needs no real repository: the scan only looks for it.
+  const gitRepo = path.join(smokeDir, 'mcp-git');
+  const worktree = path.join(smokeDir, 'mcp-wt');
+  const wtGitDir = path.join(gitRepo, '.git', 'worktrees', 'mcp-wt');
+  await fs.mkdir(path.join(gitRepo, 'sub'), { recursive: true });
+  await fs.mkdir(wtGitDir, { recursive: true });
+  await fs.mkdir(worktree, { recursive: true });
+  await fs.mkdir(path.join(smokeDir, 'mcp-plain'), { recursive: true });
+  // As git writes them: an absolute gitdir with forward slashes, a relative commondir.
+  await fs.writeFile(path.join(worktree, '.git'), `gitdir: ${wtGitDir.replace(/\\/g, '/')}\n`);
+  await fs.writeFile(path.join(wtGitDir, 'commondir'), '../..\n');
+  const fwd = (p) => p.replace(/\\/g, '/');
+  const localServer = (name) => ({ mcpServers: { [name]: { command: name } } });
+  const projects = {
+    [fwd(gitRepo)]: localServer('local-git-root'),
+    [fwd(path.join(gitRepo, 'sub'))]: localServer('local-git-sub'),
+    [fwd(path.join(smokeDir, 'mcp-plain'))]: localServer('local-plain'),
+  };
+  // Only Windows spells a path with backslashes; elsewhere this key is the forward one.
+  if (process.platform === 'win32') projects[gitRepo] = localServer('local-backslash');
+  await fs.writeFile(path.join(configHome, '.claude.json'), JSON.stringify({ projects }, null, 2));
   await fs.writeFile(path.join(configHome, 'agents', 'home-agent.md'), '---\nname: home-agent\n---\n');
   // One MCP server in one file, which the walk reaches twice: it must read as
   // defined once, never as shadowing itself.
@@ -1570,6 +1594,38 @@ try {
   // Last, because it scans more often than the server keeps scans (8), which
   // evicts the scan every check above still holds an id for.
   await runCreateChecks({ base: BASE, token, check, skip, smokeDir, configHome, snaps, fakeHome });
+
+  // --- local-scope MCP servers (#120) ----------------------------------------
+  // Found under the key Claude Code uses. The fixture's .claude.json names each
+  // server after the key holding it. After the create checks, for the same
+  // reason: four more scans would evict the scan the checks above hold.
+  const mcpFor = async (dir) => {
+    const s = await (await fetch(`${BASE}/api/scan`, { method: 'POST', headers: H, body: JSON.stringify({ dir }) })).json();
+    const m = await (await fetch(`${BASE}/api/flatten?scanId=${s.scanId}&kind=mcp`, { headers: H })).json();
+    return { names: (m.servers || []).map((x) => x.name).filter((n) => n.startsWith('local-')).sort(), m, s };
+  };
+  const smokeRoot = path.dirname(configHome);
+  const inSub = await mcpFor(path.join(smokeRoot, 'mcp-git', 'sub'));
+  check('a folder inside a git repository gets the root\'s local MCP servers, not its own key\'s, and never a backslash key\'s (#120)',
+    JSON.stringify(inSub.names) === JSON.stringify(['local-git-root']) &&
+      inSub.s.gitRoot?.dir?.toLowerCase() === path.join(smokeRoot, 'mcp-git').toLowerCase() &&
+      /mcp-git"/.test(inSub.m.servers.find((x) => x.name === 'local-git-root')?.winner?.scope || ''),
+    JSON.stringify({ names: inSub.names, gitRoot: inSub.s.gitRoot, key: inSub.m.projectKey }));
+  const inWorktree = await mcpFor(path.join(smokeRoot, 'mcp-wt'));
+  check('a worktree gets the main repository\'s local MCP servers (#120)',
+    JSON.stringify(inWorktree.names) === JSON.stringify(['local-git-root']) && inWorktree.s.gitRoot?.via === 'worktree',
+    JSON.stringify({ names: inWorktree.names, gitRoot: inWorktree.s.gitRoot }));
+  const inPlain = await mcpFor(path.join(smokeRoot, 'mcp-plain'));
+  check('a folder in no git repository gets the servers keyed by itself (#120)',
+    JSON.stringify(inPlain.names) === JSON.stringify(['local-plain']) && inPlain.s.gitRoot === null,
+    JSON.stringify({ names: inPlain.names, gitRoot: inPlain.s.gitRoot }));
+  if (process.platform === 'win32') {
+    const upper = await mcpFor(path.join(smokeRoot, 'mcp-plain').toUpperCase());
+    check('on Windows a key differing only in case is found (#120)',
+      JSON.stringify(upper.names) === JSON.stringify(['local-plain']), JSON.stringify(upper.names));
+  } else {
+    skip('on Windows a key differing only in case is found (#120)', 'Windows only');
+  }
 
   check('smoke\'s own server stayed up for the whole run', serverExit === null, `exit: ${serverExit}`);
 

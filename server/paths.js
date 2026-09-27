@@ -183,6 +183,20 @@ export function samePathKey(p) {
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
+/**
+ * The key Claude Code files a project under in .claude.json's `projects` (#120).
+ *
+ * Measured on 2.1.283 with `claude mcp add --scope local` and `claude mcp list`,
+ * which make no model call: the key is the git repository's root when there is
+ * one (a worktree's is the MAIN repository's), else the directory itself, with
+ * forward slashes on Windows, in the case the directory was typed. A backslash
+ * key is never read, although .claude.json holds many (other data sits there).
+ * The root comes from the scan (`lineage.gitRoot`); this only spells it.
+ */
+export function projectConfigKey(dir) {
+  return process.platform === 'win32' ? dir.replace(/\\/g, '/') : dir;
+}
+
 /** True for \\server\share and //server/share style paths. */
 export function isUncPath(p) {
   return /^[\\/]{2}[^\\/]+[\\/]+[^\\/]+/.test(p);

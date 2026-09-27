@@ -45,6 +45,7 @@ import {
 // earlier one is stranded. Without that, a deep project on a dead share strands
 // a threadpool thread per level and starves every other call (#55).
 import { markNetworkRoot, timedFsCall } from './sharegate.js';
+import { readForDisplay } from './readfile.js';
 
 let entrySeq = 0;
 function nextId(prefix) {
@@ -590,6 +591,43 @@ async function scanDirectory(dir, label) {
 }
 
 /**
+ * The git repository root Claude Code keys the project by (#120).
+ *
+ * Measured on 2.1.283 (see projectConfigKey in paths.js): a subfolder of a
+ * repository uses the repository's root, and a worktree uses the MAIN
+ * repository's root. So: the nearest ancestor holding .git; when that .git is
+ * a file (a worktree), follow its `gitdir:` line to the worktree's git folder,
+ * whose `commondir` names the main .git, and take the folder holding that.
+ * A .git file with no commondir (a submodule) keeps its own folder, which is
+ * reasoned, not measured. Read from the filesystem through the share gate,
+ * never by running git: the processes LayerCake starts are fixed.
+ *
+ * Errors are values: { dir: null, error } when a .git could not be looked at,
+ * and the walk stops there rather than guess past it.
+ */
+async function findGitRoot(chain) {
+  for (const dir of chain) {
+    const dotGit = path.join(dir, '.git');
+    const probe = await statOf(dotGit);
+    if (!probe.st) {
+      if (probe.error && probe.error.code !== 'ENOENT') return { dir: null, error: { path: dotGit, ...describeError(probe.error) } };
+      continue;
+    }
+    if (probe.st.isDirectory()) return { dir, via: 'repository' };
+    const pointer = await readForDisplay(dotGit);
+    const gitdir = /^gitdir:\s*(.+?)\s*$/m.exec(pointer.content || '')?.[1];
+    if (!gitdir) return { dir, via: 'git file' };
+    const common = await readForDisplay(path.join(path.resolve(dir, gitdir), 'commondir'));
+    const commonDir = common.content ? path.resolve(dir, gitdir, common.content.trim()) : null;
+    if (commonDir && path.basename(commonDir).toLowerCase() === '.git') {
+      return { dir: path.dirname(commonDir), via: 'worktree' };
+    }
+    return { dir, via: 'git file' };
+  }
+  return null;
+}
+
+/**
  * Full lineage for a project directory, ordered weakest precedence first.
  */
 export async function resolveLineage(projectDir) {
@@ -649,6 +687,7 @@ export async function resolveLineage(projectDir) {
     scannedAt: new Date().toISOString(),
     levels,
     networkDrives: onNetwork,
+    gitRoot: await findGitRoot(chain),
     summary: {
       levelCount: levels.length,
       fileCount,
