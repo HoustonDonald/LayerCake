@@ -22,7 +22,32 @@ npm run smoke                       # expect: 0 failed
 node cli/index.js here C:\dev\LayerCake   # expect: ~18 line summary, exit 0
 ```
 
-Both were green on 2026-09-15.
+Both were green on 2026-09-15. Smoke was 285 passed, 0 failed, 2 skipped on 2026-09-26 (Windows),
+and 258/0 under WSL Ubuntu.
+
+### 2026-09-26, later: the open-issue sweep
+
+Issues #1 to #110 were worked through, bar ten. Two adversarial review rounds of the create/delete
+feature (#15) each found real problems (#96 to #110), all fixed. Highlights:
+- Create and delete (#15, owner decision 9).
+- Restore of a file gone from disk (#92), with one fence for the HTTP route and the CLI
+  (`restoreSnapshotFiles`, #105).
+- Every write that replaces or removes a file proves its snapshot holds it (#96, #100).
+- The share gate is per server, with one budget per call, and covers the reads before every write
+  (#66, #68, #69).
+- The exe follows its browser profile (#10, #58 to #60, #93, #94).
+- Smoke reads nothing of the machine's own config (#78).
+
+The open ones are small, (b), or questions: `gh issue list`.
+
+Verification tooling that is NOT in the repository lives in that session's scratchpad
+(`%TEMP%\claude\C--dev-LayerCake\bcd84aa6-...\scratchpad`):
+- `mutate-v.mjs`: every mutant, one tree copy each, 4 in parallel.
+- `ui-tool/`: headless-Edge harnesses for create/delete, the editor fixes and the close prompt.
+- `verify-r5/`: the second reviewer's harness, with a fake home under `C:\lc-verify-r5`.
+- `agent-exe/`: the exe lifecycle, quick-close and Host-guard runs.
+
+A new session has none of it; rebuild from the commit messages, which name each check and mutant.
 
 The watch feature also has a mutation check worth re-running if you touch `server/watch.js`. Make
 the watcher a no-op that still executes (in `flush()`, compute `batch` then discard it instead of
