@@ -346,6 +346,7 @@ something changes underneath you. A thin bar under the header carries the state 
 | `4 files changed on disk` | Something changed. Names each file, each with **Mute**, and offers **Rescan** and **Dismiss**. |
 | `4 files changed on disk (1 muted)` | The same, and one of the four is a file you muted. It is counted and listed, marked muted. |
 | `Watching 65 folders, 1 muted change` | Only muted files changed. Listed and marked muted, but the bar stays unlit. |
+| `Watching 65 folders ... Notifications are blocked for this site` | **Notify me** was refused. The bar keeps watching; only desktop notifications are off. |
 | `Not watching for changes` | The stream is down, with the reason. |
 
 The idle state is deliberate. A watcher that only appears when something happens cannot tell you it

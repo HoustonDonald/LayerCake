@@ -1194,6 +1194,10 @@ pre.code {
   font-weight: 600;
 }
 
+.watch-notify-note {
+  color: var(--warn);
+}
+
 .watch-quiet {
   color: var(--text-faint);
 }

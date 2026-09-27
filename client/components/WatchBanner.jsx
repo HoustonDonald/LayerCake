@@ -20,7 +20,7 @@ const SHOWN_FILES = 4;
  * hidden, and nothing is filtered on the server: `mute` is this viewer's
  * preference, applied here.
  */
-export default function WatchBanner({ changes, ready, error, editorDirty, onRescan, onDismiss, notify, notifySupported, onEnableNotifications, onDisableNotifications, mute }) {
+export default function WatchBanner({ changes, ready, error, editorDirty, onRescan, onDismiss, notify, notifyError, notifySupported, onEnableNotifications, onDisableNotifications, mute }) {
   const [confirming, setConfirming] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [showMuted, setShowMuted] = useState(false);
@@ -40,6 +40,9 @@ export default function WatchBanner({ changes, ready, error, editorDirty, onResc
   // looking at that ancestor".
   const gaps = (ready?.skipped?.length || 0) + (ready?.errors?.length || 0);
 
+  // `error` is the stream's alone. A refused notification permission is shown
+  // beside its button below, never here: sharing this state once replaced the
+  // whole bar and hid real changes until a rescan (#128).
   if (error) {
     return (
       <div className="watch-banner watch-banner-warn">
@@ -133,6 +136,7 @@ export default function WatchBanner({ changes, ready, error, editorDirty, onResc
             {notify ? 'Notifications on' : 'Notify me'}
           </button>
         )}
+        {notifyError && <span className="watch-notify-note">{notifyError}</span>}
       </div>
     );
   }

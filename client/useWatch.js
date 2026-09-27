@@ -83,6 +83,10 @@ export default function useWatch(scanId, platform) {
   const [changes, setChanges] = useState([]);
   const [ready, setReady] = useState(null);
   const [error, setError] = useState(null);
+  // Kept apart from `error`, which means the stream is down: a refused
+  // permission once shared it, and the bar then read "Not watching for
+  // changes" and hid real events until a rescan (#128).
+  const [notifyError, setNotifyError] = useState(null);
   const [notify, setNotify] = useState(() => {
     try {
       return localStorage.getItem(NOTIFY_KEY) === 'yes';
@@ -200,7 +204,7 @@ export default function useWatch(scanId, platform) {
    */
   const enableNotifications = useCallback(async () => {
     if (!('Notification' in window)) {
-      setError('This browser has no notification support.');
+      setNotifyError('This browser has no notification support.');
       return false;
     }
     let permission = Notification.permission;
@@ -212,14 +216,13 @@ export default function useWatch(scanId, platform) {
     } catch {
       /* private mode: the toggle just does not persist */
     }
-    if (!granted) {
-      setError('Notifications are blocked for this site. Re-enable them in site settings.');
-    }
+    setNotifyError(granted ? null : 'Notifications are blocked for this site. Re-enable them in site settings.');
     return granted;
   }, []);
 
   const disableNotifications = useCallback(() => {
     setNotify(false);
+    setNotifyError(null);
     try {
       localStorage.setItem(NOTIFY_KEY, 'no');
     } catch {
@@ -241,6 +244,7 @@ export default function useWatch(scanId, platform) {
     clear,
     suppress,
     notify,
+    notifyError,
     notifySupported,
     enableNotifications,
     disableNotifications,

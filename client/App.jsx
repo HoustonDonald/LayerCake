@@ -91,6 +91,7 @@ export default function App() {
     clear: clearWatch,
     suppress: suppressWatch,
     notify,
+    notifyError,
     notifySupported,
     enableNotifications,
     disableNotifications,
@@ -384,6 +385,7 @@ export default function App() {
           onRescan={rescanCurrent}
           onDismiss={clearWatch}
           notify={notify}
+          notifyError={notifyError}
           notifySupported={notifySupported}
           onEnableNotifications={enableNotifications}
           onDisableNotifications={disableNotifications}
