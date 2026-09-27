@@ -242,6 +242,11 @@ Made by the owner on 2026-09-26, when asked about the open issues:
    `.claude` folders of a scanned level (agents, commands, skills, rules, CLAUDE.md and friends),
    from a template, never at an arbitrary path. Delete only a file the scan found, snapshotted first.
    A new hook still needs the executable acknowledgement.
+10. **`/api/validate` is deleted (#67)**, with the unused `validateDir` helper. Scan already reports a
+    bad directory, and it was a path-taking endpoint nothing called.
+11. **Closing the window with unsaved editor changes asks first (#71)**, through the browser's own
+    "Leave site?" prompt, only while the editor is dirty. The exe's window then stays open, and the exe
+    running, until it is answered.
 
 ---
 

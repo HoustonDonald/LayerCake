@@ -172,6 +172,20 @@ export default function App() {
     [editing, editorDirty, file]
   );
 
+  // Closing the window, or reloading it, with unsaved editor changes asks
+  // first, through the browser's own prompt (#71; owner decision 11). Only
+  // while the draft is dirty: the exe's window then stays open, and the exe
+  // running, until the prompt is answered, which no one should meet for nothing.
+  useEffect(() => {
+    if (!(editing && editorDirty)) return undefined;
+    const ask = (e) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', ask);
+    return () => window.removeEventListener('beforeunload', ask);
+  }, [editing, editorDirty]);
+
   const switchMode = (next) => {
     if (next !== mode && leaveEditorOk()) setMode(next);
   };

@@ -332,6 +332,13 @@ try {
 
   const manifestRes = await fetch(`${BASE}/api/manifest`, { headers: H });
   check('API accepts a valid token', manifestRes.status === 200);
+  // #67: /api/validate is deleted, and an /api path nothing answers is a JSON
+  // 404. The HTML fallback used to answer it with the app page and a 200.
+  for (const p of ['/api/validate?dir=C%3A%5C', '/api/no-such-route']) {
+    const r = await fetch(`${BASE}${p}`, { headers: H });
+    const type = r.headers.get('content-type') || '';
+    check(`${p.split('?')[0]} is a JSON 404, not the app page`, r.status === 404 && type.includes('json'), `${r.status} ${type}`);
+  }
   const manifest = await manifestRes.json();
   check(
     'manifest write policy is derived from the guards',

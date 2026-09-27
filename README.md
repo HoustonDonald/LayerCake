@@ -221,7 +221,9 @@ The app reads the whole lineage and can edit the files it found. Writes are narr
 - **Leaving the editor with unsaved changes asks first.** Switching to Flattened, Snapshots or
   Sessions, selecting another file, or scanning a directory would close the editor and lose the
   draft, so each one asks, and Cancel keeps editing. The watch bar's Rescan asks in the bar itself.
-  Closing the window does not ask.
+  Closing or reloading the window with unsaved changes gets the browser's own "Leave site?" prompt;
+  the exe's window, and so the exe, stays open until it is answered. With no unsaved changes,
+  closing just closes.
 - **Credential files can be neither read nor written**, refused at scan time, at read time and at
   write time.
 - **Executable config requires acknowledgement.** Hook files are executed by Claude Code rather than

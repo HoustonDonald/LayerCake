@@ -199,20 +199,6 @@ export function createApp({ port, staticFiles }) {
     });
   });
 
-  /** Directory existence check, used by the input field before a scan. */
-  app.get('/api/validate', async (req, res) => {
-    const dir = String(req.query.dir || '');
-    if (!dir.trim()) return res.status(400).json({ ok: false, message: 'No directory supplied' });
-    try {
-      const st = await fs.stat(path.resolve(dir));
-      if (!st.isDirectory()) return res.json({ ok: false, message: 'Path exists but is not a directory' });
-      return res.json({ ok: true, resolved: path.resolve(dir) });
-    } catch (err) {
-      const described = describeError(err);
-      return res.json({ ok: false, message: described.message, code: described.code });
-    }
-  });
-
   app.post('/api/scan', async (req, res) => {
     const dir = String(req.body?.dir || '').trim();
     if (!dir) return res.status(400).json({ message: 'dir is required' });
@@ -516,6 +502,11 @@ export function createApp({ port, staticFiles }) {
   // /api: the callers are Claude Code processes, not our page, so they carry a
   // per-launch secret instead of the page token (see ingest.js).
   registerIngestRoutes(app);
+
+  // An /api path no route above answered is a 404, in JSON. Without this the
+  // HTML fallback below answered it with the app page and a 200, so a removed
+  // route (/api/validate, #67) still looked like it existed.
+  app.use('/api', (req, res) => res.status(404).json({ message: 'No such API route.', code: 'ENOROUTE' }));
 
   // Assets are served normally. Only the HTML shell carries the secret, and it
   // gets it from the injector below, never from the static source.

@@ -34,10 +34,6 @@ export function getManifest() {
   return request('/api/manifest');
 }
 
-export function validateDir(dir) {
-  return request(`/api/validate?dir=${encodeURIComponent(dir)}`);
-}
-
 export function scan(dir) {
   return request('/api/scan', {
     method: 'POST',
