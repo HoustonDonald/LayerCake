@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 
 import { pathKey } from '../sessionFormat.js';
+import CreateFile from './CreateFile.jsx';
 
 const CATEGORY_ORDER = [
   'memory',
@@ -135,7 +136,7 @@ function OtherList({ items }) {
   );
 }
 
-function Level({ level, selectedPath, onSelect, defaultOpen, overlay }) {
+function Level({ level, selectedPath, onSelect, defaultOpen, overlay, createOptions, namePattern, onCreate }) {
   const [open, setOpen] = useState(defaultOpen);
   const isEmpty = level.status === 'empty';
 
@@ -214,13 +215,14 @@ function Level({ level, selectedPath, onSelect, defaultOpen, overlay }) {
 
           <OtherList items={level.other || []} />
           <AbsentList items={level.absent} />
+          {onCreate && <CreateFile options={createOptions} namePattern={namePattern} onCreate={onCreate} />}
         </div>
       )}
     </div>
   );
 }
 
-export default function LineageTree({ lineage, selectedPath, onSelect, overlay }) {
+export default function LineageTree({ lineage, selectedPath, onSelect, overlay, namePattern, onCreate }) {
   return (
     <div>
       <div className="summary-bar">
@@ -242,6 +244,9 @@ export default function LineageTree({ lineage, selectedPath, onSelect, overlay }
           selectedPath={selectedPath}
           onSelect={onSelect}
           overlay={overlay}
+          createOptions={(lineage.creatable || []).filter((o) => o.levelId === level.id)}
+          namePattern={namePattern}
+          onCreate={onCreate}
           defaultOpen={level.status === 'found' || level.status === 'partial'}
         />
       ))}

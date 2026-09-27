@@ -1925,3 +1925,62 @@ pre.code {
   color: var(--text-dim);
   line-height: 1.5;
 }
+
+/* ---------- create and delete (#15) ---------- */
+
+.create-file {
+  padding: 2px 12px 6px 30px;
+}
+
+.create-file.open {
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.create-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.create-row select,
+.create-row input {
+  font-size: 12px;
+  padding: 3px 6px;
+  min-width: 0;
+}
+
+.create-row input[aria-invalid='true'] {
+  border-color: var(--warn);
+}
+
+.create-target {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  word-break: break-all;
+}
+
+.delete-confirm .create-row {
+  margin-top: 8px;
+}
+
+.btn-danger {
+  border-color: var(--err);
+  color: var(--err);
+}
+
+.flash-banner {
+  margin: 14px 18px 0;
+  border: 1px solid var(--ok);
+  border-radius: 4px;
+  padding: 10px 14px;
+  font-size: 13px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}

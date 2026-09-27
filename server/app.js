@@ -5,15 +5,17 @@
  *  - Binds 127.0.0.1. Never 0.0.0.0.
  *  - Answers only to its own Host header, on every route, so a DNS rebinding
  *    page cannot read the HTML and the token in it as same-origin.
- *  - /api/file and /api/write only touch a path that a prior scan discovered.
- *    The scan result is the allowlist, so neither is a general purpose file
- *    reader or writer even though scan input is a directory the user typed.
+ *  - /api/file, /api/write and /api/delete only touch a path that a prior scan
+ *    discovered. The scan result is the allowlist, so none is a general purpose
+ *    file reader or writer even though scan input is a directory the user typed.
+ *    /api/create takes an option the scan offered, never a path (#15).
  *  - Credential files are excluded at scan time and refused again at read and
  *    write time.
  *  - Every /api route requires the per-start session token, which is served
  *    only inside our own HTML. See security.js for why writes made that
  *    necessary when reads did not.
- *  - Every write is preceded by an automatic snapshot and lands atomically.
+ *  - Every edit, delete and restore is preceded by an automatic snapshot, and
+ *    edits land atomically. A create never replaces a file, so it takes none.
  *
  * This module builds the app and never listens on import. Two entries use it:
  * server/index.js serves the client from public/ on disk (npm start, the
@@ -29,7 +31,7 @@ import path from 'node:path';
 import { resolveLineage } from './scan.js';
 import { flatten } from './flatten.js';
 import { readForDisplay } from './readfile.js';
-import { editFile } from './writefile.js';
+import { createFile, createOptions, deleteFile, editFile, restorableWhenAbsent } from './writefile.js';
 import { DEBOUNCE_MS, watchLineage } from './watch.js';
 import {
   compareSnapshot,
@@ -99,7 +101,9 @@ function registerScan(lineage) {
       if (entry.type === 'file') allowed.set(allowKey(entry.absPath), entry);
     }
   }
-  scans.set(scanId, { lineage, allowed, createdAt: Date.now() });
+  // What this scan offers to create (#15), kept like the allowlist: a create
+  // names an option by id, and the path comes from here, never the request.
+  scans.set(scanId, { lineage, allowed, creatable: createOptions(lineage), createdAt: Date.now() });
   while (scans.size > MAX_SCANS) {
     const oldest = [...scans.entries()].sort((a, b) => a[1].createdAt - b[1].createdAt)[0];
     scans.delete(oldest[0]);
@@ -183,8 +187,11 @@ export function createApp({ port, staticFiles }) {
         ...writePolicy(),
         snapshotRoot: snapshotRoot(),
         rules: [
-          'Only files discovered by the current scan can be written.',
-          'Every write is preceded by an automatic snapshot and lands via temp file plus rename.',
+          'Only files discovered by the current scan can be written or deleted.',
+          'New files are created only at a user or directory level, at places the scan offers, from a template, and never over an existing file.',
+          'A delete takes a snapshot first and is refused unless that snapshot holds the file.',
+          'A file gone from disk can be restored from a snapshot only inside a level\'s config folders, and is created, never written over.',
+          'Every edit, delete and restore is preceded by an automatic snapshot, and edits land via temp file plus rename. A create replaces nothing, so it takes none.',
           'Invalid JSON or YAML is refused; malformed markdown frontmatter is a warning only.',
           'Claude Code loads memory and settings at session start, so a running session is unaffected until restart.',
         ],
@@ -212,7 +219,7 @@ export function createApp({ port, staticFiles }) {
     try {
       const lineage = await resolveLineage(dir);
       const scanId = registerScan(lineage);
-      res.json({ scanId, ...lineage });
+      res.json({ scanId, ...lineage, creatable: scans.get(scanId).creatable });
     } catch (err) {
       res.status(500).json({ message: err.message, ...describeError(err) });
     }
@@ -378,6 +385,44 @@ export function createApp({ port, staticFiles }) {
     }
   });
 
+  // #15: a new file from a template, at a place the scan offered. The request
+  // names the option and, for a folder, a name; the server builds the path.
+  app.post('/api/create', async (req, res) => {
+    const { scanId, createId, name, ext, acknowledgeExecutable } = req.body || {};
+    const scan = scans.get(String(scanId || ''));
+    if (!scan) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan first.' });
+    const option = scan.creatable.find((o) => o.id === String(createId || ''));
+    if (!option) {
+      return res.status(403).json({
+        message: 'This scan does not offer that. Re-scan and choose from its list.',
+        code: 'ENOTCREATABLE',
+      });
+    }
+    try {
+      return res.json(
+        await createFile({
+          option,
+          name: typeof name === 'string' ? name : '',
+          ext: typeof ext === 'string' ? ext : '',
+          acknowledgeExecutable: Boolean(acknowledgeExecutable),
+        })
+      );
+    } catch (err) {
+      return sendError(res, err);
+    }
+  });
+
+  // #15: deletes a scanned file, after a snapshot that holds it.
+  app.post('/api/delete', async (req, res) => {
+    const { scanId, path: target, expectedMtime } = req.body || {};
+    try {
+      const { scan, entry } = requireEntry(String(scanId || ''), String(target || ''));
+      return res.json(await deleteFile({ entry, lineage: scan.lineage, expectedMtime: expectedMtime || null }));
+    } catch (err) {
+      return sendError(res, err);
+    }
+  });
+
   app.post('/api/snapshot', async (req, res) => {
     const scan = scans.get(String(req.body?.scanId || ''));
     if (!scan) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan first.' });
@@ -431,10 +476,18 @@ export function createApp({ port, staticFiles }) {
     const scan = scans.get(String(scanId || ''));
     if (!scan) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan first.' });
     try {
-      // Restore targets must still be in the current scan. Without this, a stale
-      // snapshot could write to a path the current scan never validated.
-      for (const p of paths) requireEntry(String(scanId), String(p));
-      return res.json(await restoreFiles(String(id || ''), paths.map(String), scan.lineage));
+      // Restore targets must be in the current scan. Without this, a stale
+      // snapshot could write to a path the current scan never validated. The
+      // one exception is a file gone from disk (#92), which no later scan can
+      // find: it may come back inside a level's config folders, and is then
+      // created rather than written over.
+      const absentPaths = [];
+      for (const p of paths.map(String)) {
+        if (scan.allowed.has(allowKey(p))) continue;
+        if (restorableWhenAbsent(scan.lineage, p)) absentPaths.push(p);
+        else requireEntry(String(scanId), p);
+      }
+      return res.json(await restoreFiles(String(id || ''), paths.map(String), scan.lineage, { absentPaths }));
     } catch (err) {
       return sendError(res, err);
     }

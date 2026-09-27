@@ -5,9 +5,10 @@
  *
  * The app was read-only until write support landed. It is now read-write, but
  * narrowly: server/writefile.js and server/snapshot.js are the ONLY modules
- * permitted to call a mutating fs API, every write is preceded by an automatic
- * snapshot, and every write target must have been discovered by a prior scan.
- * See README "Write posture" for the audit command.
+ * permitted to call a mutating fs API, every write that replaces or removes a
+ * file is preceded by an automatic snapshot, and every such target must have
+ * been discovered by a prior scan. A new file goes only where the create
+ * tables below allow (#15). See README "Write posture" for the audit command.
  */
 
 import path from 'node:path';
@@ -150,6 +151,67 @@ export function commandKeysChanged(category, before, after) {
   return COMMAND_KEYS.filter((k) => Object.hasOwn(now, k) && canonical(now[k]) !== canonical(was[k]));
 }
 
+/**
+ * What may be CREATED (#15; owner decision 9, 2026-09-26): fenced, from a
+ * template, never at a path the request names. Only a user level or a
+ * directory level of a scan; managed policy, plugins and Claude Code's own
+ * project memory are not LayerCake's to add to.
+ *
+ * `where` is relative to the level: 'dir' is the directory itself, 'claude' is
+ * its .claude folder, which at the user level is the configuration home. Every
+ * name must also be a scan manifest target (writefile.js checks that at load),
+ * so a created file is always one the next scan lists. Kept to the files
+ * Claude Code documents at each place; keybindings.json has no template here
+ * because its format is not one this tool knows.
+ */
+const CREATE_LEVEL_KINDS = new Set(['user', 'directory']);
+const CREATE_FILES = [
+  { where: 'dir', name: 'CLAUDE.md', category: 'memory', levels: ['directory'] },
+  { where: 'dir', name: '.mcp.json', category: 'mcp', levels: ['directory'] },
+  { where: 'claude', name: 'CLAUDE.md', category: 'memory', levels: ['user', 'directory'] },
+  { where: 'claude', name: 'settings.json', category: 'settings', levels: ['user', 'directory'] },
+  { where: 'claude', name: 'settings.local.json', category: 'settings', levels: ['directory'] },
+];
+/** Named files in a .claude subtree. A skill is a folder holding SKILL.md. */
+const CREATE_TREES = [
+  { tree: 'agents', category: 'agent', exts: ['.md'] },
+  { tree: 'commands', category: 'command', exts: ['.md'] },
+  { tree: 'rules', category: 'rule', exts: ['.md'] },
+  { tree: 'skills', category: 'skill', exts: ['.md'], folderFile: 'SKILL.md' },
+  { tree: 'hooks', category: 'hook', exts: ['.sh', '.ps1', '.py', '.js', '.mjs'] },
+];
+/**
+ * A created name is one path segment by construction: lowercase letters,
+ * digits, - and _, no dot, so no "..", no extension trick and no separator.
+ * Lowercase because agent and skill names must be, and so a case-only
+ * variant of an existing file cannot be made on a case-sensitive volume.
+ * Windows device names are refused whatever the extension (con.md is CON).
+ */
+const CREATE_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const WINDOWS_DEVICE_RE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
+
+export function createLevelAllowed(kind) {
+  return CREATE_LEVEL_KINDS.has(String(kind));
+}
+
+export function createFiles() {
+  return CREATE_FILES.map((f) => ({ ...f, levels: [...f.levels] }));
+}
+
+export function createTrees() {
+  return CREATE_TREES.map((t) => ({ ...t, exts: [...t.exts] }));
+}
+
+/** Null when the name may be created, else the reason, for the UI to show. */
+export function createNameProblem(name) {
+  const value = String(name ?? '');
+  if (!CREATE_NAME_RE.test(value)) {
+    return 'Use 1 to 64 lowercase letters, digits, - or _, starting with a letter or digit.';
+  }
+  if (WINDOWS_DEVICE_RE.test(value)) return `"${value}" is a reserved device name on Windows.`;
+  return null;
+}
+
 /** Largest file body returned to the browser. Larger files are truncated. */
 export const MAX_FILE_BYTES = 2 * 1024 * 1024;
 
@@ -196,6 +258,14 @@ export function writePolicy() {
     acknowledgeCommandKeys: { categories: [...COMMAND_KEY_CATEGORIES].sort(), keys: [...COMMAND_KEYS] },
     maxWriteBytes: MAX_WRITE_BYTES,
     neverWritten: [...SECRET_BASENAMES].sort(),
+    // #15: what a create may add, and where. The per-level options a scan
+    // offers are built from exactly these tables.
+    create: {
+      levels: [...CREATE_LEVEL_KINDS].sort(),
+      files: createFiles(),
+      trees: createTrees(),
+      namePattern: CREATE_NAME_RE.source,
+    },
   };
 }
 

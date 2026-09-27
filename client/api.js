@@ -66,6 +66,16 @@ export function writeFile({ scanId, path, content, expectedMtime, acknowledgeExe
   return post('/api/write', { scanId, path, content, expectedMtime, acknowledgeExecutable });
 }
 
+/** #15: a new file at a place the scan offered (createId), from a template. */
+export function createFile({ scanId, createId, name, ext, acknowledgeExecutable }) {
+  return post('/api/create', { scanId, createId, name, ext, acknowledgeExecutable });
+}
+
+/** #15: deletes a scanned file after a snapshot that holds it. */
+export function deleteFile({ scanId, path, expectedMtime }) {
+  return post('/api/delete', { scanId, path, expectedMtime });
+}
+
 export function createSnapshot(scanId, label) {
   return post('/api/snapshot', { scanId, label });
 }

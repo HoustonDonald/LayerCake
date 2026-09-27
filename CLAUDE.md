@@ -136,8 +136,13 @@ through `snapshot.js`'s `atomicWrite`, so it adds a caller, not a mutating call 
 like `writefile.js`, confined to `appDataRoot()`, and refuses a root inside `~/.claude` or the
 Claude data folder.
 
-**Every write snapshots first, and that is structural.** `writefile.js` imports `snapshot.js`, not
-the reverse, so a new route cannot skip the snapshot by forgetting to call it. Keep that direction.
+**Every write that replaces or removes bytes snapshots first, and that is structural.** `writefile.js`
+imports `snapshot.js`, not the reverse, so a new route cannot skip the snapshot by forgetting to call
+it. Keep that direction. A delete (#15) is refused unless that snapshot provably holds the file, so a
+file over the 2 MB cap cannot be deleted. A create is the one write with no snapshot, by design: it
+publishes with a hard link (`createExclusive`), which refuses an existing file, so it never replaces
+bytes and has nothing to back up; its undo is a delete. Anything that could replace a file stays on
+`atomicWrite` behind a snapshot.
 Writes land via temp file plus rename in the same directory, so a crash leaves the old file or the
 new one, never a half-written config that breaks every future session. On Windows the rename is
 retried for up to 5 s on EPERM/EACCES/EBUSY, because a rename over a file another process has open
@@ -161,6 +166,17 @@ scan store holds the full entry, not just the path, so a write takes its **categ
 rather than from the request body. That is what stops a caller relabelling a hook as a note to dodge
 the executable acknowledgement. Adding an endpoint that reads or writes an arbitrary path turns this
 into a general-purpose file tool on localhost. Do not.
+
+Three routes extend it without breaking it (#15, #92):
+- **`/api/create` takes an option id**, from the `creatable` list the scan built with `createOptions`,
+  plus a name that is one lowercase segment. The server builds the path. Options exist only at user
+  and directory levels, from the create tables in `safety.js`; at load `writefile.js` checks that
+  every name in those tables is a scan manifest target, so a created file is one the next scan lists.
+- **`/api/delete` takes a scan entry**, like a write.
+- **`/api/restore` may put back a file the current scan did not find** only when it is in the snapshot
+  and `restorableWhenAbsent` places it inside a user or directory level's config folders. It is then
+  created, never written over, because the restore's own snapshot comes from the scan and cannot hold
+  a file that appeared since.
 
 **Watch events carry paths and verbs, never content.** `/api/watch` streams from whole directories,
 so it necessarily sees files no scan entry covers. The moment a body rides along in that payload it

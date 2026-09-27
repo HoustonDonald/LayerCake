@@ -238,6 +238,10 @@ Made by the owner on 2026-09-26, when asked about the open issues:
 8. **Settings edits that add or change something that runs a command need the executable
    acknowledgement (#19)**: hooks, statusLine, apiKeyHelper and the like. Ordinary settings edits
    stay free of it.
+9. **Config files can be created and deleted, fenced (#15).** Create only inside the known
+   `.claude` folders of a scanned level (agents, commands, skills, rules, CLAUDE.md and friends),
+   from a template, never at an arbitrary path. Delete only a file the scan found, snapshotted first.
+   A new hook still needs the executable acknowledgement.
 
 ---
 
@@ -245,7 +249,8 @@ Made by the owner on 2026-09-26, when asked about the open issues:
 
 Since 2026-09-26 every open problem is an issue in `HoustonDonald/LayerCake` (`gh issue list`), so
 this file no longer restates them. Owner decisions carry the `question` label and a title starting
-"Decide:". The biggest feature gap is #15: config files can be edited but not created or deleted.
+"Decide:". Config files can now be created and deleted (#15, decision 9), and a file gone from disk
+can be restored from a snapshot (#92); the README section "Creating and deleting files" is the spec.
 
 ## Noted for the owner, not problems
 

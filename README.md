@@ -183,14 +183,17 @@ The app reads the whole lineage and can edit the files it found. Writes are narr
   `snapshot.js#atomicWrite`; it contains no `fs` mutation of its own. Everything else in `server/`
   stays on `readFile`, `readdir`, `stat`, `lstat` and `fs.open(path, 'r')`. Audit it:
   ```
-  rg -n "fs\.(writeFile|appendFile|mkdir|rm|rmdir|unlink|rename|copyFile|chmod|chown|utimes|createWriteStream)" server/
+  rg -n "fs\.(writeFile|appendFile|mkdir|mkdtemp|rm|rmdir|unlink|rename|copyFile|cp|link|symlink|truncate|chmod|chown|utimes|createWriteStream)" server/
   ```
-  At the time of writing every hit is in `snapshot.js`. `writefile.js` is the only other module
-  permitted to appear there.
-- **Only files the current scan discovered can be written.** The scan result is the allowlist, and
-  it supplies the file's category, so a request cannot relabel a hook to dodge a guard.
-- **Every write is preceded by an automatic snapshot**, and the response carries that snapshot id so
-  the change can be undone. This is enforced by the import graph: `writefile.js` depends on
+  The mutating calls belong in `snapshot.js`; `writefile.js` is the only other module permitted to
+  appear there. The pattern also matches the identifier `truncated`, so read the hits rather than
+  counting them.
+- **Only files the current scan discovered can be written or deleted.** The scan result is the
+  allowlist, and it supplies the file's category, so a request cannot relabel a hook to dodge a
+  guard. New files are the one addition, and they are fenced: see
+  [Creating and deleting files](#creating-and-deleting-files).
+- **Every edit, delete and restore is preceded by an automatic snapshot**, and the response carries
+  that snapshot id so the change can be undone. A create replaces nothing, so it takes none. This is enforced by the import graph: `writefile.js` depends on
   `snapshot.js`, so a new route cannot skip it by forgetting.
 - **Writes land atomically**, via a temp file in the same directory followed by a rename. A crash
   leaves either the old file or the new one, never a half-written config.
@@ -235,14 +238,41 @@ already running. The UI says so after every save rather than leaving you to wond
 snapshot id and any validation warning, and that result stays on screen until the next save or until
 you leave the editor.
 
+### Creating and deleting files
+
+Each user or directory level in the Explorer has **+ New file here**. It offers only what the scan
+offered for that level, and the server builds the path from the choice, so a request never names a
+path:
+
+- **Fixed files that do not exist yet:** `CLAUDE.md` and `.mcp.json` in a directory, and
+  `.claude/CLAUDE.md`, `.claude/settings.json` and `.claude/settings.local.json` in its `.claude`
+  folder. At the user level: `CLAUDE.md` and `settings.json` in the configuration home.
+- **A named agent, command, rule, skill or hook** in the level's `.claude/agents`, `commands`,
+  `rules`, `skills` (a folder holding `SKILL.md`) or `hooks` folder. The name is 1 to 64 lowercase
+  letters, digits, `-` or `_`, so it is always one plain file name; Windows device names such as
+  `con` are refused. A hook is `.sh`, `.ps1`, `.py`, `.js` or `.mjs`, and needs the same executable
+  acknowledgement as editing one. It does nothing until a `hooks` entry in `settings.json` names it.
+
+A new file starts from a short template and opens in the editor. **A create never replaces a file**:
+it is published with a hard link, which refuses an existing name (on a volume without hard links,
+an exclusive create does the same, without the atomic publish). So it needs no snapshot, and its
+undo is a delete. Managed policy, plugins and Claude Code's own project memory are not offered.
+
+**Delete** is in the file viewer and asks first, in the page. It takes a snapshot, and deletes only
+if that snapshot holds the file: a file over the 2 MB cap, which snapshots skip, is refused, since
+deleting it would have no way back. The mtime check that guards a save guards a delete too. The
+result names the snapshot; restore the file from **Snapshots**, where it shows as `gone from disk`.
+
+`GET /api/manifest` serves the create policy (`write.create`) from the same tables the server builds
+the choices from.
+
 ### What is editable
 
-Categories `memory`, `settings`, `mcp`, `agent`, `skill`, `command` and `hook`. The `other` category
-is excluded on purpose: it is the bucket for files the scan lists but does not understand, and
-editing an unclassified file is how you corrupt something structured.
-
-This list is served by `GET /api/manifest`, derived from the same sets the guards consult, and the
-UI reads it from there. There is no second copy to drift.
+The editable categories are served by `GET /api/manifest` (`write.editableCategories`), derived from
+the same set the guards consult, and the UI reads them from there, so there is no second copy here
+to drift. `other` is never among them: it is the bucket for files the scan lists but does not
+understand, and editing an unclassified file is how you corrupt something structured. Delete follows
+the same set.
 
 ## Snapshots
 
@@ -267,6 +297,11 @@ that tree is a restore target, and a backup the restore can overwrite is not a b
   (`same` / `changed` / `missing` / `error`), then choose what to put back. Changed files are
   preselected; identical ones are not, because restoring them is a write with no effect.
 - **A restore takes its own snapshot first**, so it is itself undoable.
+- **A file gone from disk can be restored**, including after a rescan that no longer lists it, if it
+  lies inside a user or directory level's config folders (or is one of a directory's own config
+  files). It is created rather than written over: if something has appeared at that path since the
+  scan, the restore of that file fails and says so, because the restore's own snapshot could not
+  hold the newcomer. Missing folders, such as a removed skill's, are made again.
 
 > **Snapshots can contain secrets.** `~/.claude.json`, `settings.local.json` and `.mcp.json` are part
 > of the lineage and can hold OAuth tokens. They are flagged `sensitive` in the manifest rather than

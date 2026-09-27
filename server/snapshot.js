@@ -16,7 +16,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { snapshotRoot } from './paths.js';
+import { samePathKey, snapshotRoot } from './paths.js';
 import { MAX_FILE_BYTES, describeError, isSecret, isSensitive } from './safety.js';
 
 /** Manifest schema version. Bumped when the on-disk shape changes. */
@@ -59,18 +59,65 @@ async function isReadOnly(p) {
   }
 }
 
-async function renameRetrying(from, to) {
+/** Runs `op` on `target`, retrying while another process holds it open (see above). */
+async function retryingWhileLocked(op, target) {
   let waited = 0;
   for (let delay = 10; ; delay = Math.min(delay * 2, 200)) {
     try {
-      return await fs.rename(from, to);
+      return await op();
     } catch (err) {
       if (process.platform !== 'win32' || !RENAME_RETRY_CODES.has(err.code) || waited >= RENAME_RETRY_MS) throw err;
-      if (await isReadOnly(to)) throw err;
+      if (await isReadOnly(target)) throw err;
       await new Promise((r) => setTimeout(r, delay));
       waited += delay;
     }
   }
+}
+
+async function renameRetrying(from, to) {
+  return retryingWhileLocked(() => fs.rename(from, to), to);
+}
+
+/**
+ * Creates a file that must not exist yet (#15), and never replaces one that
+ * does: a create that silently won a race with an editor would destroy a file
+ * no snapshot holds, because it was not there when the scan ran.
+ *
+ * The content goes to a temp file first and is published with a hard link,
+ * which fails with EEXIST instead of replacing, so the file appears whole or
+ * not at all. A volume without hard links (FAT, some shares) gets an exclusive
+ * create instead: still never a replacement, but a crash mid-write could leave
+ * a partial new file there. Missing folders are made first, which is how a
+ * level's .claude/agents/ comes to exist.
+ */
+export async function createExclusive(absPath, data) {
+  const dir = path.dirname(absPath);
+  await fs.mkdir(dir, { recursive: true });
+  const temp = path.join(dir, `.layercake-tmp-${crypto.randomBytes(6).toString('hex')}`);
+  try {
+    await fs.writeFile(temp, data);
+    try {
+      await fs.link(temp, absPath);
+    } catch (err) {
+      if (err.code === 'EEXIST') throw err;
+      await fs.writeFile(absPath, data, { flag: 'wx' });
+    }
+  } finally {
+    try {
+      await fs.rm(temp, { force: true });
+    } catch {
+      /* an orphaned temp file; the target is either whole or absent */
+    }
+  }
+}
+
+/**
+ * Deletes one file (#15). Only ever called by writefile.js after a snapshot
+ * that holds the file. Retried like a rename, because Windows refuses to
+ * delete a file another process has open.
+ */
+export async function removeFile(absPath) {
+  return retryingWhileLocked(() => fs.unlink(absPath), absPath);
 }
 
 export async function atomicWrite(absPath, data) {
@@ -333,7 +380,11 @@ export async function compareSnapshot(id) {
  * Takes its own snapshot of current state first, so a restore is itself
  * undoable. `lineage` is required for that reason and not optional.
  */
-export async function restoreFiles(id, absPaths, lineage) {
+export async function restoreFiles(id, absPaths, lineage, { absentPaths = [] } = {}) {
+  // Paths the current scan did not find (#92): gone from disk when it ran.
+  // Those are created, never replaced, because the undo snapshot below is
+  // taken from the scan and cannot hold a file that has appeared since.
+  const absentKeys = new Set(absentPaths.map((p) => samePathKey(p)));
   const manifest = await readManifest(id);
   const wanted = new Set(absPaths.map((p) => path.resolve(p)));
   const chosen = manifest.files.filter((f) => wanted.has(path.resolve(f.absPath)));
@@ -352,10 +403,15 @@ export async function restoreFiles(id, absPaths, lineage) {
     const stored = path.join(snapshotRoot(), safeId(id), FILES_DIR, ...entry.stored.split('/'));
     try {
       const data = await fs.readFile(stored);
-      await atomicWrite(entry.absPath, data);
+      if (absentKeys.has(samePathKey(entry.absPath))) await createExclusive(entry.absPath, data);
+      else await atomicWrite(entry.absPath, data);
       restored.push(entry.absPath);
     } catch (err) {
-      failed.push({ absPath: entry.absPath, ...describeError(err) });
+      const described = describeError(err);
+      if (err.code === 'EEXIST') {
+        described.message = 'A file has appeared here since the scan. Re-scan and restore again, so it is snapshotted first.';
+      }
+      failed.push({ absPath: entry.absPath, ...described });
     }
   }
   return { restored, failed, undoSnapshotId: undo.id };

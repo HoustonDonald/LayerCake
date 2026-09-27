@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 
-import { getManifest, getSession, listSessions, readFile, scan } from './api.js';
+import { createFile, deleteFile, getManifest, getSession, listSessions, readFile, scan } from './api.js';
 import useWatch from './useWatch.js';
 import { pathKey } from './sessionFormat.js';
 import LineageTree from './components/LineageTree.jsx';
@@ -78,6 +78,9 @@ export default function App() {
   // disagree about what is editable.
   const [policy, setPolicy] = useState(null);
   const [overlay, setOverlay] = useState(null);
+  // The outcome of a create or delete, kept on screen after the rescan that
+  // follows it (which clears the selection), with the undo snapshot id.
+  const [flash, setFlash] = useState(null);
 
   // Live filesystem events for the current scan. Reports only: re-scanning is
   // the user's call, because it replaces the lineage under whatever is open.
@@ -121,9 +124,11 @@ export default function App() {
           localStorage.setItem(RECENT_KEY, JSON.stringify(next));
           return next;
         });
+        return result;
       } catch (err) {
         setScanError(err.message);
         setLineage(null);
+        return null;
       } finally {
         setScanning(false);
       }
@@ -171,26 +176,34 @@ export default function App() {
     if (next !== mode && leaveEditorOk()) setMode(next);
   };
 
+  // Takes the scan id rather than reading lineage, so a file can be opened in
+  // a scan that has only just replaced the one this render closed over.
+  const loadEntry = useCallback(async (scanId, entry, { edit = false } = {}) => {
+    setSelected(entry.absPath);
+    setMode('explorer');
+    setEditing(false);
+    setFileLoading(true);
+    try {
+      const result = await readFile(scanId, entry.absPath);
+      // category comes from the scan entry, not the file read: the editor
+      // needs it to know whether this is executable content, and the server
+      // makes the same distinction from the same source.
+      setFile({ ...result, category: entry.category });
+      if (edit && !result.error) setEditing(true);
+    } catch (err) {
+      setFile({ path: entry.absPath, kind: 'text', error: { code: 'EREQ', message: err.message } });
+    } finally {
+      setFileLoading(false);
+    }
+  }, []);
+
   const onSelect = useCallback(
     async (entry) => {
       if (!leaveEditorOk()) return;
-      setSelected(entry.absPath);
-      setMode('explorer');
-      setEditing(false);
-      setFileLoading(true);
-      try {
-        const result = await readFile(lineage.scanId, entry.absPath);
-        // category comes from the scan entry, not the file read: the editor
-        // needs it to know whether this is executable content, and the server
-        // makes the same distinction from the same source.
-        setFile({ ...result, category: entry.category });
-      } catch (err) {
-        setFile({ path: entry.absPath, kind: 'text', error: { code: 'EREQ', message: err.message } });
-      } finally {
-        setFileLoading(false);
-      }
+      setFlash(null);
+      await loadEntry(lineage.scanId, entry);
     },
-    [lineage, leaveEditorOk]
+    [lineage, leaveEditorOk, loadEntry]
   );
 
   // After a save the file on disk has a new mtime. Re-reading keeps the next
@@ -216,9 +229,54 @@ export default function App() {
   const onRestored = useCallback(
     async (res) => {
       if (res?.restored?.length) suppressWatch(res.restored);
+      // A file that was gone from disk is back (#92), and the lineage does not
+      // list it yet: rescan, so it can be opened again.
+      const known = new Set((lineage?.levels || []).flatMap((l) => l.entries).map((e) => pathKey(e.absPath)));
+      if ((res?.restored || []).some((p) => !known.has(pathKey(p)))) {
+        clearWatch();
+        await runScan(lineage.projectDir);
+        return;
+      }
       await reloadSelected();
     },
-    [suppressWatch, reloadSelected]
+    [suppressWatch, reloadSelected, lineage, clearWatch, runScan]
+  );
+
+  // #15. Both rescan afterwards, because the scan result is the allowlist: a
+  // new file cannot be opened, nor a deleted one forgotten, until it is redone.
+  const onCreate = useCallback(
+    async ({ option, name, ext, acknowledge }) => {
+      if (!leaveEditorOk()) return false;
+      const res = await createFile({
+        scanId: lineage.scanId,
+        createId: option.id,
+        name,
+        ext,
+        acknowledgeExecutable: acknowledge,
+      });
+      suppressWatch([res.absPath]);
+      clearWatch();
+      const next = await runScan(lineage.projectDir);
+      setFlash({ text: `Created ${res.absPath} from a template.`, sub: res.notice });
+      const entry = next?.levels.flatMap((l) => l.entries).find((e) => pathKey(e.absPath) === pathKey(res.absPath));
+      if (entry) await loadEntry(next.scanId, entry, { edit: true });
+      return true;
+    },
+    [lineage, leaveEditorOk, suppressWatch, clearWatch, runScan, loadEntry]
+  );
+
+  const onDelete = useCallback(
+    async (target) => {
+      const res = await deleteFile({ scanId: lineage.scanId, path: target.path, expectedMtime: target.mtime || null });
+      suppressWatch([res.absPath]);
+      clearWatch();
+      await runScan(lineage.projectDir);
+      setFlash({
+        text: `Deleted ${res.absPath}. Snapshot ${res.undoSnapshotId} holds it; restore it from Snapshots.`,
+        sub: res.notice,
+      });
+    },
+    [lineage, suppressWatch, clearWatch, runScan]
   );
 
   const rescanCurrent = useCallback(() => {
@@ -291,6 +349,17 @@ export default function App() {
       </header>
 
       {scanError && <div className="error-banner">{scanError}</div>}
+      {flash && (
+        <div className="flash-banner">
+          <div>
+            {flash.text}
+            {flash.sub && <div className="notice-sub">{flash.sub}</div>}
+          </div>
+          <button className="btn btn-small" onClick={() => setFlash(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {lineage && (
         <WatchBanner
@@ -316,7 +385,14 @@ export default function App() {
       <div className="panes">
         <div className="pane-left">
           {lineage ? (
-            <LineageTree lineage={lineage} selectedPath={selected} onSelect={onSelect} overlay={overlay} />
+            <LineageTree
+              lineage={lineage}
+              selectedPath={selected}
+              onSelect={onSelect}
+              overlay={overlay}
+              namePattern={policy?.create?.namePattern}
+              onCreate={policy?.create ? onCreate : null}
+            />
           ) : (
             <div className="empty-state">
               {scanning ? 'Scanning…' : 'Enter a project directory and press Scan.'}
@@ -354,6 +430,7 @@ export default function App() {
               loading={fileLoading}
               editableCategories={policy?.editableCategories}
               onEdit={file && !file.error ? () => setEditing(true) : null}
+              onDelete={onDelete}
             />
           ) : (
             <div className="empty-state">

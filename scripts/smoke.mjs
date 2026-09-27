@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url';
 
 import { projectSlug } from '../server/paths.js';
 import { makeSessionFixture, runLaunchChecks, runSessionChecks, runSummaryChecks, stopFixtureProcesses } from './smoke-sessions.mjs';
+import { runCreateChecks } from './smoke-create.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -1138,6 +1139,11 @@ try {
 
   // --- AI summaries, against a stand-in claude --------------------------------
   await runSummaryChecks({ base: BASE, token, check, skip, proj, smokeDir, appData });
+
+  // --- create and delete (#15), restoring a file gone from disk (#92) --------
+  // Last, because it scans more often than the server keeps scans (8), which
+  // evicts the scan every check above still holds an id for.
+  await runCreateChecks({ base: BASE, token, check, smokeDir, configHome });
 
   check('smoke\'s own server stayed up for the whole run', serverExit === null, `exit: ${serverExit}`);
 
