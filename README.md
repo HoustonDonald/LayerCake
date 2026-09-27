@@ -649,6 +649,7 @@ cli/             the layercake CLI, importing server modules directly
 scripts/
   start.js            build-if-stale, then serve
   launch.js           build, serve, wait for ready, open an app-mode window
+  build-if-stale.js   the client build rule, shared by start.js, launch.js and smoke.mjs
   install-shortcut.ps1  per-user Start Menu shortcut (-Desktop, -Uninstall)
   smoke.mjs           end to end test over the real HTTP API
   smoke-sessions.mjs  its session part: a synthetic Claude data folder and checks
@@ -729,8 +730,8 @@ What to know:
   window on another port), Edge takes the new window itself and the exe's own browser exits at once.
   The exe then stays up until no browser is running on that profile, so it stops when the last
   window on the profile closes, including windows that are not its own. A window closed within five
-  seconds of opening looks the same as that hand-off, so it leaves the exe running, invisibly,
-  until the next LayerCake window closes.
+  seconds of opening also stops it: it watches for the profile's lock file while its browser starts,
+  and a browser that showed one and then left the profile empty was closed, not handed off.
 - **Without Edge or Chrome** (Edge can be uninstalled in the EEA), it falls back to your default
   browser: a normal window in your normal profile, where your extensions run and can read the page,
   including the session token. It also cannot tell when that window closes, so it keeps running.
@@ -761,9 +762,10 @@ the way the built page does, and the server only serves that page from `public/`
 missing, Vite's error page says which. Only this page's own requests (the browser marks them
 same-origin) are presented to the origin guard as the server's page, and Vite's CORS is off so no
 other localhost page can read the token. All of it lives in `vite.config.js` and none of it reaches a
-build.
+build. The dev server serves the cake at `/favicon.ico` too, straight from `desktop/layercake.ico`.
 
-`npm run smoke` creates its own fixture tree, starts a server on its own port with its own snapshot
+`npm run smoke` rebuilds the client first if `public/` is stale (the same rule as `npm start`),
+creates its own fixture tree, starts a server on its own port with its own snapshot
 store, drives the real HTTP API, and removes everything it made. It needs no framework and adds no
 dependency. Checks this machine cannot run print as `SKIP` with the reason, never as a pass. The
 mapped-drive checks run only with `SMOKE_MAPPED_DRIVE=1`, because they map a free drive letter to

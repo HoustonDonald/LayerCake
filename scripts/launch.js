@@ -14,15 +14,14 @@
  */
 
 import { spawn } from 'node:child_process';
-import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { HOST, openWindow, probe } from '../desktop/window.js';
+import { buildClientIfStale } from './build-if-stale.js';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const bundle = path.join(root, 'public', 'index.html');
 const serverEntry = path.join(root, 'server', 'index.js');
 
 const READY_TIMEOUT_MS = 15000;
@@ -74,68 +73,6 @@ if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
 }
 const appUrl = `http://${HOST}:${PORT}`;
 
-/* ------------------------------------------------------------- build if stale */
-
-/**
- * Mirrored from scripts/start.js rather than imported.
- *
- * start.js does its work at module scope and ends by importing the server,
- * which starts listening as a side effect of the import. Importing it here
- * would start a server this script cannot own, cannot pass a port to, and
- * cannot shut down on Ctrl+C. Factoring the shared part out would mean editing
- * start.js, which is out of scope for this change. The duplicated part is the
- * mtime walk and the one comparison below; if either file's build rule changes,
- * change both.
- */
-function newestMtime(dir) {
-  let newest = 0;
-  const stack = [dir];
-  while (stack.length) {
-    const current = stack.pop();
-    let entries;
-    try {
-      entries = fs.readdirSync(current, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const abs = path.join(current, entry.name);
-      if (entry.isDirectory()) stack.push(abs);
-      else {
-        try {
-          newest = Math.max(newest, fs.statSync(abs).mtimeMs);
-        } catch {
-          /* unreadable source file: ignore, the build will report it */
-        }
-      }
-    }
-  }
-  return newest;
-}
-
-function run(command, args) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: root,
-      stdio: 'inherit',
-      shell: process.platform === 'win32',
-    });
-    child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`${command} exited ${code}`))));
-    child.on('error', reject);
-  });
-}
-
-async function buildIfStale() {
-  const bundleMtime = fs.existsSync(bundle) ? fs.statSync(bundle).mtimeMs : 0;
-  const sourceMtime = newestMtime(path.join(root, 'client'));
-  if (bundleMtime < sourceMtime) {
-    process.stdout.write('Building client bundle...\n');
-    await run('npx', ['vite', 'build']);
-  } else {
-    process.stdout.write('Client bundle up to date.\n');
-  }
-}
-
 /* -------------------------------------------------------------- readiness wait */
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -172,7 +109,7 @@ if (await probe(PORT)) {
   process.exit(0);
 }
 
-await buildIfStale();
+await buildClientIfStale();
 
 // Spawned rather than imported so this process keeps a handle on it. An import
 // would put the listener inside this process, and Ctrl+C handling would then be

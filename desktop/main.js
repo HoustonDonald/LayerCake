@@ -30,7 +30,7 @@
 import { getAsset, isSea } from 'node:sea';
 
 import { trackInflight } from './inflight.js';
-import { HOST, openWindow, probe, profileInUse, showError } from './window.js';
+import { HOST, openWindow, probe, profileInUse, profileLock, showError } from './window.js';
 
 // server/app.js is imported inside main(), not here. A static import runs every
 // server module's top level before the uncaughtException handler below exists,
@@ -59,6 +59,9 @@ const REATTACH_MS = 5000;
  * one we started. A stat each time, so the only cost of polling is latency.
  */
 const PROFILE_POLL_MS = 500;
+
+/** How often to look for the lockfile while our own browser starts (watchForLock). */
+const LOCK_WATCH_MS = 100;
 
 /**
  * The most the process waits, after its window has closed, for a handler that
@@ -141,18 +144,40 @@ function openAppWindow(url) {
   // window would fail the same way; with one, at least no invisible server is
   // left holding the port.
   child.on('error', () => process.exit(1));
-  const appWindow = { child, launchedAt, exitedAt: null };
+  const appWindow = { child, launchedAt, exitedAt: null, lockSeen: false };
   appWindow.exited = new Promise((resolve) => {
     child.once('exit', () => {
       appWindow.exitedAt = Date.now();
       resolve(appWindow.exitedAt);
     });
   });
+  watchForLock(appWindow);
   return appWindow;
 }
 
 function handedOff(appWindow) {
   return appWindow.exitedAt !== null && appWindow.exitedAt - appWindow.launchedAt < HANDOFF_MS;
+}
+
+/**
+ * Looks at the profile while our browser is starting, to learn whether this
+ * Chromium keeps the lockfile at all (#93). A browser exit inside HANDOFF_MS
+ * is then either a hand-off or the user closing the window at once, and with
+ * nothing holding the profile afterwards the two look alike; what separates
+ * them is whether the lockfile can be trusted to show a browser that is there.
+ * Only a successful stat counts, never an 'unknown'. It stops at the first
+ * sighting (the lock appears within about 0.3 s of the spawn) or at
+ * HANDOFF_MS, after which the answer no longer matters, so a Chromium without
+ * the file costs 50 stats, not a poll for the life of the window.
+ */
+async function watchForLock(appWindow) {
+  while (appWindow.exitedAt === null && Date.now() - appWindow.launchedAt < HANDOFF_MS) {
+    if ((await profileLock()) === 'held') {
+      appWindow.lockSeen = true;
+      return;
+    }
+    await sleep(LOCK_WATCH_MS);
+  }
 }
 
 /**
@@ -166,15 +191,17 @@ function handedOff(appWindow) {
  * start a new browser on the profile as ours exits (#10). Either way, stop when
  * no browser holds the profile any more.
  *
- * A hand-off to a browser that does NOT show as holding the profile waits for
- * one to appear, which may be never: that is how the exe behaved before it
- * could see the profile at all, kept for a Chromium that stops keeping the
- * lockfile. Staying up is the safe side of not knowing, since a window whose
+ * A browser exit inside HANDOFF_MS with nothing holding the profile is a quick
+ * close when we saw the lockfile while our browser ran: this Chromium keeps it,
+ * so an empty profile means no window is left (#93). If we never saw it, this
+ * may be a Chromium that does not keep the file, where a hand-off also leaves
+ * the profile looking empty, so wait for a browser to appear, which may be
+ * never. Staying up is the safe side of not knowing, since a window whose
  * server has vanished is worse than an idle process.
  */
 async function serveUntilWindowsClose(server, inflight, appWindow) {
   await appWindow.exited;
-  if (handedOff(appWindow)) {
+  if (handedOff(appWindow) && !appWindow.lockSeen) {
     while (!(await profileInUse())) await sleep(PROFILE_POLL_MS);
   }
   while (await profileInUse()) await sleep(PROFILE_POLL_MS);

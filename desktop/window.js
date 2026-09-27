@@ -114,8 +114,9 @@ function userDataDir() {
 }
 
 /**
- * Resolves true while a browser process is running on the app window's
- * profile, whether or not we started it.
+ * Whether a browser process is running on the app window's profile, whether or
+ * not we started it: 'held', 'free', or 'unknown' when the stat failed for any
+ * reason other than the file not being there.
  *
  * Chromium on Windows keeps <profile>\lockfile open for the whole life of the
  * browser process that owns the profile, and the file disappears when that
@@ -127,19 +128,25 @@ function userDataDir() {
  * A synchronous stat of a profile folder on a share that stops answering would
  * hold every request until Windows gave up (reasoned, from #14, where one
  * synchronous call on an unroutable share blocked the event loop for 21 s).
- *
- * Any error other than "not there" counts as in use, because the caller keeps a
- * server up while this is true, and a server nobody needs is the safe mistake
- * where a window without its server is not. Windows only, like the exe: POSIX
- * Chromium marks its profile with a SingletonLock symlink instead.
+ * Windows only, like the exe: POSIX Chromium marks its profile with a
+ * SingletonLock symlink instead.
  */
-export async function profileInUse() {
+export async function profileLock() {
   try {
     await fs.promises.stat(path.join(userDataDir(), 'lockfile'));
-    return true;
+    return 'held';
   } catch (err) {
-    return !(err.code === 'ENOENT' || err.code === 'ENOTDIR');
+    return err.code === 'ENOENT' || err.code === 'ENOTDIR' ? 'free' : 'unknown';
   }
+}
+
+/**
+ * True unless the profile is known to be free. 'unknown' counts as in use,
+ * because the caller keeps a server up while this is true, and a server nobody
+ * needs is the safe mistake where a window without its server is not.
+ */
+export async function profileInUse() {
+  return (await profileLock()) !== 'free';
 }
 
 /**
