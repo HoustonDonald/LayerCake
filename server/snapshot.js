@@ -276,7 +276,14 @@ export async function createSnapshot(lineage, { label = '' } = {}) {
       await fs.mkdir(path.dirname(dest), { recursive: true });
       // copyFile rather than a utf8 read/write round trip: hooks may be any
       // extension, including a binary, and a round trip would corrupt one.
-      await shareGatedCall(target.absPath, () => fs.copyFile(target.absPath, dest), target.absPath, FILE_TIMEOUT_MS);
+      // Retried like a rename while another program holds the file (#107): an
+      // antivirus or backup tool's brief exclusive lock used to fail the
+      // snapshot, and so the save, delete or restore waiting on it. `dest`
+      // stands in for the read-only check, which is about the target of a write.
+      await retryingWhileLocked(
+        () => shareGatedCall(target.absPath, () => fs.copyFile(target.absPath, dest), target.absPath, FILE_TIMEOUT_MS),
+        dest
+      );
       files.push({
         absPath: target.absPath,
         stored: stored.split(path.sep).join('/'),
@@ -384,7 +391,7 @@ export async function readSnapshotFile(id, absPath) {
     err.status = 404;
     throw err;
   }
-  return { entry, content: await fs.readFile(storedPathOf(id, entry), 'utf8') };
+  return { entry, content: await fs.readFile(await storedPathOf(id, entry), 'utf8') };
 }
 
 function fail(message, status, code) {
@@ -401,8 +408,13 @@ function fail(message, status, code) {
  * must sit inside this snapshot's files/ folder, and neither it nor the file
  * it stands for may be a credential file. Equality with mirrorPath() is not
  * required, so a future change to that function cannot orphan old snapshots.
+ *
+ * Inside by its REAL path too, and a plain file with one name (#106): a
+ * junction inside files/ read any folder, and a hard link there, under a
+ * harmless name, read a credential file. A snapshot's copies are made by
+ * copyFile, so neither link is ever one of LayerCake's own.
  */
-function storedPathOf(id, entry) {
+async function storedPathOf(id, entry) {
   const root = path.join(snapshotRoot(), safeId(id), FILES_DIR);
   const stored = path.join(root, ...String(entry.stored || '').split('/'));
   const rel = path.relative(root, stored);
@@ -411,6 +423,14 @@ function storedPathOf(id, entry) {
   }
   if (isSecret(String(entry.absPath || '')) || isSecret(stored)) {
     throw fail('Credential file. Never read and never written by this tool.', 403, 'EREDACTED');
+  }
+  const [realRoot, realStored, link] = await Promise.all([fs.realpath(root), fs.realpath(stored), fs.lstat(stored)]);
+  const realRel = path.relative(realRoot, realStored);
+  if (!realRel || realRel.startsWith('..') || path.isAbsolute(realRel)) {
+    throw fail('This snapshot entry resolves outside its snapshot.', 400, 'EBADMANIFEST');
+  }
+  if (!link.isFile() || link.nlink > 1 || isSecret(realStored)) {
+    throw fail('This snapshot copy is a link, not a copy LayerCake made.', 400, 'EBADMANIFEST');
   }
   return stored;
 }
@@ -477,7 +497,7 @@ export async function restoreFiles(id, absPaths, lineage, { absentPaths = [] } =
   const failed = [];
   for (const entry of chosen) {
     try {
-      const data = await fs.readFile(storedPathOf(id, entry));
+      const data = await fs.readFile(await storedPathOf(id, entry));
       const key = samePathKey(entry.absPath);
       if (absentKeys.has(key) || !(await presentOnDisk(entry.absPath))) {
         // Nothing there to lose: created, and never over a file that has

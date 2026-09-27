@@ -44,6 +44,9 @@ export const CLAUDE_DIR_TREES = [
  */
 export const TEMP_PREFIX = '.layercake-tmp-';
 
+/** Files probed directly in <config home>/plugins. */
+export const PLUGIN_MANIFEST_FILES = ['installed_plugins.json', 'known_marketplaces.json', 'blocklist.json'];
+
 export function homeDir() {
   return os.homedir();
 }

@@ -13,6 +13,8 @@
 
 import path from 'node:path';
 
+import { TEMP_PREFIX } from './paths.js';
+
 /**
  * Never read, never listed, never acknowledged beyond a redaction marker.
  * Matched on basename, case-insensitively (Windows filesystems are case
@@ -252,6 +254,25 @@ const TREE_SKIP_DIRS = new Set(['.trash', 'node_modules', '.git']);
 
 export function isTreeSkipDir(name) {
   return TREE_SKIP_DIRS.has(String(name).toLowerCase());
+}
+
+/**
+ * The walk's two rules, in one place for the scan and for the restore fence,
+ * so a restore can only put a file where the next scan lists it (#105).
+ *
+ * A folder inside a tree is skipped when it is tree-level runtime state, and
+ * in hooks/, which takes any extension, when it is .claude-root runtime state
+ * too (#104). A file is taken when its extension fits the tree, it is not a
+ * LayerCake temp file, and it is not a credential file.
+ */
+export function treeSkipsDir(category, name) {
+  return isTreeSkipDir(name) || (category === 'hook' && isNonConfigDir(name));
+}
+
+export function treeTakesFile(exts, name) {
+  const lower = String(name).toLowerCase();
+  if (lower.startsWith(TEMP_PREFIX) || isSecret(name)) return false;
+  return !exts || exts.includes(path.extname(lower));
 }
 
 export function isEditableCategory(category) {

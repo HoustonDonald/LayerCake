@@ -10,12 +10,13 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import yaml from 'js-yaml';
 
-import { createSnapshot, atomicWrite, createExclusive, removeFile } from './snapshot.js';
+import { createSnapshot, atomicWrite, createExclusive, removeFile, restoreFiles } from './snapshot.js';
 import {
   MAX_WRITE_BYTES,
   isEditableCategory,
   isExecutableCategory,
-  isTreeSkipDir,
+  treeSkipsDir,
+  treeTakesFile,
   isSecret,
   commandKeysChanged,
   createFiles,
@@ -23,7 +24,7 @@ import {
   createNameProblem,
   createTrees,
 } from './safety.js';
-import { CLAUDE_DIR_FILE_TARGETS, CLAUDE_DIR_TREES, DIR_FILE_TARGETS, samePathKey } from './paths.js';
+import { CLAUDE_DIR_FILE_TARGETS, CLAUDE_DIR_TREES, DIR_FILE_TARGETS, PLUGIN_MANIFEST_FILES, samePathKey } from './paths.js';
 import { readForDisplay, splitFrontmatter } from './readfile.js';
 import { shareGatedCall } from './sharegate.js';
 
@@ -269,6 +270,9 @@ export function createOptions(lineage) {
     const claudeDir = claudeDirOf(level);
     const unread = new Set([samePathKey(level.dir), samePathKey(claudeDir)]);
     if (level.errors.some((e) => e.path && unread.has(samePathKey(e.path)))) continue;
+    // A tree folder the scan could not list: a file made there would not be
+    // listed by the next scan either (#108).
+    const treeUnread = (folder) => level.errors.some((e) => e.path && samePathKey(e.path) === samePathKey(folder));
     const shown = (abs) => path.relative(level.dir, abs).split(path.sep).join('/');
     // This directory's .claude IS the configuration home: the user level has
     // offered its contents already, by its own table, so nothing more here.
@@ -293,7 +297,7 @@ export function createOptions(lineage) {
     }
     for (const t of createTrees()) {
       const folder = path.join(claudeDir, t.tree);
-      if (isConfigHome || !offerOnce(folder)) continue;
+      if (isConfigHome || treeUnread(folder) || !offerOnce(folder)) continue;
       options.push({
         id: `${level.id}:tree:${t.tree}`,
         levelId: level.id,
@@ -451,11 +455,36 @@ function manifestShape(claudeDir, absPath) {
   if (!parts) return false;
   if (parts.length === 1) return CLAUDE_DIR_FILE_TARGETS.some((t) => sameName(t.name, parts[0]));
   const tree = CLAUDE_DIR_TREES.find((t) => sameName(t.name, parts[0]));
-  // walkTree lists files down to maxDepth folders below the tree root.
-  if (!tree || parts.length - 1 > tree.maxDepth + 1) return false;
-  if (parts.slice(1, -1).some((segment) => isTreeSkipDir(segment))) return false;
-  return !tree.exts || tree.exts.includes(path.extname(absPath).toLowerCase());
+  return Boolean(tree) && treeShape(tree, parts.slice(1));
 }
+
+/**
+ * Whether a walk of `tree` lists a file at `rest` (the segments below the tree
+ * root): within its depth (walkTree lists files down to maxDepth folders
+ * below the root), under no folder it skips, and a file it takes. The same
+ * two rules walkTree applies (#105).
+ */
+function treeShape(tree, rest) {
+  if (!rest.length || rest.length - 1 > tree.maxDepth) return false;
+  if (rest.slice(0, -1).some((segment) => treeSkipsDir(tree.category, segment))) return false;
+  return treeTakesFile(tree.exts, rest[rest.length - 1]);
+}
+
+/** The plugins folder's shapes: its manifest files, and a cached plugin version's trees and plugin.json. */
+function pluginShape(pluginsDir, absPath) {
+  const parts = segmentsUnder(pluginsDir, absPath);
+  if (!parts) return false;
+  if (parts.length === 1) return PLUGIN_MANIFEST_FILES.some((n) => sameName(n, parts[0]));
+  // cache/<marketplace>/<plugin>/<version>/...
+  if (!sameName(parts[0], 'cache') || parts.length < 6) return false;
+  const rest = parts.slice(4);
+  if (rest.length === 2 && sameName(rest[0], '.claude-plugin') && sameName(rest[1], 'plugin.json')) return true;
+  const tree = CLAUDE_DIR_TREES.find((t) => sameName(t.name, rest[0]));
+  return Boolean(tree) && treeShape(tree, rest.slice(1));
+}
+
+/** Project memory as scanProjectMemory walks it: .md files, two folders deep. */
+const MEMORY_TREE = { category: 'memory', maxDepth: 2, exts: ['.md'] };
 
 /**
  * Whether a restore may put back a file the current scan did not find (#92):
@@ -478,17 +507,55 @@ export function restorableWhenAbsent(lineage, absPath) {
   if (isSecret(absPath)) return false;
   const key = samePathKey(absPath);
   for (const level of lineage.levels) {
-    if (level.absent.some((a) => samePathKey(a.absPath) === key)) return true;
+    // A probed FILE recorded absent. Folder records (".claude/", "agents/")
+    // are not: restoring a file there broke the level (#105).
+    if (level.absent.some((a) => !String(a.name || '').endsWith('/') && samePathKey(a.absPath) === key)) return true;
     if (!level.dir) continue;
     if (level.kind === 'directory') {
       if (DIR_FILE_TARGETS.some((t) => samePathKey(path.join(level.dir, t.name)) === key)) return true;
       if (manifestShape(path.join(level.dir, '.claude'), absPath)) return true;
     } else if (level.kind === 'user') {
       if (manifestShape(level.dir, absPath)) return true;
-    } else if (level.kind === 'project-memory' || level.kind === 'plugins') {
+    } else if (level.kind === 'project-memory') {
       const parts = segmentsUnder(level.dir, absPath);
-      if (parts && !parts.slice(0, -1).some((segment) => isTreeSkipDir(segment))) return true;
+      if (parts && treeShape(MEMORY_TREE, parts)) return true;
+    } else if (level.kind === 'plugins') {
+      if (pluginShape(level.dir, absPath)) return true;
     }
   }
   return false;
+}
+
+export const NOT_RESTORABLE =
+  'Not restorable under this scan: it would not list this path. Scan the project the snapshot came from.';
+
+/**
+ * The one way to restore (#105): the fence applies to every caller, the HTTP
+ * route and the CLI alike. The CLI used to call restoreFiles directly, with no
+ * fence at all. A path the lineage lists is restored in place; a path it
+ * would list but that is gone from disk is created (#92); anything else is
+ * reported in `failed`, and a batch with nothing restorable is refused.
+ */
+export async function restoreSnapshotFiles({ id, paths, lineage }) {
+  const listed = new Set(
+    lineage.levels.flatMap((l) => l.entries).filter((e) => e.type === 'file').map((e) => samePathKey(e.absPath))
+  );
+  const accepted = [];
+  const absentPaths = [];
+  const refused = [];
+  for (const p of paths) {
+    if (listed.has(samePathKey(p))) accepted.push(p);
+    else if (restorableWhenAbsent(lineage, p)) {
+      accepted.push(p);
+      absentPaths.push(p);
+    } else refused.push({ absPath: p, code: 'ENOTINSCAN', message: NOT_RESTORABLE });
+  }
+  if (!accepted.length) {
+    const err = refuse(NOT_RESTORABLE, 'ENOTINSCAN', 403);
+    err.details = { refused };
+    throw err;
+  }
+  const result = await restoreFiles(id, accepted, lineage, { absentPaths });
+  result.failed.push(...refused);
+  return result;
 }

@@ -21,13 +21,13 @@ import { parseArgs } from 'node:util';
 import { flatten } from '../server/flatten.js';
 import { snapshotRoot } from '../server/paths.js';
 import { timedFsCall } from '../server/sharegate.js';
+import { restoreSnapshotFiles } from '../server/writefile.js';
 import { resolveLineage } from '../server/scan.js';
 import {
   compareSnapshot,
   createSnapshot,
   listSnapshots,
   readManifest,
-  restoreFiles,
 } from '../server/snapshot.js';
 import { err, localTime, out, padEnd, paint, plural, shortenPath } from './format.js';
 import {
@@ -320,7 +320,9 @@ async function cmdRestore(args) {
     return;
   }
 
-  const result = await restoreFiles(id, toWrite.map((r) => r.absPath), await resolveLineage(dir));
+  // Through the same fence as the HTTP route (#105): a snapshot entry the
+  // lineage would not list is reported as failed, never written.
+  const result = await restoreSnapshotFiles({ id, paths: toWrite.map((r) => r.absPath), lineage: await resolveLineage(dir) });
   out(paint.green(`Restored ${plural(result.restored.length, 'file')}.`));
   for (const p of result.restored) out(paint.dim(`  ${shortenPath(p, manifest.home)}`));
   if (result.failed.length) {

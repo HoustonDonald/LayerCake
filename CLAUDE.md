@@ -148,7 +148,10 @@ and refuses that file if not, so a file over the 2 MB cap is never replaced or r
 left (#96; delete had it first, #15). The snapshot records the hash of its stored copy, and the
 replace or unlink happens only while the file still has that hash, checked before EVERY attempt of
 the Windows lock retry, not once before it: a write landing while the file was locked used to be
-deleted unseen (#100). A create is the one write with no snapshot, by design: it
+deleted unseen (#100). A window of a few milliseconds between that check and the rename or unlink
+remains; closing it would need OS-level locking (#110). The snapshot's own copy is retried on a
+lock like the rename, so another program's brief exclusive lock delays a save rather than failing
+it (#107). A create is the one write with no snapshot, by design: it
 publishes with a hard link (`createExclusive`), which refuses an existing file, so it never replaces
 bytes and has nothing to back up; its undo is a delete. Anything that could replace a file stays on
 `atomicWrite` behind a snapshot.
@@ -163,8 +166,10 @@ backup the restore can overwrite is not a backup. See `snapshotRoot()`.
 
 **A snapshot manifest is checked, not trusted.** It is a plain file in LayerCake's own folder, and an
 edited `stored` path of `../../../x` once read any file on disk (#101). `storedPathOf` requires the
-copy to sit inside that snapshot's `files/` folder, and refuses a credential file either as the copy
-or as the file it stands for.
+copy to sit inside that snapshot's `files/` folder, by its real path as well as lexically, and to be a
+plain file with one name: a junction there read any folder, and a hard link there, under a harmless
+name, read a credential file (#106). It also refuses a credential file either as the copy or as the
+file it stands for.
 
 **Absence is data.** Every probed-but-missing path is recorded in `level.absent` and rendered. Never
 "optimize" a probe away because it is usually missing; the point of the tool is showing what was
@@ -187,11 +192,14 @@ Three routes extend it without breaking it (#15, #92):
   and directory levels, from the create tables in `safety.js`; at load `writefile.js` checks that
   every name in those tables is a scan manifest target, so a created file is one the next scan lists.
 - **`/api/delete` takes a scan entry**, like a write.
-- **`/api/restore` may put back a file the current scan did not find** only when it is in the snapshot
-  and `restorableWhenAbsent` says the current scan would list it there: a probed path it recorded
-  absent, a manifest shape under a `.claude` folder or the config home, or a file in the
-  project-memory or plugins folders. That covers everything delete allows, so a delete is always
-  undoable (#97). It is then created, never written over, because the restore's own snapshot comes from the scan and cannot hold
+- **Every restore goes through `restoreSnapshotFiles` in writefile.js**, the HTTP route and the CLI
+  alike; never call `snapshot.js`'s `restoreFiles` directly (the CLI once did, with no fence, #105).
+  It may put back a file the current scan did not find only when it is in the snapshot and
+  `restorableWhenAbsent` says the current scan would list it there: a probed FILE it recorded
+  absent (never a folder record), a manifest shape under a `.claude` folder or the config home,
+  project memory as the scan walks it, or the plugins folder's own layout. The tree rules are the
+  scan's own (`treeSkipsDir`, `treeTakesFile` in safety.js), so the two cannot drift apart. That
+  covers everything delete allows, so a delete is always undoable (#97). It is then created, never written over, because the restore's own snapshot comes from the scan and cannot hold
   a file that appeared since.
 
 **Watch events carry paths and verbs, never content.** `/api/watch` streams from whole directories,
@@ -416,6 +424,12 @@ partially. A truncated file restored is silent data loss.
 - **Paths are fenced lexically; junctions and symlinks are followed.** If `.claude/agents` (or
   `.claude` itself) is a junction, a create or save lands in its target, the way Claude Code reads
   it (#102). Whoever can plant a junction in a config folder can already write there.
+- **Case twins in a case-sensitive folder cannot be edited or deleted.** With `a.md` and `A.md` in a
+  folder WSL or `fsutil` made case-sensitive, a snapshot keeps one of them (paths are folded on
+  Windows), so a save or delete of either is refused rather than risk the other (#110).
+- **An unreadable config home is exercised on Linux only.** Windows reports every local stand-in
+  for a non-ENOENT stat error as ENOENT, so smoke skips that check there; a dead share was measured
+  by hand (#108).
 - **Hashing the stored copy (#100) is not observable in smoke.** It differs from hashing the source
   only if the source changes during the copy; a mutant that hashes the source again survives.
 - **Snapshots contain files that can hold OAuth tokens** (`~/.claude.json`, `settings.local.json`,

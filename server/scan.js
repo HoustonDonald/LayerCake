@@ -18,7 +18,7 @@ import path from 'node:path';
 import {
   DIR_FILE_TARGETS,
   CLAUDE_DIR_FILE_TARGETS,
-  TEMP_PREFIX,
+  PLUGIN_MANIFEST_FILES,
   CLAUDE_DIR_TREES,
   ancestorChain,
   claudeHome,
@@ -35,7 +35,8 @@ import {
 import {
   describeError,
   isNonConfigDir,
-  isTreeSkipDir,
+  treeSkipsDir,
+  treeTakesFile,
   isSecret,
   isSensitive,
 } from './safety.js';
@@ -200,7 +201,8 @@ async function walkTree(root, { maxDepth, exts, category, level, depth = 0, seen
       // hooks/ takes files of any extension, so a hook's own logs/ or cache/
       // would read as hooks; there the .claude root's runtime names are skipped
       // too. In the other trees such a name is a skill or a command (#98, #104).
-      if (isTreeSkipDir(dirent.name) || (category === 'hook' && isNonConfigDir(dirent.name))) {
+      // The rule is shared with the restore fence (#105).
+      if (treeSkipsDir(category, dirent.name)) {
         const { st } = await statOf(abs);
         level.entries.push(
           makeEntry({
@@ -220,10 +222,10 @@ async function walkTree(root, { maxDepth, exts, category, level, depth = 0, seen
       continue;
     }
     if (!dirent.isFile() && !dirent.isSymbolicLink()) continue;
-    // A temp file LayerCake left behind (a crash between write and rename)
-    // is not config; in hooks/, which takes any extension, it read as a hook (#102).
-    if (dirent.name.toLowerCase().startsWith(TEMP_PREFIX)) continue;
-    if (exts && !exts.includes(path.extname(dirent.name).toLowerCase())) continue;
+    // Not a LayerCake temp file (a crash between write and rename; in hooks/,
+    // which takes any extension, it read as a hook, #102), and of the tree's
+    // extensions. Shared with the restore fence (#105).
+    if (!treeTakesFile(exts, dirent.name)) continue;
     const { st, error } = await statOf(abs);
     level.entries.push({
       ...makeEntry({ absPath: abs, category, level, st, error }),
@@ -329,6 +331,14 @@ async function scanUser() {
         : `Applies to every project for this OS user. Location: ${source}.`,
   });
 
+  // A config home that cannot be read at all (on a share that does not
+  // answer, say) is an error on the level itself, so nothing is offered for
+  // creation there (#108). Missing is not an error: a fresh home is fine.
+  const homeStat = await statOf(claudeDir);
+  if (!homeStat.st && homeStat.error && homeStat.error.code !== 'ENOENT') {
+    level.errors.push({ path: claudeDir, ...describeError(homeStat.error) });
+  }
+
   for (const target of CLAUDE_DIR_FILE_TARGETS) {
     await probeFile(path.join(claudeDir, target.name), target.category, level);
   }
@@ -391,7 +401,7 @@ async function scanPlugins() {
     note: 'Plugin-provided skills, agents and commands. Namespaced as plugin:skill at runtime.',
   });
 
-  for (const name of ['installed_plugins.json', 'known_marketplaces.json', 'blocklist.json']) {
+  for (const name of PLUGIN_MANIFEST_FILES) {
     await probeFile(path.join(pluginsDir, name), 'plugin-manifest', level);
   }
 

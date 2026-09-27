@@ -484,4 +484,152 @@ export async function runCreateChecks({ base, token, check, skip, smokeDir, conf
     check('a skill named node_modules is refused: the scan would never list it',
       nm.status === 400 && !(await exists(path.join(proj, '.claude', 'skills', 'node_modules'))), `${nm.status}`);
   }
+
+  // --- #105: a restore puts a file only where the scan would list it --------
+  // A manifest edited to name places the old fence allowed and the scan never
+  // lists: a plugin marketplace script, a memory file of another extension, a
+  // LayerCake temp name in hooks/, and a FILE where the scan recorded a folder.
+  lin = await scan(proj);
+  const fenceSnap = await post('/api/snapshot', { scanId: lin.scanId, label: 'fence shapes' });
+  const fenceDir = path.join(snaps, fenceSnap.json.id);
+  const fenceManifest = JSON.parse(await fs.readFile(path.join(fenceDir, 'manifest.json'), 'utf8'));
+  const donor = fenceManifest.files.find((x) => same(x.absPath, path.join(proj, 'CLAUDE.md')));
+  const outsidePath = path.join(smokeDir, 'outside', 'startup', 'evil.cmd');
+  const unlisted = [
+    path.join(configHome, 'plugins', 'marketplaces', 'smoke-mkt', 'evil.sh'),
+    path.join(configHome, 'projects', projectSlug(proj), 'memory', 'notes.txt'),
+    path.join(proj, '.claude', 'hooks', '.layercake-tmp-fence'),
+    path.join(smokeDir, 'create', '.claude'),
+    outsidePath,
+  ];
+  for (const p of unlisted) fenceManifest.files.push({ ...donor, absPath: p });
+  await fs.writeFile(path.join(fenceDir, 'manifest.json'), JSON.stringify(fenceManifest, null, 2));
+  const fenced2 = await post('/api/restore', { scanId: lin.scanId, id: fenceSnap.json.id, paths: unlisted.slice(0, 4) });
+  const madeAny = (await Promise.all(unlisted.map((p) => exists(p)))).some(Boolean);
+  check('a restore never creates a file where the scan would not list it',
+    fenced2.status === 403 && !madeAny, `${fenced2.status} ${JSON.stringify(fenced2.json?.details?.refused?.map((x) => x.code))}`);
+
+  // The CLI restores through the same fence: it used to call restoreFiles
+  // directly and create the outside file.
+  {
+    const { spawnSync } = await import('node:child_process');
+    const repoRoot = path.dirname(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')));
+    const cli = spawnSync(process.execPath, [path.join(repoRoot, 'cli', 'index.js'), 'restore', fenceSnap.json.id, proj, '--only', 'evil.cmd', '--yes'], {
+      encoding: 'utf8',
+      env: { ...process.env, LAYERCAKE_SNAPSHOT_DIR: snaps, CLAUDE_CONFIG_DIR: configHome },
+    });
+    check('the CLI restore refuses a path the scan would not list, and writes nothing',
+      cli.status === 1 && !(await exists(outsidePath)) && /Not restorable/.test(cli.stderr + cli.stdout),
+      `exit ${cli.status}: ${(cli.stderr || cli.stdout).trim().slice(0, 160)}`);
+  }
+
+  // --- #106: a link planted in a snapshot's files/ is not a copy --------------
+  {
+    const outsideSecret = path.join(smokeDir, 'link-target-secret.txt');
+    await fs.writeFile(outsideSecret, 'SMOKE-LINK-SENTINEL\n');
+    const hard = path.join(fenceDir, 'files', 'linked', 'harmless.md');
+    await fs.mkdir(path.dirname(hard), { recursive: true });
+    await fs.link(outsideSecret, hard);
+    const junctionTarget = path.join(smokeDir, 'junction-target');
+    await fs.mkdir(junctionTarget, { recursive: true });
+    await fs.writeFile(path.join(junctionTarget, 'inner.md'), 'SMOKE-LINK-SENTINEL\n');
+    await fs.symlink(junctionTarget, path.join(fenceDir, 'files', 'jct'), 'junction');
+    const m2 = JSON.parse(await fs.readFile(path.join(fenceDir, 'manifest.json'), 'utf8'));
+    const agentEntry = m2.files.find((x) => same(x.absPath, path.join(proj, 'CLAUDE.md')));
+    const other2 = m2.files.find((x) => same(x.absPath, homeMemo));
+    agentEntry.stored = 'linked/harmless.md';
+    other2.stored = 'jct/inner.md';
+    await fs.writeFile(path.join(fenceDir, 'manifest.json'), JSON.stringify(m2, null, 2));
+    const viaHard = await get(`/api/snapshot/${fenceSnap.json.id}/file?path=${encodeURIComponent(path.join(proj, 'CLAUDE.md'))}`);
+    const viaJunction = await get(`/api/snapshot/${fenceSnap.json.id}/file?path=${encodeURIComponent(homeMemo)}`);
+    check('a hard link or a junction planted in a snapshot is refused, and reads nothing',
+      viaHard.status === 400 && viaJunction.status === 400 && !viaHard.text.includes('SMOKE-LINK') && !viaJunction.text.includes('SMOKE-LINK'),
+      `${viaHard.status} ${viaJunction.status}`);
+  }
+
+  // --- #110: restore inputs are strings -----------------------------------------
+  {
+    const arrId = await post('/api/restore', { scanId: lin.scanId, id: [fenceSnap.json.id], paths: [path.join(proj, 'CLAUDE.md')] });
+    const arrPath = await post('/api/restore', { scanId: lin.scanId, id: fenceSnap.json.id, paths: [[path.join(proj, 'CLAUDE.md')]] });
+    const arrQuery = await get(`/api/snapshot/${fenceSnap.json.id}/file?path[]=${encodeURIComponent(path.join(proj, 'CLAUDE.md'))}`);
+    check('a restore or snapshot read with an array where a string belongs is refused',
+      arrId.status === 400 && arrPath.status === 400 && arrQuery.status === 400, `${arrId.status} ${arrPath.status} ${arrQuery.status}`);
+  }
+
+  // --- #108: nothing is offered where the scan could not read a folder --------
+  // Asked of createOptions over a lineage with the errors a dead config home or
+  // an unlistable tree folder produce, since smoke has no dead share.
+  {
+    const { createOptions } = await import('../server/writefile.js');
+    const home = path.join(smokeDir, 'unread-home');
+    const dir = path.join(smokeDir, 'unread-dir');
+    const lineage = {
+      levels: [
+        { id: 'u', kind: 'user', dir: home, entries: [], absent: [], errors: [{ path: home, code: 'ETIMEDOUT' }] },
+        { id: 'd', kind: 'directory', dir, entries: [], absent: [], errors: [{ path: path.join(dir, '.claude', 'agents'), code: 'EPERM' }] },
+      ],
+    };
+    const opts = createOptions(lineage);
+    check('an unreadable config home offers nothing, and an unlistable tree folder is not offered',
+      !opts.some((o) => o.levelId === 'u') && !opts.some((o) => o.id === 'd:tree:agents') && opts.some((o) => o.id === 'd:tree:skills'),
+      JSON.stringify(opts.map((o) => o.id)));
+
+    // And the scan records that error. A config home under a FILE fails its
+    // stat with ENOTDIR on Linux, which stands in for a share that does not
+    // answer: an error that is not "missing". Windows reports every local
+    // stand-in tried (under a file, an over-long name, a bad character) as
+    // ENOENT, so there the dead-share case rests on a manual measurement.
+    if (process.platform === 'win32') {
+      skip('a config home the scan cannot read is an error on the user level, which then offers nothing', 'Windows has no local stand-in for a non-ENOENT stat error');
+    } else {
+      const { resolveLineage } = await import('../server/scan.js');
+      const blocker = path.join(smokeDir, 'not-a-folder.txt');
+      await fs.writeFile(blocker, 'x\n');
+      const saved = process.env.CLAUDE_CONFIG_DIR;
+      process.env.CLAUDE_CONFIG_DIR = path.join(blocker, 'home');
+      let scanned;
+      try {
+        scanned = await resolveLineage(proj);
+      } finally {
+        if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+        else process.env.CLAUDE_CONFIG_DIR = saved;
+      }
+      const userLvl = scanned.levels.find((l) => l.kind === 'user');
+      check('a config home the scan cannot read is an error on the user level, which then offers nothing',
+        userLvl.errors.some((e) => same(e.path || '', userLvl.dir)) && !createOptions(scanned).some((o) => o.levelId === userLvl.id),
+        JSON.stringify(userLvl.errors.map((e) => e.code)));
+    }
+  }
+
+  // --- #107: a brief exclusive lock no longer fails a save ----------------------
+  // Another program holds the file with no sharing at all while the save's
+  // snapshot copies it; the copy waits, as the rename does, instead of failing.
+  if (process.platform === 'win32') {
+    const { spawn } = await import('node:child_process');
+    const locked = path.join(proj, '.claude', 'agents', 'locked.md');
+    await fs.writeFile(locked, 'BEFORE\n');
+    const holder = path.join(smokeDir, 'hold-exclusive.ps1');
+    await fs.writeFile(holder, [
+      'param([string]$Target)',
+      '$h = [System.IO.File]::Open($Target, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)',
+      "[Console]::Out.WriteLine('OPEN'); [Console]::Out.Flush()",
+      'Start-Sleep -Milliseconds 900',
+      '$h.Close()',
+      "[Console]::Out.WriteLine('CLOSED')",
+    ].join('\r\n'));
+    lin = await scan(proj);
+    const entry = entriesOf(lin).find((e) => same(e.absPath, locked));
+    const ps = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', holder, '-Target', locked], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let said = '';
+    ps.stdout.setEncoding('utf8').on('data', (c) => (said += c));
+    const psDone = new Promise((r) => ps.once('exit', r));
+    for (let i = 0; i < 150 && !said.includes('OPEN'); i += 1) await new Promise((r) => setTimeout(r, 100));
+    const save = await post('/api/write', { scanId: lin.scanId, path: locked, content: 'AFTER\n', expectedMtime: entry?.mtime });
+    await psDone;
+    check('a save while another program briefly holds the file exclusively waits for it, and lands',
+      said.includes('OPEN') && save.status === 200 && (await fs.readFile(locked, 'utf8')) === 'AFTER\n',
+      `${save.status} ${save.json?.code || ''} ${JSON.stringify(said.trim().split(/\s+/))}`);
+  } else {
+    skip('a save while another program briefly holds the file exclusively waits for it, and lands', 'needs a Windows share-mode lock');
+  }
 }

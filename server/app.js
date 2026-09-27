@@ -31,7 +31,15 @@ import path from 'node:path';
 import { resolveLineage } from './scan.js';
 import { flatten } from './flatten.js';
 import { readForDisplay } from './readfile.js';
-import { createFile, createOptions, deleteFile, editFile, restorableWhenAbsent } from './writefile.js';
+import {
+  NOT_RESTORABLE,
+  createFile,
+  createOptions,
+  deleteFile,
+  editFile,
+  restorableWhenAbsent,
+  restoreSnapshotFiles,
+} from './writefile.js';
 import { DEBOUNCE_MS, watchLineage } from './watch.js';
 import {
   compareSnapshot,
@@ -39,7 +47,6 @@ import {
   listSnapshots,
   readManifest,
   readSnapshotFile,
-  restoreFiles,
 } from './snapshot.js';
 import { MAX_FILE_BYTES, isSecret, describeError, writePolicy } from './safety.js';
 import { hostGuard, injectToken, originGuard, requireToken } from './security.js';
@@ -65,8 +72,6 @@ export const HOST = '127.0.0.1';
 /** A non-empty string, and nothing that merely stringifies to one. */
 const isText = (v) => typeof v === 'string' && v.length > 0;
 
-const NOT_RESTORABLE =
-  'Not restorable under this scan: it would not list this path. Scan the project the snapshot came from.';
 
 // The state below is per process, not per app: one process serves one app.
 
@@ -202,7 +207,7 @@ export function createApp({ port, staticFiles }) {
           'Only files discovered by the current scan can be written or deleted.',
           'New files are created only at a user or directory level, at places the scan offers, from a template, and never over an existing file.',
           'A delete takes a snapshot first and is refused unless that snapshot holds the file.',
-          'A file gone from disk can be restored from a snapshot only inside a level\'s config folders, and is created, never written over.',
+          'A file gone from disk can be restored from a snapshot only where the current scan would list it, and is created, never written over.',
           'Every edit, delete and restore is preceded by an automatic snapshot, and edits land via temp file plus rename. A create replaces nothing, so it takes none.',
           'Invalid JSON or YAML is refused; malformed markdown frontmatter is a warning only.',
           'Claude Code loads memory and settings at session start, so a running session is unaffected until restart.',
@@ -482,7 +487,9 @@ export function createApp({ port, staticFiles }) {
 
   app.get('/api/snapshot/:id/file', async (req, res) => {
     try {
-      return res.json(await readSnapshotFile(req.params.id, String(req.query.path || '')));
+      // A string, never ?path[]=x, which String() would flatten into one (#110).
+      if (!isText(req.query.path)) return res.status(400).json({ message: 'path must be a string' });
+      return res.json(await readSnapshotFile(req.params.id, req.query.path));
     } catch (err) {
       return sendError(res, err);
     }
@@ -490,8 +497,9 @@ export function createApp({ port, staticFiles }) {
 
   app.post('/api/restore', async (req, res) => {
     const { scanId, id, paths } = req.body || {};
-    if (!Array.isArray(paths) || paths.length === 0) {
-      return res.status(400).json({ message: 'paths must be a non-empty array' });
+    // Strings only, as for create, write and delete (#102, #110).
+    if (!isText(id) || !Array.isArray(paths) || paths.length === 0 || !paths.every(isText)) {
+      return res.status(400).json({ message: 'id must be a string, and paths a non-empty array of strings' });
     }
     const scan = scans.get(String(scanId || ''));
     if (!scan) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan first.' });
@@ -506,22 +514,8 @@ export function createApp({ port, staticFiles }) {
       // rather than refusing the batch, so one such row no longer stops the
       // rest being restored (#97). Only a batch with nothing restorable is
       // refused outright.
-      const accepted = [];
-      const absentPaths = [];
-      const refused = [];
-      for (const p of paths.map(String)) {
-        if (scan.allowed.has(allowKey(p))) accepted.push(p);
-        else if (restorableWhenAbsent(scan.lineage, p)) {
-          accepted.push(p);
-          absentPaths.push(p);
-        } else refused.push({ absPath: p, code: 'ENOTINSCAN', message: NOT_RESTORABLE });
-      }
-      if (!accepted.length) {
-        return res.status(403).json({ message: NOT_RESTORABLE, code: 'ENOTINSCAN', details: { refused } });
-      }
-      const result = await restoreFiles(String(id || ''), accepted, scan.lineage, { absentPaths });
-      result.failed.push(...refused);
-      return res.json(result);
+      // The fence lives in writefile.js, so the CLI gets it too (#105).
+      return res.json(await restoreSnapshotFiles({ id, paths, lineage: scan.lineage }));
     } catch (err) {
       return sendError(res, err);
     }
