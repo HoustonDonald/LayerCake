@@ -26,7 +26,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { projectSlug } from '../server/paths.js';
+import { projectSlug, samePathKey } from '../server/paths.js';
 import { buildClientIfStale } from './build-if-stale.js';
 import { makeSessionFixture, runLaunchChecks, runSessionChecks, runSummaryChecks, stopFixtureProcesses } from './smoke-sessions.mjs';
 import { runCreateChecks } from './smoke-create.mjs';
@@ -82,9 +82,22 @@ function skip(name, reason) {
  * blocks. The same shape in JS is just as easy to write.
  */
 let smokeDir = null;
+/** Set when the drive root could not be written and the fixture went to %TEMP% (#78). */
+let fixtureFellBack = false;
 
 async function makeFixture() {
-  smokeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'layercake-smoke-'));
+  // Under the drive root, not in %TEMP%, which is inside the user profile: the
+  // walk from there passed through the real home folder, so smoke watched the
+  // real ~/.claude, saw its rewrites, and copied real config into snapshots
+  // (#78). The server also gets a home of its own below. Falls back to the temp
+  // folder where the root cannot be written (Linux, where /tmp is not under
+  // home anyway, or a locked-down machine).
+  smokeDir = await fs
+    .mkdtemp(path.join(path.parse(os.tmpdir()).root, 'layercake-smoke-'))
+    .catch(() => {
+      fixtureFellBack = true;
+      return fs.mkdtemp(path.join(os.tmpdir(), 'layercake-smoke-'));
+    });
   // The project is nested one level deep so the walk covers an ancestor that
   // also carries config. That is what makes a GENUINE shadow possible inside
   // the fixture, without depending on whatever the real ~/.claude happens to
@@ -155,7 +168,11 @@ async function makeFixture() {
   // failed. Planted here, it tests the fixture, not the machine (#17).
   await fs.writeFile(path.join(proj, '.claude', '.credentials.json'), JSON.stringify({ planted: 'SMOKE-PROJECT-CREDENTIAL' }));
 
-  return { proj, snaps: path.join(smokeDir, 'snaps'), configHome };
+  // The server's home folder (#78): empty, so nothing of the machine's is read.
+  const fakeHome = path.join(smokeDir, 'home');
+  await fs.mkdir(fakeHome, { recursive: true });
+
+  return { proj, snaps: path.join(smokeDir, 'snaps'), configHome, fakeHome };
 }
 
 /**
@@ -197,7 +214,7 @@ async function waitForServer(timeoutMs = 20000) {
   return false;
 }
 
-const { proj, snaps, configHome } = await makeFixture();
+const { proj, snaps, configHome, fakeHome } = await makeFixture();
 // Synthetic Claude session data and LayerCake app data: the real ones are never read or written.
 const { claudeData, appData } = await makeSessionFixture(smokeDir, proj);
 
@@ -211,6 +228,11 @@ const server = spawn(process.execPath, [path.join(ROOT, 'server', 'index.js')], 
     LAYERCAKE_CLAUDE_DATA_DIR: claudeData,
     // Claude Code's own variable: the user level must follow it (#7).
     CLAUDE_CONFIG_DIR: configHome,
+    // A home of its own, so ~/CLAUDE.md and ~/.claude are the fixture's, never
+    // the machine's (#78). os.homedir() reads USERPROFILE on Windows, HOME
+    // elsewhere.
+    USERPROFILE: fakeHome,
+    HOME: fakeHome,
     LAYERCAKE_APPDATA_DIR: appData,
     // Launches build their argv and settings but never start Windows Terminal.
     LAYERCAKE_LAUNCH_DRY_RUN: '1',
@@ -398,6 +420,21 @@ try {
     manifest.claudeHome === configHome && manifest.claudeHomeSource === 'CLAUDE_CONFIG_DIR' &&
       manifest.globalConfigFile === path.join(configHome, '.claude.json'),
     JSON.stringify({ home: manifest.claudeHome, source: manifest.claudeHomeSource }));
+
+  // #78: none of the machine's own config is read. The fixture sits outside
+  // the real home folder and the server has a home of its own, so no level is
+  // the real home or inside it. Where the drive root could not be written, the
+  // fixture fell back into %TEMP%, under home, and this cannot hold.
+  const machineHome = os.homedir();
+  const underRealHome = (p) =>
+    Boolean(p) && (samePathKey(p) === samePathKey(machineHome) || samePathKey(p).startsWith(samePathKey(machineHome) + path.sep));
+  if (fixtureFellBack && underRealHome(smokeDir)) {
+    skip('the scan reads nothing from the real home folder', 'the drive root could not be written, so the fixture is under home');
+  } else {
+    const inHome = lineage.levels.filter((l) => underRealHome(l.dir) || l.entries.some((e) => underRealHome(e.absPath)));
+    check('the scan reads nothing from the real home folder', inHome.length === 0 && manifest.home !== machineHome,
+      JSON.stringify(inHome.map((l) => l.dir)));
+  }
 
   const scanId = lineage.scanId;
   const write = (body) =>
@@ -1240,7 +1277,7 @@ try {
   // --- create and delete (#15), restoring a file gone from disk (#92) --------
   // Last, because it scans more often than the server keeps scans (8), which
   // evicts the scan every check above still holds an id for.
-  await runCreateChecks({ base: BASE, token, check, skip, smokeDir, configHome, snaps });
+  await runCreateChecks({ base: BASE, token, check, skip, smokeDir, configHome, snaps, fakeHome });
 
   check('smoke\'s own server stayed up for the whole run', serverExit === null, `exit: ${serverExit}`);
 

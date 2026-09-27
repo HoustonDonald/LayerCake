@@ -17,7 +17,7 @@ import { projectSlug } from '../server/paths.js';
 
 const exists = (p) => fs.access(p).then(() => true, () => false);
 
-export async function runCreateChecks({ base, token, check, skip, smokeDir, configHome, snaps }) {
+export async function runCreateChecks({ base, token, check, skip, smokeDir, configHome, snaps, fakeHome }) {
   const H = { 'X-LayerCake-Token': token, 'Content-Type': 'application/json' };
   const get = async (pathname) => {
     const res = await fetch(`${base}${pathname}`, { headers: H });
@@ -210,6 +210,23 @@ export async function runCreateChecks({ base, token, check, skip, smokeDir, conf
     check(`${label} that was deleted can be restored`,
       d.status === 200 && r.status === 200 && r.json?.restored?.length === 1 && (await fs.readFile(file, 'utf8').catch(() => '')) === body,
       `${d.status} ${r.status} ${JSON.stringify(r.json?.failed || r.json)}`);
+  }
+
+  // ~/CLAUDE.md, end to end in the server's own home (#78): outside the config
+  // home, it comes back only through the fence's "probed and recorded absent"
+  // rule, which the rescan after the delete supplies.
+  if (fakeHome) {
+    const homeMd = path.join(fakeHome, 'CLAUDE.md');
+    await fs.writeFile(homeMd, '# home memory\n');
+    lin = await scan(proj);
+    const d = await post('/api/delete', { scanId: lin.scanId, path: homeMd, expectedMtime: entriesOf(lin).find((e) => same(e.absPath, homeMd))?.mtime });
+    lin = await scan(proj);
+    const r = await post('/api/restore', { scanId: lin.scanId, id: d.json?.undoSnapshotId, paths: [homeMd] });
+    check('a deleted ~/CLAUDE.md can be restored',
+      d.status === 200 && r.status === 200 && r.json?.restored?.length === 1 && (await fs.readFile(homeMd, 'utf8').catch(() => '')) === '# home memory\n',
+      `${d.status} ${r.status} ${JSON.stringify(r.json?.failed || r.json)}`);
+  } else {
+    skip('a deleted ~/CLAUDE.md can be restored', 'no fixture home folder');
   }
 
   // One row that cannot be restored under this scan no longer blocks the rest.

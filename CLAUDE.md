@@ -49,7 +49,9 @@ npm run build:exe  # dist\LayerCake.exe, the single executable (Windows only)
 
 **Run `npm run smoke` before calling any change to `server/` done.** It is the only regression net.
 It builds its own fixture, port and snapshot store, and cleans up after itself, so it is safe to run
-while you are working. A green run is necessary and not sufficient: it cannot see the UI, and the
+while you are working. The fixture sits under the drive root (`C:\layercake-smoke-*`), not in `%TEMP%`,
+and the server gets a home folder of its own, so no part of the machine's own config is read,
+watched or copied into a snapshot (#78); a killed run can leave that folder behind. A green run is necessary and not sufficient: it cannot see the UI, and the
 one bug it missed was found by opening a browser. Its mapped-drive checks (#57) are skipped, visibly,
 unless `SMOKE_MAPPED_DRIVE=1`: they map a free drive letter to the admin share with `net use` for the
 run, which changes the machine's drive letters, so they are opt-in. Run them after touching drive
