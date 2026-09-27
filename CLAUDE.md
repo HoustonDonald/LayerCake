@@ -145,7 +145,10 @@ imports `snapshot.js`, not the reverse, so a new route cannot skip the snapshot 
 it. Keep that direction. Every edit, delete and restore then checks, per file, that the snapshot
 holds the file it is about to replace or remove (`assertHeld`, and the same test in `restoreFiles`),
 and refuses that file if not, so a file over the 2 MB cap is never replaced or removed with no copy
-left (#96; delete had it first, #15). A create is the one write with no snapshot, by design: it
+left (#96; delete had it first, #15). The snapshot records the hash of its stored copy, and the
+replace or unlink happens only while the file still has that hash, checked before EVERY attempt of
+the Windows lock retry, not once before it: a write landing while the file was locked used to be
+deleted unseen (#100). A create is the one write with no snapshot, by design: it
 publishes with a hard link (`createExclusive`), which refuses an existing file, so it never replaces
 bytes and has nothing to back up; its undo is a delete. Anything that could replace a file stays on
 `atomicWrite` behind a snapshot.
@@ -395,7 +398,13 @@ partially. A truncated file restored is silent data loss.
   settings or `.mcp.json` edits that add or change a key Claude Code runs (`COMMAND_KEYS` in
   safety.js, served in the manifest; #19, owner decision). It does not cover `env`, which can
   arrange execution indirectly (`NODE_OPTIONS`, `PATH`) but is edited routinely. It stops an
-  absent-minded edit, not a determined one.
+  absent-minded edit, not a determined one. A restore puts a hook back without it: it is the
+  undo of an earlier state, not a new edit.
+- **Paths are fenced lexically; junctions and symlinks are followed.** If `.claude/agents` (or
+  `.claude` itself) is a junction, a create or save lands in its target, the way Claude Code reads
+  it (#102). Whoever can plant a junction in a config folder can already write there.
+- **Hashing the stored copy (#100) is not observable in smoke.** It differs from hashing the source
+  only if the source changes during the copy; a mutant that hashes the source again survives.
 - **Snapshots contain files that can hold OAuth tokens** (`~/.claude.json`, `settings.local.json`,
   `.mcp.json`). They are flagged `sensitive` in the manifest rather than excluded, because dropping
   them would make a restore quietly incomplete. In place a snapshot inherits the same user ACL as

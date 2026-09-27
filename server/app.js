@@ -60,6 +60,9 @@ import {
 
 export const HOST = '127.0.0.1';
 
+/** A non-empty string, and nothing that merely stringifies to one. */
+const isText = (v) => typeof v === 'string' && v.length > 0;
+
 const NOT_RESTORABLE =
   'Not restorable under this scan: it would not list this path. Scan the project the snapshot came from.';
 
@@ -356,6 +359,7 @@ export function createApp({ port, staticFiles }) {
 
   app.post('/api/write', async (req, res) => {
     const { scanId, path: target, content, expectedMtime, acknowledgeExecutable } = req.body || {};
+    if (!isText(scanId) || !isText(target)) return res.status(400).json({ message: 'scanId and path must be strings' });
     if (typeof content !== 'string') {
       return res.status(400).json({ message: 'content must be a string' });
     }
@@ -366,7 +370,8 @@ export function createApp({ port, staticFiles }) {
         content,
         lineage: scan.lineage,
         expectedMtime: expectedMtime || null,
-        acknowledgeExecutable: Boolean(acknowledgeExecutable),
+        // Only a real true acknowledges: "false", [] and {} are truthy (#102).
+        acknowledgeExecutable: acknowledgeExecutable === true,
       });
       return res.json(result);
     } catch (err) {
@@ -378,7 +383,9 @@ export function createApp({ port, staticFiles }) {
   // names the option and, for a folder, a name; the server builds the path.
   app.post('/api/create', async (req, res) => {
     const { scanId, createId, name, ext, acknowledgeExecutable } = req.body || {};
-    const scan = scans.get(String(scanId || ''));
+    // Strings only: String(['x']) is 'x', so an array would pass as an id (#102).
+    if (!isText(scanId) || !isText(createId)) return res.status(400).json({ message: 'scanId and createId must be strings' });
+    const scan = scans.get(scanId);
     if (!scan) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan first.' });
     const option = scan.creatable.find((o) => o.id === String(createId || ''));
     if (!option) {
@@ -393,7 +400,7 @@ export function createApp({ port, staticFiles }) {
           option,
           name: typeof name === 'string' ? name : '',
           ext: typeof ext === 'string' ? ext : '',
-          acknowledgeExecutable: Boolean(acknowledgeExecutable),
+          acknowledgeExecutable: acknowledgeExecutable === true,
         })
       );
     } catch (err) {
@@ -404,8 +411,9 @@ export function createApp({ port, staticFiles }) {
   // #15: deletes a scanned file, after a snapshot that holds it.
   app.post('/api/delete', async (req, res) => {
     const { scanId, path: target, expectedMtime } = req.body || {};
+    if (!isText(scanId) || !isText(target)) return res.status(400).json({ message: 'scanId and path must be strings' });
     try {
-      const { scan, entry } = requireEntry(String(scanId || ''), String(target || ''));
+      const { scan, entry } = requireEntry(scanId, target);
       return res.json(await deleteFile({ entry, lineage: scan.lineage, expectedMtime: expectedMtime || null }));
     } catch (err) {
       return sendError(res, err);

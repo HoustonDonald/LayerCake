@@ -17,7 +17,7 @@ import { projectSlug } from '../server/paths.js';
 
 const exists = (p) => fs.access(p).then(() => true, () => false);
 
-export async function runCreateChecks({ base, token, check, smokeDir, configHome, snaps }) {
+export async function runCreateChecks({ base, token, check, skip, smokeDir, configHome, snaps }) {
   const H = { 'X-LayerCake-Token': token, 'Content-Type': 'application/json' };
   const get = async (pathname) => {
     const res = await fetch(`${base}${pathname}`, { headers: H });
@@ -272,4 +272,99 @@ export async function runCreateChecks({ base, token, check, smokeDir, configHome
     tamperRestore.status === 200 && tamperRestore.json?.failed?.length === 2 && (await fs.readFile(projMemo, 'utf8')) === memoBefore &&
       !(await fs.readFile(homeMemo, 'utf8')).includes('SMOKE-TAMPER'),
     `${tamperRestore.status} ${JSON.stringify(tamperRestore.json?.failed?.map((x) => x.code))}`);
+
+  // --- #99: nothing is offered where the scan could not read the folder -------
+  const ghost = path.join(smokeDir, 'create', 'no-such-folder', 'proj');
+  const ghostLin = await scan(ghost);
+  const unreadLevels = new Set(
+    ghostLin.levels.filter((l) => l.dir && l.errors.some((e) => same(e.path || '', l.dir))).map((l) => l.id)
+  );
+  check('create is not offered at a level whose folder the scan could not read',
+    unreadLevels.size > 0 && !ghostLin.creatable.some((o) => unreadLevels.has(o.levelId)),
+    `${unreadLevels.size} unread levels`);
+
+  // --- #102: each target offered once; the config home by the user table ----
+  const targets = lin.creatable.map((o) => (o.absPath || o.folder).toLowerCase());
+  check('each create target is offered once, and the config home offers no settings.local.json',
+    targets.length === new Set(targets).size && !lin.creatable.some((o) => o.absPath && same(o.absPath, path.join(configHome, 'settings.local.json'))),
+    JSON.stringify(targets.filter((t, i) => targets.indexOf(t) !== i)));
+
+  // --- #102: only a real true acknowledges; ids must be strings -------------
+  const hookOpt2 = option(lin, 'proj', ':tree:hooks');
+  const truthy = [];
+  for (const ack of ['false', 'yes', 1, [], {}]) {
+    truthy.push((await post('/api/create', { scanId: lin.scanId, createId: hookOpt2?.id, name: 'truthy-hook', ext: '.sh', acknowledgeExecutable: ack })).status);
+  }
+  const arrayId = await post('/api/create', { scanId: lin.scanId, createId: [hookOpt2?.id], name: 'array-id', ext: '.sh', acknowledgeExecutable: true });
+  check('a create acknowledges only with a real true, and refuses an id that is not a string',
+    truthy.every((st) => st === 403) && arrayId.status === 400 && !(await exists(path.join(proj, '.claude', 'hooks', 'truthy-hook.sh'))),
+    `${truthy.join(',')} ${arrayId.status}`);
+  const hookFile = path.join(proj, '.claude', 'hooks', 'smoke-hook.sh');
+  const hookBefore = await fs.readFile(hookFile, 'utf8');
+  const truthyWrite = await post('/api/write', { scanId: lin.scanId, path: hookFile, content: '#!/bin/sh\necho changed\n', acknowledgeExecutable: 'false' });
+  check('a hook save with acknowledgeExecutable "false" is refused', truthyWrite.status === 403 && (await fs.readFile(hookFile, 'utf8')) === hookBefore, `${truthyWrite.status}`);
+
+  // --- #102: an orphaned LayerCake temp file is not listed as a hook ---------
+  const orphan = path.join(proj, '.claude', 'hooks', '.layercake-tmp-0123456789ab');
+  await fs.writeFile(orphan, 'half a write\n');
+  lin = await scan(proj);
+  check('an orphaned LayerCake temp file in hooks/ is not listed', !entriesOf(lin).some((e) => same(e.absPath, orphan)));
+  await fs.rm(orphan, { force: true });
+
+  // --- #100: a replace or unlink happens only while the file matches the
+  // snapshot. The replace path, asked directly: an expected hash that does
+  // not match must refuse and leave the file alone.
+  {
+    const { atomicWrite, removeFile } = await import('../server/snapshot.js');
+    const probe = path.join(smokeDir, 'held-probe.txt');
+    await fs.writeFile(probe, 'ON DISK\n');
+    const wrong = '0'.repeat(64);
+    const w = await atomicWrite(probe, 'REPLACED\n', { expectSha256: wrong }).then(() => 'wrote', (e) => e.code);
+    const r = await removeFile(probe, { expectSha256: wrong }).then(() => 'removed', (e) => e.code);
+    check('a replace or unlink whose snapshot hash no longer matches the file is refused, and the file stays',
+      w === 'ECONFLICT' && r === 'ECONFLICT' && (await fs.readFile(probe, 'utf8')) === 'ON DISK\n', `${w} ${r}`);
+  }
+
+  // The race itself (#100): the file is held open without delete sharing, as an
+  // indexer or antivirus does, so the unlink retries; a write lands meanwhile.
+  // Judged by outcome, since the snapshot's timing varies: either the delete is
+  // refused and the edit survives, or the snapshot holds the edited bytes.
+  if (process.platform === 'win32') {
+    const { spawn } = await import('node:child_process');
+    const raced = path.join(proj, '.claude', 'agents', 'raced.md');
+    await fs.writeFile(raced, 'ORIGINAL CONTENT\n');
+    const holder = path.join(smokeDir, 'hold.ps1');
+    await fs.writeFile(holder, [
+      'param([string]$Target)',
+      '$h = [System.IO.File]::Open($Target, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)',
+      "[Console]::Out.WriteLine('OPEN'); [Console]::Out.Flush()",
+      'Start-Sleep -Milliseconds 1200',
+      "[System.IO.File]::WriteAllText($Target, 'EDITED DURING DELETE')",
+      "[Console]::Out.WriteLine('WROTE'); [Console]::Out.Flush()",
+      'Start-Sleep -Milliseconds 1500',
+      '$h.Close()',
+      "[Console]::Out.WriteLine('CLOSED')",
+    ].join('\r\n'));
+    lin = await scan(proj);
+    const ps = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', holder, '-Target', raced], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let said = '';
+    ps.stdout.setEncoding('utf8').on('data', (c) => (said += c));
+    const psDone = new Promise((r) => ps.once('exit', r));
+    for (let i = 0; i < 150 && !said.includes('OPEN'); i += 1) await new Promise((r) => setTimeout(r, 100));
+    const raceDel = await post('/api/delete', { scanId: lin.scanId, path: raced, expectedMtime: entriesOf(lin).find((e) => same(e.absPath, raced))?.mtime });
+    await psDone;
+    const onDisk = await fs.readFile(raced, 'utf8').catch(() => null);
+    let held = null;
+    if (raceDel.status === 200) {
+      const got = await get(`/api/snapshot/${raceDel.json.undoSnapshotId}/file?path=${encodeURIComponent(raced)}`);
+      held = got.status === 200 ? JSON.parse(got.text).content : null;
+    }
+    const kept = raceDel.status === 409 && onDisk === 'EDITED DURING DELETE';
+    const backedUp = raceDel.status === 200 && onDisk === null && held === 'EDITED DURING DELETE';
+    check('a write landing while a delete waits on a locked file is never deleted unseen',
+      said.includes('WROTE') && (kept || backedUp),
+      JSON.stringify({ status: raceDel.status, code: raceDel.json?.code, onDisk, held, said: said.trim().split(/\s+/) }));
+  } else {
+    skip('a write landing while a delete waits on a locked file is never deleted unseen', 'needs a Windows share-mode lock');
+  }
 }

@@ -18,6 +18,7 @@ import path from 'node:path';
 import {
   DIR_FILE_TARGETS,
   CLAUDE_DIR_FILE_TARGETS,
+  TEMP_PREFIX,
   CLAUDE_DIR_TREES,
   ancestorChain,
   claudeHome,
@@ -215,6 +216,9 @@ async function walkTree(root, { maxDepth, exts, category, level, depth = 0, seen
       continue;
     }
     if (!dirent.isFile() && !dirent.isSymbolicLink()) continue;
+    // A temp file LayerCake left behind (a crash between write and rename)
+    // is not config; in hooks/, which takes any extension, it read as a hook (#102).
+    if (dirent.name.toLowerCase().startsWith(TEMP_PREFIX)) continue;
     if (exts && !exts.includes(path.extname(dirent.name).toLowerCase())) continue;
     const { st, error } = await statOf(abs);
     level.entries.push({

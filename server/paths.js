@@ -36,6 +36,14 @@ export const CLAUDE_DIR_TREES = [
   { name: 'memory', category: 'memory', maxDepth: 2, exts: ['.md'] },
 ];
 
+/**
+ * The name every LayerCake temp file starts with (snapshot.js writes them
+ * beside their target, then renames or links them into place). One constant
+ * for the writer, the watcher that must not report them, and the scan that
+ * must not list an orphaned one as a hook (#102).
+ */
+export const TEMP_PREFIX = '.layercake-tmp-';
+
 export function homeDir() {
   return os.homedir();
 }

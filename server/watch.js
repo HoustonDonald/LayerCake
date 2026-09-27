@@ -44,7 +44,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { CLAUDE_DIR_TREES, isUncPath, samePathKey } from './paths.js';
+import { CLAUDE_DIR_TREES, TEMP_PREFIX, isUncPath, samePathKey } from './paths.js';
 import { describeError, isSecret } from './safety.js';
 import { SHARE_STUCK, shareKeyOf, timedFsCall } from './sharegate.js';
 
@@ -175,7 +175,7 @@ export function isTransientArtifact(name) {
     lower.endsWith('.lock') ||
     lower.includes('.tmp.') ||
     lower.endsWith('.tmp') ||
-    lower.startsWith('.layercake-tmp-') ||
+    lower.startsWith(TEMP_PREFIX) ||
     lower.endsWith('.swp') ||
     lower.endsWith('.swx') ||
     lower.endsWith('~')

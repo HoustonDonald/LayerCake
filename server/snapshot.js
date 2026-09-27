@@ -16,7 +16,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { samePathKey, snapshotRoot } from './paths.js';
+import { TEMP_PREFIX, samePathKey, snapshotRoot } from './paths.js';
 import { MAX_FILE_BYTES, describeError, isSecret, isSensitive } from './safety.js';
 
 /** Manifest schema version. Bumped when the on-disk shape changes. */
@@ -74,8 +74,31 @@ async function retryingWhileLocked(op, target) {
   }
 }
 
-async function renameRetrying(from, to) {
-  return retryingWhileLocked(() => fs.rename(from, to), to);
+async function renameRetrying(from, to, before = async () => {}) {
+  return retryingWhileLocked(async () => {
+    await before();
+    return fs.rename(from, to);
+  }, to);
+}
+
+/**
+ * Refuses unless the file at absPath still holds exactly what the undo
+ * snapshot copied (#100). Run before EVERY replace or unlink attempt, not once
+ * before the retry loop: while Windows keeps the target locked the loop can
+ * run for seconds, and a write landing then was replaced or deleted unseen.
+ * The hash is of the stored copy, so a match means the snapshot has these
+ * bytes. Without an expected hash (a file no snapshot was asked about) it
+ * checks nothing.
+ */
+async function assertStillHeld(absPath, expectSha256) {
+  if (!expectSha256) return;
+  if ((await sha256(absPath)) !== expectSha256) {
+    throw fail(
+      'The file changed after the snapshot was taken, so the snapshot no longer holds what would be replaced. Nothing was changed; try again.',
+      409,
+      'ECONFLICT'
+    );
+  }
 }
 
 /**
@@ -93,7 +116,7 @@ async function renameRetrying(from, to) {
 export async function createExclusive(absPath, data) {
   const dir = path.dirname(absPath);
   await fs.mkdir(dir, { recursive: true });
-  const temp = path.join(dir, `.layercake-tmp-${crypto.randomBytes(6).toString('hex')}`);
+  const temp = path.join(dir, `${TEMP_PREFIX}${crypto.randomBytes(6).toString('hex')}`);
   try {
     await fs.writeFile(temp, data);
     try {
@@ -113,20 +136,27 @@ export async function createExclusive(absPath, data) {
 
 /**
  * Deletes one file (#15). Only ever called by writefile.js after a snapshot
- * that holds the file. Retried like a rename, because Windows refuses to
- * delete a file another process has open.
+ * that holds the file, whose hash it passes as `expectSha256`. Retried like a
+ * rename, because Windows refuses to delete a file another process has open.
  */
-export async function removeFile(absPath) {
-  return retryingWhileLocked(() => fs.unlink(absPath), absPath);
+export async function removeFile(absPath, { expectSha256 = null } = {}) {
+  return retryingWhileLocked(async () => {
+    await assertStillHeld(absPath, expectSha256);
+    return fs.unlink(absPath);
+  }, absPath);
 }
 
-export async function atomicWrite(absPath, data) {
+/**
+ * `expectSha256`, when given, is the hash of the undo snapshot's copy of the
+ * file being replaced: the rename happens only while the file still matches it.
+ */
+export async function atomicWrite(absPath, data, { expectSha256 = null } = {}) {
   const dir = path.dirname(absPath);
-  const temp = path.join(dir, `.layercake-tmp-${crypto.randomBytes(6).toString('hex')}`);
+  const temp = path.join(dir, `${TEMP_PREFIX}${crypto.randomBytes(6).toString('hex')}`);
   await fs.mkdir(dir, { recursive: true });
   try {
     await fs.writeFile(temp, data);
-    await renameRetrying(temp, absPath);
+    await renameRetrying(temp, absPath, () => assertStillHeld(absPath, expectSha256));
   } catch (err) {
     // Best effort cleanup. The original is untouched either way, because the
     // rename is what publishes the change.
@@ -250,7 +280,10 @@ export async function createSnapshot(lineage, { label = '' } = {}) {
         level: target.level,
         size: st.size,
         mtime: st.mtime.toISOString(),
-        sha256: await sha256(target.absPath),
+        // Of the stored copy, not the source: it is what a delete, save or
+        // restore compares against to prove the snapshot holds the bytes it
+        // is about to replace (#100).
+        sha256: await sha256(dest),
         // ~/.claude.json, settings.local.json and .mcp.json are part of the
         // lineage and belong in a backup, but they can carry OAuth tokens and
         // machine-specific secrets. Flagged rather than excluded, because
@@ -434,7 +467,7 @@ export async function restoreFiles(id, absPaths, lineage, { absentPaths = [] } =
   }
 
   const undo = await createSnapshot(lineage, { label: `Before restore from ${id}` });
-  const held = new Set(undo.files.map((f) => samePathKey(f.absPath)));
+  const held = new Map(undo.files.map((f) => [samePathKey(f.absPath), f]));
 
   const restored = [];
   const failed = [];
@@ -456,7 +489,7 @@ export async function restoreFiles(id, absPaths, lineage, { absentPaths = [] } =
         });
         continue;
       } else {
-        await atomicWrite(entry.absPath, data);
+        await atomicWrite(entry.absPath, data, { expectSha256: held.get(key).sha256 });
       }
       restored.push(entry.absPath);
     } catch (err) {

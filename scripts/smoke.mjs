@@ -1188,7 +1188,7 @@ try {
   // --- create and delete (#15), restoring a file gone from disk (#92) --------
   // Last, because it scans more often than the server keeps scans (8), which
   // evicts the scan every check above still holds an id for.
-  await runCreateChecks({ base: BASE, token, check, smokeDir, configHome, snaps });
+  await runCreateChecks({ base: BASE, token, check, skip, smokeDir, configHome, snaps });
 
   check('smoke\'s own server stayed up for the whole run', serverExit === null, `exit: ${serverExit}`);
 

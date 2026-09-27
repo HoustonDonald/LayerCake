@@ -197,9 +197,10 @@ export async function editFile({
   // A file the snapshot could not hold (over the 2 MB cap, or unreadable) is
   // not replaced: the save would have no way back (#96). The editor never
   // offers such a file; the API used to accept it.
-  assertHeld(undo, entry.absPath, 'Not saved');
+  const held = assertHeld(undo, entry.absPath, 'Not saved');
 
-  await atomicWrite(entry.absPath, Buffer.from(content, 'utf8'));
+  // Replaced only while it still matches what the snapshot copied (#100).
+  await atomicWrite(entry.absPath, Buffer.from(content, 'utf8'), { expectSha256: held.sha256 });
   const st = await fs.stat(entry.absPath);
 
   return {
@@ -241,22 +242,44 @@ function claudeDirOf(level) {
 /**
  * What a scan offers to create, per level (#15). Built from the scan once and
  * kept with it, so a create request names an option by id and the server
- * builds the path; nothing in a request is ever a path. A fixed file that
- * already exists is not offered.
+ * builds the path; nothing in a request is ever a path. Not offered:
+ * - a fixed file that already exists;
+ * - anything at a level whose folder the scan could not read: a mistyped
+ *   directory, or a share that did not answer, where a create made the whole
+ *   folder chain or hung for the share's timeout (#99);
+ * - a target a weaker level already offered. When the configuration home is
+ *   also a directory's .claude (~/.claude, walked through the home folder),
+ *   the user level offers it, by the user level's table (#102).
  */
 export function createOptions(lineage) {
   const existing = new Set(
     lineage.levels.flatMap((l) => l.entries).filter((e) => e.type === 'file').map((e) => samePathKey(e.absPath))
   );
+  const offered = new Set();
+  const offerOnce = (target) => {
+    const key = samePathKey(target);
+    if (offered.has(key)) return false;
+    offered.add(key);
+    return true;
+  };
   const options = [];
   for (const level of lineage.levels) {
     if (!createLevelAllowed(level.kind) || !level.dir) continue;
     const claudeDir = claudeDirOf(level);
+    const unread = new Set([samePathKey(level.dir), samePathKey(claudeDir)]);
+    if (level.errors.some((e) => e.path && unread.has(samePathKey(e.path)))) continue;
     const shown = (abs) => path.relative(level.dir, abs).split(path.sep).join('/');
+    // This directory's .claude IS the configuration home: the user level has
+    // offered its contents already, by its own table, so nothing more here.
+    const isConfigHome =
+      level.kind === 'directory' &&
+      lineage.levels.some((l) => l.kind === 'user' && l.dir && samePathKey(l.dir) === samePathKey(claudeDir));
     for (const f of createFiles()) {
       if (!f.levels.includes(level.kind)) continue;
+      if (isConfigHome && f.where === 'claude') continue;
       const absPath = path.join(f.where === 'dir' ? level.dir : claudeDir, f.name);
       if (existing.has(samePathKey(absPath))) continue;
+      if (!offerOnce(absPath)) continue;
       options.push({
         id: `${level.id}:file:${f.where}/${f.name}`,
         levelId: level.id,
@@ -269,6 +292,7 @@ export function createOptions(lineage) {
     }
     for (const t of createTrees()) {
       const folder = path.join(claudeDir, t.tree);
+      if (isConfigHome || !offerOnce(folder)) continue;
       options.push({
         id: `${level.id}:tree:${t.tree}`,
         levelId: level.id,
@@ -392,7 +416,10 @@ export async function deleteFile({ entry, lineage, expectedMtime = null }) {
     throw refuse('The file changed while it was being snapshotted. Nothing was deleted; try again.', 'ECONFLICT', 409);
   }
 
-  await removeFile(entry.absPath);
+  // Checked again before every unlink attempt, not only once above: the
+  // Windows retry can run for seconds, and a write landing then would be
+  // deleted unseen (#100).
+  await removeFile(entry.absPath, { expectSha256: held.sha256 });
   return {
     absPath: entry.absPath,
     undoSnapshotId: undo.id,
