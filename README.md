@@ -379,7 +379,8 @@ while Claude Code runs, stops burying the change you care about without disappea
 that have not changed are behind a `1 muted` button in the bar, each with **Unmute**, so a mute set
 long ago cannot quietly hide a file. A mute is a preference of this browser: it is kept in
 `localStorage` (`layercake.watch.muted`, keyed by the path, lowercased on Windows), applies to that
-path in every project you scan, and survives a reload. The server never sees it: the stream still
+path in every project you scan, and survives a reload. Every open LayerCake tab shares it: a mute set
+in one shows in the others at once, and never undoes one set elsewhere. The server never sees it: the stream still
 reports every event, so the mute changes what the bar does, never what the watcher reports.
 
 **Desktop notifications** are opt-in behind the **Notify me** button, and fire only when the window

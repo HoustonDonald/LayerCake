@@ -54,15 +54,29 @@ function muteKeyFor(platform) {
   return (p) => (platform === 'win32' ? String(p || '').toLowerCase() : String(p || ''));
 }
 
-/** Storage can be blocked, cleared or edited by hand; anything odd reads as no mutes. */
-function loadMuted() {
+/**
+ * The stored mutes. Storage can be blocked, cleared or edited by hand: odd
+ * content reads as no mutes, and storage that cannot be read at all as null,
+ * so a caller can tell "none stored" from "cannot know".
+ */
+function readMuted() {
+  let raw;
   try {
-    const stored = JSON.parse(localStorage.getItem(MUTE_KEY) || '{}');
+    raw = localStorage.getItem(MUTE_KEY);
+  } catch {
+    return null;
+  }
+  try {
+    const stored = JSON.parse(raw || '{}');
     if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return new Map();
     return new Map(Object.entries(stored).filter(([, shown]) => typeof shown === 'string'));
   } catch {
     return new Map();
   }
+}
+
+function loadMuted() {
+  return readMuted() || new Map();
 }
 
 export default function useWatch(scanId, platform) {
@@ -91,10 +105,13 @@ export default function useWatch(scanId, platform) {
   const isMutedRef = useRef(isMuted);
   isMutedRef.current = isMuted;
 
+  // A toggle starts from what is STORED, not this tab's copy: another tab may
+  // have muted something since, and writing this tab's older list back erased
+  // it (#77). Storage that cannot be read falls back to this tab's list.
   const toggleMute = useCallback(
     (absPath) => {
       setMuted((prev) => {
-        const next = new Map(prev);
+        const next = new Map(readMuted() || prev);
         const key = keyOf(absPath);
         if (next.has(key)) next.delete(key);
         else next.set(key, absPath);
@@ -103,6 +120,16 @@ export default function useWatch(scanId, platform) {
     },
     [keyOf]
   );
+
+  // Another tab changed the mutes: take its list, so this bar agrees with it
+  // without a reload (#77). The event fires only in the OTHER tabs.
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key === MUTE_KEY || e.key === null) setMuted(loadMuted());
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   // Written after the change rather than inside the updater, which React may
   // run twice.
