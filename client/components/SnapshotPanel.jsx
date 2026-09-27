@@ -9,6 +9,14 @@ const STATUS_LABEL = {
   error: 'unreadable',
 };
 
+/**
+ * Files Claude Code itself rewrites as it runs: ~/.claude.json and the plugin
+ * manifests. They nearly always differ from a snapshot, and rolling one back
+ * rolls back Claude Code's own state, so they are never preselected (#96, #109).
+ * Still selectable by hand.
+ */
+const CLAUDE_REWRITES = new Set(['home-config', 'plugin-manifest']);
+
 function when(iso) {
   if (!iso) return '';
   return new Date(iso).toLocaleString();
@@ -86,7 +94,7 @@ export default function SnapshotPanel({ scanId, onRestored }) {
       setChecked(
         new Set(
           cmp.rows
-            .filter((r) => r.status === 'changed' && r.restorable !== false && r.category !== 'home-config')
+            .filter((r) => r.status === 'changed' && r.restorable !== false && !CLAUDE_REWRITES.has(r.category))
             .map((r) => r.absPath)
         )
       );
@@ -112,14 +120,17 @@ export default function SnapshotPanel({ scanId, onRestored }) {
     setOutcome(null);
     try {
       const res = await restore(scanId, selected, [...checked]);
+      // The rows are refreshed FIRST: open() clears both notices, so setting
+      // them before it meant the page never showed what a restore did, and
+      // since #97 a refused row arrives here, in `failed` (#103).
+      await open(selected);
       setOutcome(
-        `Restored ${res.restored.length} files. Undo snapshot: ${res.undoSnapshotId}` +
-          (res.failed.length ? `. ${res.failed.length} failed.` : '')
+        `Restored ${res.restored.length} file${res.restored.length === 1 ? '' : 's'}. Undo snapshot: ${res.undoSnapshotId}` +
+          (res.failed.length ? `. ${res.failed.length} not restored, listed below.` : '')
       );
       if (res.failed.length) {
         setError(res.failed.map((f) => `${f.absPath}: ${f.message}`).join('\n'));
       }
-      await open(selected);
       onRestored?.(res);
     } catch (err) {
       setError(err.message);
@@ -149,7 +160,7 @@ export default function SnapshotPanel({ scanId, onRestored }) {
         {root && <div className="snap-root">Stored in {root}</div>}
       </div>
 
-      {error && <div className="notice err">{error}</div>}
+      {error && <div className="notice err" style={{ whiteSpace: 'pre-line' }}>{error}</div>}
       {outcome && <div className="notice ok">{outcome}</div>}
 
       <div className="snap-body">

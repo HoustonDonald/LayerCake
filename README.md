@@ -153,10 +153,12 @@ The walk terminates at a drive root, a UNC share root (`\\server\share`), or 64 
 Excluded at scan time by basename and refused again at read time. They cannot be opened through the
 API even by direct request.
 
-Runtime-state directories are listed but never recursed into, because they are large and hold no
-config: `worktrees`, `sessions`, `projects`, `shell-snapshots`, `cache`, `debug`, `file-history`,
-`backups`, `paste-cache`, `session-env`, `tasks`, `jobs`, `ide`, `daemon`, `chrome`, `statsig`,
-`todos`, `logs`, `node_modules`, `.git`.
+Runtime-state directories directly inside a `.claude` folder (`sessions`, `projects`, `debug`,
+`logs`, `cache` and the rest of `NON_CONFIG_DIRS` in `server/safety.js`) are listed but never
+recursed into, because they are large and hold no config. Inside `hooks/`, which takes files of any
+extension, the same names are skipped, so a hook's own `logs/` or `cache/` is not read as hooks.
+Inside the other trees a folder with one of those names is a skill or a command, and is walked;
+there only `.trash` (where Claude Code moves removed skills), `node_modules` and `.git` are skipped.
 
 ---
 

@@ -205,6 +205,8 @@ export function createNameProblem(name) {
     return 'Use 1 to 64 lowercase letters, digits, - or _, starting with a letter or digit.';
   }
   if (WINDOWS_DEVICE_RE.test(value)) return `"${value}" is a reserved device name on Windows.`;
+  // A folder the scan skips inside a tree would be created and never listed (#104).
+  if (isTreeSkipDir(value)) return `"${value}" is a folder name the scan skips.`;
   return null;
 }
 

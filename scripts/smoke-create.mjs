@@ -462,4 +462,26 @@ export async function runCreateChecks({ base, token, check, skip, smokeDir, conf
       second.kill();
     }
   }
+
+  // --- #104: a hook's own runtime folders are not hooks ------------------------
+  // hooks/ takes any extension, so hooks/logs/ and hooks/cache/ would list as
+  // hooks and be copied into every snapshot. A helper folder is still walked.
+  {
+    const hooksDir = path.join(proj, '.claude', 'hooks');
+    const logFile = path.join(hooksDir, 'logs', 'pre_tool_use.json');
+    const cacheFile = path.join(hooksDir, 'cache', 'state.bin');
+    const helper = path.join(hooksDir, 'lib', 'helper.sh');
+    for (const p of [logFile, cacheFile, helper]) {
+      await fs.mkdir(path.dirname(p), { recursive: true });
+      await fs.writeFile(p, 'x\n');
+    }
+    lin = await scan(proj);
+    const listed = (p) => entriesOf(lin).some((e) => same(e.absPath, p) && e.category === 'hook');
+    check('a hook folder\'s logs/ and cache/ are not listed as hooks; a helper folder still is',
+      !listed(logFile) && !listed(cacheFile) && listed(helper),
+      JSON.stringify({ log: listed(logFile), cache: listed(cacheFile), helper: listed(helper) }));
+    const nm = await post('/api/create', { scanId: lin.scanId, createId: option(lin, 'proj', ':tree:skills')?.id, name: 'node_modules' });
+    check('a skill named node_modules is refused: the scan would never list it',
+      nm.status === 400 && !(await exists(path.join(proj, '.claude', 'skills', 'node_modules'))), `${nm.status}`);
+  }
 }

@@ -197,7 +197,10 @@ async function walkTree(root, { maxDepth, exts, category, level, depth = 0, seen
       continue;
     }
     if (dirent.isDirectory()) {
-      if (isTreeSkipDir(dirent.name)) {
+      // hooks/ takes files of any extension, so a hook's own logs/ or cache/
+      // would read as hooks; there the .claude root's runtime names are skipped
+      // too. In the other trees such a name is a skill or a command (#98, #104).
+      if (isTreeSkipDir(dirent.name) || (category === 'hook' && isNonConfigDir(dirent.name))) {
         const { st } = await statOf(abs);
         level.entries.push(
           makeEntry({
