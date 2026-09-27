@@ -20,6 +20,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
@@ -923,6 +924,54 @@ try {
     named2.includes('brand-new.md')
   );
   check('runtime state beside the config is not reported', !named2.includes('history.jsonl'));
+
+  // #131: opening a file in LayerCake must not report it changed. On Windows a
+  // read can fire the folder watch's 'change' (a last-access update, written
+  // when the old one is about an hour stale), so the access time is backdated
+  // first. The precondition is a bare fs.watch showing that this machine fires
+  // on a read at all: with last-access updates off the check below could not
+  // fail, and is skipped, visibly, instead.
+  {
+    const hourAgo = () => new Date(Date.now() - 2 * 3600e3);
+    const probeDir = path.join(path.dirname(configHome), 'atime-probe');
+    await fs.mkdir(probeDir, { recursive: true });
+    const probeFile = path.join(probeDir, 'probe.md');
+    await fs.writeFile(probeFile, 'probe\n');
+    await fs.utimes(probeFile, hourAgo(), (await fs.stat(probeFile)).mtime);
+    await new Promise((r) => setTimeout(r, 200));
+    let readFires = false;
+    const bare = fsSync.watch(probeDir, (type, name) => {
+      if (type === 'change' && name === 'probe.md') readFires = true;
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    await fs.readFile(probeFile);
+    await new Promise((r) => setTimeout(r, 1500));
+    bare.close();
+    await fs.rm(probeDir, { recursive: true, force: true });
+
+    const opened = path.join(proj, '.claude', 'agents', 'reviewer.md');
+    if (!readFires) {
+      skip('opening a file does not report it changed (#131)', 'this machine does not fire a watch event on a read (last-access updates off)');
+    } else {
+      // Backdated BEFORE this stream opens: setting the times is itself a
+      // metadata change, which a watch already running would rightly report.
+      await fs.utimes(opened, hourAgo(), (await fs.stat(opened)).mtime);
+      await new Promise((r) => setTimeout(r, 200));
+      const readWatch = openWatch(scanId, H);
+      await readWatch.waitFor('ready');
+      const namedIn = (w) => w.events.filter((e) => e.name === 'change').flatMap((e) => e.data.changes || []).map((c) => c.name);
+      const shown = await fetch(`${BASE}/api/file?scanId=${scanId}&path=${encodeURIComponent(opened)}`, { headers: H });
+      await new Promise((r) => setTimeout(r, 1500));
+      const afterRead = namedIn(readWatch);
+      await fs.writeFile(opened, '---\nname: reviewer\n---\n\nReview things, carefully.\n');
+      await new Promise((r) => setTimeout(r, 1500));
+      const afterWrite = namedIn(readWatch);
+      await readWatch.close();
+      check('positive control: the file was opened, and a real edit of it still lights the bar',
+        shown.status === 200 && afterWrite.includes('reviewer.md'), JSON.stringify({ status: shown.status, afterWrite }));
+      check('opening a file does not report it changed (#131)', !afterRead.includes('reviewer.md'), JSON.stringify(afterRead));
+    }
+  }
 
   // A credential file sits in a watched directory, so it can raise an event.
   // The name is already public in level.redacted; the BYTES must never be.

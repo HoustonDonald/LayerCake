@@ -406,6 +406,13 @@ with no other change.
 LayerCake's own saves and restores are suppressed for two seconds, so the bar stays a report of what
 happened *outside* this window.
 
+**A file that was only read is not reported** (#131). On Windows, reading a file can make its
+folder's watch say it changed: NTFS updates the last-access time when the old one is about an hour
+stale, and the watcher is told. So opening a file in LayerCake, Claude Code loading it, or the scan
+listing a skill folder used to light the bar. A reported change is now checked against the path's own
+times first, and counts only if its last-write time or its metadata-change time moved. A credential
+file is never stat'ed, so its events are reported as they come.
+
 **Muting a file.** Every changed file in the bar has a **Mute** button. A muted file still counts,
 is still listed (marked muted), and still goes into a Rescan; what it loses is the right to light the
 bar, or to raise a desktop notification. So a file that changes every few seconds, `~/.claude.json`

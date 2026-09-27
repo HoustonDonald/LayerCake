@@ -370,6 +370,47 @@ export function watchLineage(lineage, onChange, onCoverage) {
   }
 
   /**
+   * A native 'change' is confirmed by the path's own times before it is
+   * reported (#131).
+   *
+   * On Windows, READING a file makes its folder's watch report it changed: the
+   * libuv watcher subscribes to last-access updates, and NTFS writes a new
+   * access time when the old one is about an hour stale. So the first read of
+   * a file nobody has opened for an hour, by LayerCake showing it or by Claude
+   * Code loading it, lit the bar; so did the scan listing a skill folder.
+   * Measured (Node 24.3): a read fires 'change' with mtime, ctime and size all
+   * unmoved; a write moves mtime and ctime, and a file added to a folder
+   * moves the folder's.
+   *
+   * So a 'change' counts only if the path's mtime or ctime (NTFS ChangeTime,
+   * which a metadata write such as the read-only bit also moves) differs from
+   * what this watcher last saw, or, the first time it sees the path, is later
+   * than the watch's start. A credential file is never stat'ed, as in the
+   * poller, and is reported unconfirmed. A stat that fails reports the event:
+   * the error is on the side of saying too much.
+   */
+  const startedAt = Date.now();
+  /** key -> the newer of mtimeMs and ctimeMs, as this watcher last saw it. */
+  const lastTouched = new Map();
+
+  async function confirmChange(dir, filename) {
+    if (closed || !isReportable(dir, filename)) return;
+    const absPath = path.join(dir, filename);
+    if (isSecret(absPath)) return record(dir, filename, 'change');
+    let touched;
+    try {
+      const st = await timedFsCall(absPath, () => fs.promises.stat(absPath));
+      touched = Math.max(st.mtimeMs, st.ctimeMs);
+    } catch {
+      return record(dir, filename, 'change');
+    }
+    const key = samePathKey(absPath);
+    const seen = lastTouched.get(key);
+    lastTouched.set(key, touched);
+    if (seen === undefined ? touched >= startedAt : touched !== seen) record(dir, filename, 'change');
+  }
+
+  /**
    * A natively watched folder was deleted.
    *
    * Node on Windows says so by reporting the folder ITSELF as renamed, by its
@@ -411,6 +452,7 @@ export function watchLineage(lineage, onChange, onCoverage) {
         // with a drive or a \\?\ prefix is the folder itself.
         const name = filename && ROOTED_CHILD.test(filename) ? filename.slice(1) : filename;
         if (name && path.isAbsolute(name)) watchedFolderGone(dir, watcher);
+        else if (eventType === 'change' && name) confirmChange(dir, name);
         else record(dir, name, eventType);
       });
       // An error after start arrives here. (Deleting the folder is not one on
