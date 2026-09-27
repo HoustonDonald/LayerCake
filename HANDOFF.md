@@ -23,9 +23,47 @@ npm run smoke                       # expect: 0 failed
 node cli/index.js here C:\dev\LayerCake   # expect: ~18 line summary, exit 0
 ```
 
-Smoke was 304 passed, 0 failed, 2 skipped on 2026-09-27 (Windows; the 2 skips are the opt-in
+Smoke was 318 passed, 0 failed, 2 skipped on 2026-09-27 after 0eec620 (Windows; the 2 skips are the opt-in
 mapped-drive checks and a Linux-only one). The last recorded WSL Ubuntu run was 258/0, before the
 checks added since; it has not been rerun.
+
+### 2026-09-27, later: faster saves, and the settings model now matches Claude Code
+
+Shipped and closed, each commit message listing its measurements, checks and mutants:
+- **5c6e3ec** (#137): a snapshot copies local files 8 at a time; files on a share stay one at a
+  time, in a lane of their own, because the share gate counts each call's budget from when it is
+  queued (#69), so eight queued together on a slow share time out untried (a mutant with the share
+  lane 8 wide timed out 7 of 12 share files). A save over HTTP: 0.9 to 1.1 s before, 0.2 to 0.3 s
+  after. Nothing in smoke fails if the lane width goes back to 1; it is a measured timing claim.
+- **e8267f7** (#118, #119): the settings view merges only the files Claude Code reads (user, the
+  project's `settings.json` and `settings.local.json`, managed), objects per key, lists combined.
+  Established with a zero-usage probe of Claude Code 2.1.283 (method in README "Flattened views");
+  two of the issue's claims were wrong (the git-root rule is POSIX only, #146; `env` merges per
+  variable). Parent folders' settings, `keybindings.json`, the config home's `settings.local.json`
+  and the legacy ProgramData managed path are listed as not read, with the reason.
+- **0eec620** (#135): create offers a settings file only where Claude Code reads it, from the same
+  `settingsSourceFiles` in paths.js the view uses.
+
+Filed: #146 (macOS/Linux git-root `settings.local.json`, not modelled) and #147 (managed-settings.d,
+registry and server-managed policy not scanned).
+
+**Owner-facing finding:** the 23 `permissions.allow` rules in `~\.claude\settings.local.json` apply
+only to sessions started in `C:\Users\donal`. For this repo the real count is 7 (the old view said
+30). Explained to the owner, with a page: https://claude.ai/artifact/7KhyWt5WZto4asiupJ2CdM. Moving
+any of them to `~\.claude\settings.json` is the owner's call (several approve a whole shell).
+
+Tooling from this round, in this session's scratchpad
+(`%TEMP%\claude\C--dev-LayerCake\06150164-...\scratchpad`), none of it in the repository:
+- `settings-probe-119.mjs`: the zero-usage settings probe (marker hooks, stub API). Re-run it when
+  Claude Code's settings loader changes. It builds and uses `C:\lc-settings-probe`; `rm-probe.mjs`
+  removes it after checking for links (the harness refuses a plain delete of a child of `C:\`).
+- `mutate-119.mjs`: the mutant engine from `mutate-v.mjs` with the #119 and #135 mutants, plus a
+  whole-file edit (`{ file, whole }`) for running HEAD's version of a file as a mutant.
+- `ui-119.mjs` (the settings view in headless Edge, puppeteer from the earlier session's
+  `ui-tool`), `exe-lifecycle-119.ps1`, `bench-137.mjs`, `save-http-137.mjs`, `share-lane-137.mjs`.
+
+**A trap:** `node scripts/build-if-stale.js` does nothing at exit 0: the module exports the rule
+and runs nothing. Rebuild the client with `npm run build` (or let `npm start` or smoke do it).
 
 ### 2026-09-26 to 27: tested against a copy of a real project (beetle-etl)
 
@@ -50,21 +88,18 @@ Filed #111 to #145. Shipped and closed, each commit message listing its checks a
 
 **Suggested order for what is open** (the issues hold the detail; all reachable in ordinary use
 unless marked):
-1. #137: every save copies the whole lineage one file at a time, 1.4 to 2.6 s. 8 in flight measured
-   about 4x faster. Keep the share gate.
-2. #118, then #119: the settings view applies the config home twice, and the merge model does not
-   match Claude Code 2.1.283 (no ancestor walk, five fixed sources). #135 (create offers ancestor
-   settings files) follows from #119.
-3. #125 (counts include two-route files), #120 (per-project MCP never found on Windows), #121, #122,
-   #123.
-4. Snapshots: #143 (a delete's undo opens with nothing selected; differing rows buried), #132, #139,
+#137, #118, #119 and #135 are done (section above).
+1. #125 (counts include two-route files), #120 (per-project MCP never found on Windows), #121, #122,
+   #123. For #120, the settings probe's method (marker hooks, stub API, zero usage) can establish
+   what Claude Code actually reads before changing the model.
+2. Snapshots: #143 (a delete's undo opens with nothing selected; differing rows buried), #132, #139,
    #141 (delete removes a read-only file), #136 (restore of a recreated file is not undoable;
    disclosed in the CLI, open in the UI).
-5. #138: store growth. Content-by-hash storage fixes it with no deletion and is a technical call;
+3. #138: store growth. Content-by-hash storage fixes it with no deletion and is a technical call;
    deleting old snapshots (retention) is the owner's.
-6. UI: #129, #130, #133. #131 (watch fires on read) is observed, not reproduced; confirm first.
-7. #144 (junctioned skill folder): first confirm Claude Code loads skills through a junction.
-8. (b) or small: #140, #142, #145, #124.
+4. UI: #129, #130, #133. #131 (watch fires on read) is observed, not reproduced; confirm first.
+5. #144 (junctioned skill folder): first confirm Claude Code loads skills through a junction.
+6. (b) or small: #140, #142, #145, #124. Platform or managed-machine only: #146, #147.
 
 Owner questions: #126 (plugin cache files editable?), and retention in #138.
 
@@ -382,7 +417,8 @@ Recorded because the pattern matters more than the individual fixes.
    - **A fourth, 2026-09-26 (#117):** flatten decided `shadowed` correctly but kept both sightings
      for its clients to collapse. The CLI did; the page drew the second as "shadowed". Found by two
      testers on a real project. Now `collapseRoutes` in `flatten.js` lists each file once, so no
-     client can repeat it. The settings view still applies such a file twice (#118).
+     client can repeat it. The settings view lists such a file once too, and merges only what Claude
+     Code reads (#118, #119, fixed 2026-09-27).
 3. **Ctrl+C stranded the launcher** at `Terminate batch job (Y/N)?` on a console the user thought
    they had closed. Fixed with `call :run %* < nul` in `layercake.cmd`, scoped so the failure-path
    `pause` still reads the keyboard.
@@ -451,4 +487,4 @@ Windows and tooling specifics, on top of what `C:\dev\CLAUDE.md` already documen
 4. Smoke never runs the exe. After touching `server/app.js`, `desktop/` or `client/`, run
    `npm run build:exe` and launch `dist\LayerCake.exe` with `Start-Process` (as Explorer would),
    with every data folder and `LAYERCAKE_BROWSER_PROFILE_DIR` redirected.
-5. Pick up the suggested order in the 2026-09-26 to 27 section, starting with #137.
+5. Pick up the suggested order in the 2026-09-26 to 27 section; #137, #118, #119 and #135 are done.
