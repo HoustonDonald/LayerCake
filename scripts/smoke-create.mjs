@@ -540,6 +540,79 @@ export async function runCreateChecks({ base, token, check, skip, smokeDir, conf
       `exit ${cli.status}: ${(cli.stderr || cli.stdout).trim().slice(0, 160)}`);
   }
 
+  // --- #134: the CLI takes ~/.claude.json only by name, and its undo is exact --
+  // Claude Code rewrites ~/.claude.json as it runs. The page never preselects
+  // it; the CLI selected it by default and printed "restore <undo> --yes",
+  // which rolled it back again, along with anything else changed since.
+  {
+    const { spawnSync } = await import('node:child_process');
+    const repoRoot = path.dirname(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')));
+    const restoreCli = (...args) =>
+      spawnSync(process.execPath, [path.join(repoRoot, 'cli', 'index.js'), 'restore', ...args], {
+        encoding: 'utf8',
+        env: { ...process.env, LAYERCAKE_SNAPSHOT_DIR: snaps, CLAUDE_CONFIG_DIR: configHome },
+      });
+    const claudeJson = path.join(configHome, '.claude.json');
+    const memo = path.join(proj, 'CLAUDE.md');
+    const saved = await Promise.all([claudeJson, memo, homeMemo].map((p) => fs.readFile(p, 'utf8').catch(() => null)));
+    const read = (p) => fs.readFile(p, 'utf8').catch(() => null);
+    try {
+      await fs.writeFile(homeMemo, '# home memo at snapshot time\n');
+      lin = await scan(proj);
+      const snap = await post('/api/snapshot', { scanId: lin.scanId, label: 'cli #134' });
+      const jsonAtSnap = await read(claudeJson);
+      const memoAtSnap = await read(memo);
+      const jsonByClaude = JSON.stringify({ projects: {}, rewrittenBy: 'claude code' });
+      await fs.writeFile(claudeJson, jsonByClaude);
+      await fs.writeFile(memo, '# edited after the snapshot\n');
+
+      const run = restoreCli(snap.json.id, proj, '--yes');
+      check('the CLI restore leaves ~/.claude.json out unless named, says so, and restores the rest (#134)',
+        run.status === 0 && (await read(claudeJson)) === jsonByClaude && (await read(memo)) === memoAtSnap &&
+          /Left out: Claude Code rewrites/.test(run.stdout),
+        `exit ${run.status}: ${run.stdout.slice(0, 400)}`);
+
+      // The printed undo, taken apart the way a shell would: it must name the
+      // one file it replaced, and running it must touch nothing else.
+      const undoLine = /Undo with: layercake restore (\S+) (.*) --yes/.exec(run.stdout);
+      const undoOnly = undoLine ? [...undoLine[2].matchAll(/--only "([^"]+)"/g)].map((m) => m[1]) : [];
+      check('the printed undo names exactly the file the restore replaced (#134)',
+        undoOnly.length === 1 && same(undoOnly[0], memo), undoLine?.[0] || run.stdout.slice(-300));
+      await fs.writeFile(homeMemo, '# home memo edited after the restore\n');
+      const jsonLater = JSON.stringify({ projects: {}, rewrittenBy: 'claude code, later' });
+      await fs.writeFile(claudeJson, jsonLater);
+      const undo = undoLine ? restoreCli(undoLine[1], proj, ...undoOnly.flatMap((p) => ['--only', p]), '--yes') : { status: null, stdout: '' };
+      check('running the printed undo puts the edit back and leaves later changes alone (#134)',
+        undo.status === 0 && (await read(memo)) === '# edited after the snapshot\n' &&
+          (await read(homeMemo)) === '# home memo edited after the restore\n' && (await read(claudeJson)) === jsonLater,
+        `exit ${undo.status}: ${undo.stdout.slice(0, 300)}`);
+
+      // A path prefix that happens to cover it does not name it: ~/.claude.json
+      // sits in, or beside, the folder a user would name to restore config.
+      const prefix = restoreCli(snap.json.id, proj, '--only', configHome);
+      check('a folder prefix does not select ~/.claude.json; it is listed as left out (#134)',
+        prefix.status === 0 && !/(overwrite|recreate)\s+\S*\.claude\.json/.test(prefix.stdout) && /Left out: Claude Code rewrites/.test(prefix.stdout),
+        prefix.stdout.slice(0, 400));
+      const named = restoreCli(snap.json.id, proj, '--only', '.claude.json', '--yes');
+      check('named by its file name, ~/.claude.json is restored (#134)',
+        named.status === 0 && (await read(claudeJson)) === jsonAtSnap, `exit ${named.status}: ${named.stdout.slice(0, 300)}`);
+
+      // A file the restore recreates is not in the undo snapshot, which was
+      // taken while it was missing (#136): the undo line must not claim it.
+      await fs.rm(memo);
+      const recreate = restoreCli(snap.json.id, proj, '--only', memo, '--yes');
+      check('a recreated file is named as not covered by the undo, and no undo command claims it (#134)',
+        recreate.status === 0 && (await read(memo)) === memoAtSnap && /Not covered by the undo/.test(recreate.stdout) &&
+          !/Undo with:/.test(recreate.stdout),
+        recreate.stdout.slice(0, 400));
+    } finally {
+      for (const [i, p] of [claudeJson, memo, homeMemo].entries()) {
+        if (saved[i] === null) await fs.rm(p, { force: true });
+        else await fs.writeFile(p, saved[i]);
+      }
+    }
+  }
+
   // --- #106: a link planted in a snapshot's files/ is not a copy --------------
   {
     const outsideSecret = path.join(smokeDir, 'link-target-secret.txt');

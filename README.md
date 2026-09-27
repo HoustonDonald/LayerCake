@@ -308,10 +308,16 @@ that tree is a restore target, and a backup the restore can overwrite is not a b
 - Restore is selective: pick a snapshot, see a per-file comparison against disk right now
   (`same` / `changed` / `missing` / `error`), then choose what to put back. Changed files are
   preselected; identical ones are not, because restoring them is a write with no effect.
-  `~/.claude.json` is never preselected: Claude Code rewrites it constantly, so it always differs,
-  and rolling it back rolls back Claude Code's own state. A row the current scan cannot restore is
-  disabled, and says why.
-- **A restore takes its own snapshot first**, so it is itself undoable, and it does not replace a
+  Files Claude Code rewrites as it runs, `~/.claude.json` and the plugin manifests, are never
+  preselected: they nearly always differ, and rolling one back rolls back Claude Code's own state.
+  The CLI leaves them out the same way unless `--only` names one by its full path or file name
+  (`--only .claude.json`); the list is `write.restoreOnlyByName` in `/api/manifest`, and the page and the
+  CLI both read it from the comparison rows. A row the current scan cannot restore is disabled, and
+  says why.
+- **A restore takes its own snapshot first**, so it is itself undoable: the CLI prints the undo
+  command with an `--only` for each file it replaced. A file the restore recreated is the exception,
+  since that snapshot was taken while it was missing and a restore never deletes; the CLI names such
+  files as not covered. It does not replace a
   file that snapshot could not hold (over the 2 MB cap): that row fails and says so. A row that
   fails does not stop the others.
 - **A file gone from disk can be restored**, including after a rescan that no longer lists it,

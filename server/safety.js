@@ -236,6 +236,20 @@ export function isSensitive(filePath) {
   return SENSITIVE_BASENAMES.has(path.basename(filePath).toLowerCase());
 }
 
+/**
+ * Categories of file Claude Code itself rewrites as it runs: `~/.claude.json`
+ * and the plugin manifests. They nearly always differ from a snapshot, and
+ * rolling one back rolls back Claude Code's own state, so no restore selects
+ * them unless asked by name (#96, #109). One list for the page and the CLI:
+ * the CLI once selected `~/.claude.json` by default and printed an undo that
+ * did it again (#134).
+ */
+const CLAUDE_REWRITES = new Set(['home-config', 'plugin-manifest']);
+
+export function rewrittenByClaudeCode(category) {
+  return CLAUDE_REWRITES.has(category);
+}
+
 export function isNonConfigDir(name) {
   return NON_CONFIG_DIRS.has(name.toLowerCase());
 }
@@ -300,6 +314,8 @@ export function writePolicy() {
     acknowledgeCommandKeys: { categories: [...COMMAND_KEY_CATEGORIES].sort(), keys: [...COMMAND_KEYS] },
     maxWriteBytes: MAX_WRITE_BYTES,
     neverWritten: [...SECRET_BASENAMES].sort(),
+    // Never selected for a restore unless named (#134); compare rows carry it.
+    restoreOnlyByName: [...CLAUDE_REWRITES].sort(),
     // #15: what a create may add, and where. The per-level options a scan
     // offers are built from exactly these tables.
     create: {

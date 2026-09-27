@@ -19,7 +19,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { flatten } from '../server/flatten.js';
-import { snapshotRoot } from '../server/paths.js';
+import { samePathKey, snapshotRoot } from '../server/paths.js';
 import { timedFsCall } from '../server/sharegate.js';
 import { restoreSnapshotFiles } from '../server/writefile.js';
 import { resolveLineage } from '../server/scan.js';
@@ -148,18 +148,24 @@ is per file: same, changed, missing or error. Informational, so it always exits
 Options
   -h, --help    this text`,
 
-  restore: `layercake restore <snapshotId> [dir] [--only text] [--yes]
+  restore: `layercake restore <snapshotId> [dir] [--only text]... [--yes]
 
 Restore files from a snapshot. Dry run by default: it prints exactly which files
 would be written and changes nothing. Files already identical to the snapshot are
 never rewritten.
+
+Files Claude Code rewrites as it runs (~/.claude.json and the plugin manifests)
+are left out unless named: they nearly always differ, and rolling one back rolls
+back Claude Code's own state.
 
 dir is the project directory whose lineage is captured as the undo snapshot. It
 defaults to the project the snapshot was taken for, which is what makes the undo
 cover the same set of files.
 
 Options
-      --only    restore only paths containing this substring
+      --only    restore only paths containing this text; repeat it for more.
+                A file Claude Code rewrites is taken only by its full path or
+                its file name, e.g. --only .claude.json
       --yes     actually write. An undo snapshot is taken first, always.
   -h, --help    this text`,
 };
@@ -270,9 +276,29 @@ async function cmdDiff(args) {
   renderDiff(await compareSnapshot(id), manifest.home);
 }
 
+/**
+ * Whether --only takes a snapshot row. A needle matches anywhere in the path,
+ * except for a file Claude Code rewrites as it runs, which must be named by its
+ * full path or its file name: `--only C:\Users\me\.claude` would otherwise sweep
+ * in `.claude.json`, and rolling that back rolls back Claude Code's own state.
+ * With no --only, every row is taken except those (#134).
+ */
+function takenBy(row, needles) {
+  const p = row.absPath.toLowerCase();
+  if (row.rewrittenByClaudeCode) {
+    return needles.some((n) => n === path.basename(p) || samePathKey(path.resolve(n)) === samePathKey(row.absPath));
+  }
+  return needles.length === 0 || needles.some((n) => p.includes(n));
+}
+
+/** Quoted for a shell, so a printed command survives a path with spaces. */
+function shellArg(p) {
+  return `"${p}"`;
+}
+
 async function cmdRestore(args) {
   const { values, positionals } = parse(args, {
-    only: { type: 'string' },
+    only: { type: 'string', multiple: true },
     yes: { type: 'boolean' },
   });
   if (values.help) return out(COMMAND_HELP.restore);
@@ -282,11 +308,22 @@ async function cmdRestore(args) {
   const dir = await targetDir(positionals[1] ?? manifest.projectDir);
 
   const { rows } = await compareSnapshot(id);
-  const needle = values.only ? values.only.toLowerCase() : null;
-  const selected = needle ? rows.filter((r) => r.absPath.toLowerCase().includes(needle)) : rows;
+  const needles = (values.only || []).map((n) => n.toLowerCase());
+  const selected = rows.filter((r) => takenBy(r, needles));
+  // Differing files left out only because Claude Code rewrites them. Named, so
+  // leaving them out is never silent.
+  const heldBack = rows.filter(
+    (r) =>
+      r.rewrittenByClaudeCode &&
+      r.status !== 'same' &&
+      !selected.includes(r) &&
+      (needles.length === 0 || needles.some((n) => r.absPath.toLowerCase().includes(n)))
+  );
 
-  if (selected.length === 0) {
-    throw new CliError(`No file in snapshot ${id} matches --only ${values.only}`);
+  // Only a needle that matches nothing at all is a mistake. With no --only, an
+  // empty selection is just nothing to do, reported below.
+  if (needles.length && selected.length === 0 && !rows.some((r) => needles.some((n) => r.absPath.toLowerCase().includes(n)))) {
+    throw new CliError(`No file in snapshot ${id} matches --only ${values.only.join(', ')}`);
   }
 
   // A file identical to the snapshot is left alone. Rewriting it would produce
@@ -298,8 +335,14 @@ async function cmdRestore(args) {
   out(paint.bold(`Snapshot ${id}`));
   out(paint.dim(`taken ${localTime(manifest.createdAt)}   ${manifest.label || '(no label)'}`));
   out(paint.dim(`undo snapshot will be taken of the lineage for ${dir}`));
-  if (needle) out(paint.dim(`--only ${values.only}: ${selected.length} of ${rows.length} files match`));
+  if (needles.length) out(paint.dim(`--only ${values.only.join(', ')}: ${selected.length} of ${rows.length} files match`));
   out();
+
+  if (heldBack.length) {
+    out(paint.yellow(`Left out: Claude Code rewrites ${heldBack.length === 1 ? 'this file' : 'these files'} as it runs, and rolling one back rolls back its own state.`));
+    for (const row of heldBack) out(paint.dim(`  ${row.absPath}   (to restore it: --only ${path.basename(row.absPath)})`));
+    out();
+  }
 
   if (toWrite.length === 0) {
     out(paint.green(`Nothing to do: ${plural(selected.length, 'selected file')} already identical to the snapshot.`));
@@ -331,7 +374,21 @@ async function cmdRestore(args) {
   }
   out();
   out(`Undo snapshot: ${paint.bold(result.undoSnapshotId)}`);
-  out(paint.dim(`Undo with: layercake restore ${result.undoSnapshotId} --yes`));
+  // The undo names exactly the files this restore replaced. A bare "restore
+  // <undo> --yes" would also roll back anything else changed since, and before
+  // #134 it rolled back ~/.claude.json too. A file this restore recreated is
+  // not in the undo snapshot, which was taken while it was missing, and a
+  // restore never deletes, so the undo cannot take it away (#136): say so.
+  const recreated = new Set(toWrite.filter((r) => r.status === 'missing').map((r) => samePathKey(r.absPath)));
+  const replaced = result.restored.filter((p) => !recreated.has(samePathKey(p)));
+  const created = result.restored.filter((p) => recreated.has(samePathKey(p)));
+  if (replaced.length) {
+    out(paint.dim(`Undo with: layercake restore ${result.undoSnapshotId} ${replaced.map((p) => `--only ${shellArg(p)}`).join(' ')} --yes`));
+  }
+  if (created.length) {
+    out(paint.dim(`Not covered by the undo, since ${created.length === 1 ? 'it was' : 'they were'} missing when it was taken; delete by hand to go back:`));
+    for (const p of created) out(paint.dim(`  ${p}`));
+  }
   if (result.failed.length) process.exitCode = 1;
 }
 

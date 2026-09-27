@@ -9,14 +9,6 @@ const STATUS_LABEL = {
   error: 'unreadable',
 };
 
-/**
- * Files Claude Code itself rewrites as it runs: ~/.claude.json and the plugin
- * manifests. They nearly always differ from a snapshot, and rolling one back
- * rolls back Claude Code's own state, so they are never preselected (#96, #109).
- * Still selectable by hand.
- */
-const CLAUDE_REWRITES = new Set(['home-config', 'plugin-manifest']);
-
 function when(iso) {
   if (!iso) return '';
   return new Date(iso).toLocaleString();
@@ -88,13 +80,14 @@ export default function SnapshotPanel({ scanId, onRestored }) {
       setComparison(cmp);
       // Preselect only what actually differs and can be put back. Restoring an
       // identical file is a write with no effect, and it would pad the
-      // confirmation with noise. ~/.claude.json (home-config) is never
-      // preselected: Claude Code rewrites it constantly, so it always differs,
-      // and rolling it back rolls back Claude Code's own state (#96).
+      // confirmation with noise. A file Claude Code rewrites as it runs
+      // (~/.claude.json, the plugin manifests) is never preselected: it always
+      // differs, and rolling it back rolls back Claude Code's own state (#96,
+      // #109). The server marks those rows, for this page and the CLI (#134).
       setChecked(
         new Set(
           cmp.rows
-            .filter((r) => r.status === 'changed' && r.restorable !== false && !CLAUDE_REWRITES.has(r.category))
+            .filter((r) => r.status === 'changed' && r.restorable !== false && !r.rewrittenByClaudeCode)
             .map((r) => r.absPath)
         )
       );
