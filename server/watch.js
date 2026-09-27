@@ -135,6 +135,13 @@ function onNetworkTest(lineage) {
 export const DEBOUNCE_MS = 250;
 
 /**
+ * A name with one leading separator and nothing before it: how Node on Windows
+ * reports a child of a drive root ("\ProgramData"). Two separators is a UNC or
+ * \\?\ path, which is the watched folder reporting its own deletion.
+ */
+const ROOTED_CHILD = /^[\\/](?![\\/])/;
+
+/**
  * How often a directory on a network share is polled.
  *
  * 5 s is the trade between how soon a share-side change shows and how much a
@@ -397,10 +404,14 @@ export function watchLineage(lineage, onChange, onCoverage) {
       // The HTTP server is what keeps this process alive; a stranded watcher
       // should not be able to outlive it.
       const watcher = fs.watch(dir, { persistent: false, recursive: false }, (eventType, filename) => {
-        // A child is always reported by its name alone; only the folder's own
-        // report of its deletion carries an absolute path.
-        if (filename && path.isAbsolute(filename)) watchedFolderGone(dir, watcher);
-        else record(dir, filename, eventType);
+        // A child is reported by its name alone, except directly under a drive
+        // root, where Node reports it as "\ProgramData" (observed, #127). That
+        // passes path.isAbsolute, and taking it for the folder's own deletion
+        // closed the watch on C:\ at the first change inside it. Only a name
+        // with a drive or a \\?\ prefix is the folder itself.
+        const name = filename && ROOTED_CHILD.test(filename) ? filename.slice(1) : filename;
+        if (name && path.isAbsolute(name)) watchedFolderGone(dir, watcher);
+        else record(dir, name, eventType);
       });
       // An error after start arrives here. (Deleting the folder is not one on
       // Windows, where it arrives as the event above.) Recording and closing

@@ -378,8 +378,11 @@ process; local ones are re-asked on every scan, since a stale "local" is the dan
 **A deleted folder must close its native watch at once.** On Windows, Node reports a watched
 folder's own deletion by its full `\\?\` path and keeps reporting it, about 130,000 events a second
 until the handle closes: 3.3 s of server CPU in 3 s, measured, from deleting one skill folder. `watch.js`
-treats an absolute filename as that report and closes the watcher. Smoke checks both the silence and
-the server's CPU share after a deletion, because a watcher left open and silenced would pass the first.
+treats an absolute filename as that report and closes the watcher, except the one-separator form
+`\ProgramData`, which is how Node names a child of a drive root: taking that for the root's own deletion
+closed the watch on `C:\` at the first change inside it (#127). Smoke checks both the silence and
+the server's CPU share after a deletion, because a watcher left open and silenced would pass the first,
+and checks that a change inside the drive root leaves it watched.
 
 **Merge rules are stated, not implied.** The settings precedence model is this tool's own, not
 something read back from Claude Code. Any view that computes an effective value must ship the rule

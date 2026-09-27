@@ -840,6 +840,22 @@ try {
     `${watch.events.length} frames`
   );
 
+  // The #127 misfire at the HTTP boundary: this scan watches the drive root,
+  // and the fixture is a child of it, so a write directly in the fixture folder
+  // is a change inside the root. The root must not come back as changed, nor
+  // be dropped from the watch as deleted.
+  if (!fixtureFellBack) {
+    const driveRoot = path.parse(smokeDir).root;
+    const isRoot = (p) => samePathKey(p) === samePathKey(driveRoot);
+    await fs.writeFile(path.join(smokeDir, 'root-child-change.txt'), 'x');
+    await new Promise((r) => setTimeout(r, 1200));
+    const misfires = watch.events.filter((e) =>
+      (e.name === 'change' && (e.data.changes || []).some((c) => isRoot(c.absPath))) ||
+      (e.name === 'coverage' && (e.data.skipped || []).some((s) => isRoot(s.absPath))));
+    check('the stream never reports the drive root changed or deleted after a change inside it (#127)',
+      misfires.length === 0, JSON.stringify(misfires.map((e) => e.data)));
+  }
+
   await watch.close();
 
   // --- open config trees found by level, not by folder name (#65, #80) ------
@@ -870,6 +886,47 @@ try {
       w.close();
       check(`a new agent in ${label} raises a change event`, seen.some((c) => c.name === 'brand-new.md'),
         JSON.stringify(seen.map((c) => c.name)));
+    }
+  }
+
+  // --- a change directly inside the drive root (#127) ------------------------
+  // Node names a child of C:\ "\name", which path.isAbsolute accepts, and the
+  // watcher took every absolute name for the folder's own deletion report: the
+  // first change inside C:\ closed its watch and lit "C:\ changed", so a later
+  // C:\CLAUDE.md went unreported. Every scan on Windows watches the root. The
+  // probe is a path the lineage lists as absent directly under the root, so its
+  // creation is news; the folder made and removed first is the misfire trigger.
+  // Both are folders: a user may create a folder in C:\ but not a file.
+  if (fixtureFellBack) {
+    skip('a change inside the drive root keeps it watched (3 checks)', 'the drive root could not be written, so the fixture is not under it');
+  } else {
+    const { watchLineage } = await import('../server/watch.js');
+    const root = path.parse(smokeDir).root;
+    const probe = path.join(root, `${path.basename(smokeDir)}-probe`);
+    const noise = path.join(root, `${path.basename(smokeDir)}-noise`);
+    const lin = { levels: [{ kind: 'directory', dir: root, entries: [], absent: [{ absPath: probe }], errors: [] }], networkDrives: [] };
+    const seen = [];
+    const w = watchLineage(lin, (batch) => seen.push(...batch));
+    const before = w.coverage();
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      await fs.mkdir(noise);
+      await fs.rm(noise, { recursive: true });
+      await new Promise((r) => setTimeout(r, 800));
+      await fs.mkdir(probe);
+      const until = Date.now() + 5000;
+      while (Date.now() < until && !seen.some((c) => c.name === path.basename(probe))) await new Promise((r) => setTimeout(r, 100));
+      const after = w.coverage();
+      check('a folder created directly in the drive root is reported after another change there (#127)',
+        seen.some((c) => c.name === path.basename(probe)), JSON.stringify(seen.map((c) => c.absPath)));
+      check('the drive root itself is not reported as changed', !seen.some((c) => samePathKey(c.absPath) === samePathKey(root)),
+        JSON.stringify(seen.map((c) => c.absPath)));
+      check('the drive root stays watched', after.watchedCount === before.watchedCount && after.watchedCount > 0 &&
+        !after.skipped.some((s) => samePathKey(s.absPath) === samePathKey(root)), JSON.stringify(after));
+    } finally {
+      w.close();
+      await fs.rm(probe, { recursive: true, force: true });
+      await fs.rm(noise, { recursive: true, force: true });
     }
   }
 
