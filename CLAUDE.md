@@ -144,7 +144,9 @@ Claude data folder.
 
 **Every write that replaces or removes bytes snapshots first, and that is structural.** `writefile.js`
 imports `snapshot.js`, not the reverse, so a new route cannot skip the snapshot by forgetting to call
-it. Keep that direction. Every edit, delete and restore then checks, per file, that the snapshot
+it. Keep that direction. That automatic snapshot holds only the files the operation replaces or
+removes (`paths` in `createSnapshot`; owner decision 2026-09-27); a snapshot taken on request is the
+whole lineage. Every edit, delete and restore then checks, per file, that the snapshot
 holds the file it is about to replace or remove (`assertHeld`, and the same test in `restoreFiles`),
 and refuses that file if not, so a file over the 2 MB cap is never replaced or removed with no copy
 left (#96; delete had it first, #15). The snapshot records the hash of its stored copy, and the

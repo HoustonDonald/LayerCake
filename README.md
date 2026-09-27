@@ -326,15 +326,20 @@ is broken or gone, recovery is File Explorer and copy/paste.
 Override the location with `LAYERCAKE_SNAPSHOT_DIR`. It is deliberately **not** under `~/.claude`:
 that tree is a restore target, and a backup the restore can overwrite is not a backup.
 
-- Captures every file the scan found, deduplicated by path. A file can legitimately appear at two
-  levels when the project sits under your home directory; the lineage shows both, the snapshot
-  stores one.
+- **What a snapshot holds depends on why it was taken** (owner decision, 2026-09-27). **Take
+  snapshot** and `layercake backup` capture every file the scan found, deduplicated by path: a file
+  can legitimately appear at two levels when the project sits under your home directory, and the
+  snapshot stores one. The automatic snapshot taken before an edit, delete or restore holds only the
+  files that operation replaces or removes, so it costs a file rather than the whole lineage (about
+  100 files, mostly plugins), and opening it shows just those rows. It does not record the rest of
+  your configuration as it was at that moment; take a snapshot by hand for that.
 - Runtime-state directories and credential files are excluded, as they are from the scan itself.
 - **Files over the 2 MB cap are skipped and recorded, never truncated.** A truncated file restored
   is silent data loss.
 - Restore is selective: pick a snapshot, see a per-file comparison against disk right now
-  (`same` / `changed` / `missing` / `error`), then choose what to put back. Changed files are
-  preselected; identical ones are not, because restoring them is a write with no effect.
+  (`same` / `changed` / `missing` / `error`), then choose what to put back. Changed files and files
+  gone from disk are preselected and listed first, so undoing a delete is one click; identical ones
+  are not, because restoring them is a write with no effect.
   Files Claude Code rewrites as it runs, `~/.claude.json` and the plugin manifests, are never
   preselected: they nearly always differ, and rolling one back rolls back Claude Code's own state.
   The CLI leaves them out the same way unless `--only` names one by its full path or file name

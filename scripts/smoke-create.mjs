@@ -181,6 +181,10 @@ export async function runCreateChecks({ base, token, check, skip, smokeDir, conf
   // A gone file that reappears after the scan is never written over: the
   // restore's own snapshot came from the scan and cannot hold it.
   lin = await scan(proj);
+  // A full snapshot, taken by hand, for the mixed batch below: a delete's own
+  // undo holds only the file it deleted (owner decision, 2026-09-27), and that
+  // check needs two files in one snapshot.
+  const both = await post('/api/snapshot', { scanId: lin.scanId, label: 'agent and home memory, for the mixed batch' });
   const del2 = await post('/api/delete', { scanId: lin.scanId, path: agentPath, expectedMtime: entriesOf(lin).find((e) => same(e.absPath, agentPath))?.mtime });
   lin = await scan(proj);
   await fs.writeFile(agentPath, 'REAPPEARED after the scan\n');
@@ -232,12 +236,12 @@ export async function runCreateChecks({ base, token, check, skip, smokeDir, conf
   // One row that cannot be restored under this scan no longer blocks the rest.
   const homeMemo = path.join(configHome, 'CLAUDE.md');
   const otherLin = await scan(other);
-  const mixed = await post('/api/restore', { scanId: otherLin.scanId, id: del2.json?.undoSnapshotId, paths: [homeMemo, agentPath] });
+  const mixed = await post('/api/restore', { scanId: otherLin.scanId, id: both.json?.id, paths: [homeMemo, agentPath] });
   check('a restore batch restores what this scan can take and reports the rest',
     mixed.status === 200 && mixed.json?.restored?.some((p) => same(p, homeMemo)) &&
       mixed.json?.failed?.some((x) => same(x.absPath, agentPath) && x.code === 'ENOTINSCAN'),
     `${mixed.status} ${JSON.stringify(mixed.json)}`);
-  const cmp = await get(`/api/snapshot/${encodeURIComponent(del2.json?.undoSnapshotId)}/compare?scanId=${encodeURIComponent(otherLin.scanId)}`);
+  const cmp = await get(`/api/snapshot/${encodeURIComponent(both.json?.id)}/compare?scanId=${encodeURIComponent(otherLin.scanId)}`);
   const rows = cmp.status === 200 ? JSON.parse(cmp.text).rows : [];
   check('compare says, per row, whether this scan could restore it',
     rows.find((r) => same(r.absPath, agentPath))?.restorable === false && rows.find((r) => same(r.absPath, homeMemo))?.restorable === true,

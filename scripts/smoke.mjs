@@ -738,6 +738,45 @@ try {
     cmp.rows.find((r) => r.absPath === memo.absPath)?.status === 'same'
   );
 
+  // --- what a snapshot holds (owner decision, 2026-09-27) -----------------
+  // The automatic snapshot before an edit, delete or restore holds only the
+  // files that operation replaces; one taken on request holds the lineage.
+  const manifestOf = async (id) => (await fetch(`${BASE}/api/snapshot/${encodeURIComponent(id)}`, { headers: H })).json();
+  const pathsIn = (m) => (m.files || []).map((f) => samePathKey(f.absPath));
+  const editUndo = await manifestOf(saved.undoSnapshotId);
+  check("an edit's undo snapshot holds exactly the edited file",
+    JSON.stringify(pathsIn(editUndo)) === JSON.stringify([samePathKey(memo.absPath)]), JSON.stringify(pathsIn(editUndo)));
+  const restoreUndo = await manifestOf(restored.undoSnapshotId);
+  check("a restore's undo snapshot holds exactly the restored file",
+    JSON.stringify(pathsIn(restoreUndo)) === JSON.stringify([samePathKey(memo.absPath)]), JSON.stringify(pathsIn(restoreUndo)));
+  const scannedFiles = new Set(all.filter((e) => e.type === 'file').map((e) => samePathKey(e.absPath)));
+  check('a snapshot taken on request holds every file the scan found',
+    scannedFiles.size > 1 && snap.counts.files === scannedFiles.size && pathsIn(snap).every((p) => scannedFiles.has(p)),
+    `${snap.counts.files} stored of ${scannedFiles.size} scanned`);
+
+  // #140: saves at the same moment each keep their own undo. Snapshot ids are
+  // millisecond times, and six parallel saves used to share one or two
+  // folders, each manifest replacing the last.
+  {
+    const names = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6'].map((n) => path.join(proj, '.claude', 'agents', `concurrent-${n}.md`));
+    for (const p of names) await fs.writeFile(p, `---\nname: ${path.basename(p, '.md')}\n---\nbefore\n`);
+    const concurrentScan = await (await fetch(`${BASE}/api/scan`, { method: 'POST', headers: H, body: JSON.stringify({ dir: proj }) })).json();
+    const results = await Promise.all(names.map(async (p) => {
+      const res = await fetch(`${BASE}/api/write`, {
+        method: 'POST',
+        headers: H,
+        body: JSON.stringify({ scanId: concurrentScan.scanId, path: p, content: `---\nname: ${path.basename(p, '.md')}\n---\nafter\n` }),
+      });
+      return { p, status: res.status, body: await res.json() };
+    }));
+    const ids = results.map((r) => r.body.undoSnapshotId);
+    const holds = await Promise.all(results.map(async (r) => JSON.stringify(pathsIn(await manifestOf(r.body.undoSnapshotId))) === JSON.stringify([samePathKey(r.p)])));
+    check('six saves at once each keep their own undo snapshot, holding their own file (#140)',
+      results.every((r) => r.status === 200) && new Set(ids).size === 6 && holds.every(Boolean),
+      JSON.stringify({ statuses: results.map((r) => r.status), distinctIds: new Set(ids).size, holds }));
+    for (const p of names) await fs.rm(p, { force: true });
+  }
+
   // --- the check that matters most: grep the artifact ---------------------
   // Asserting the manifest omits credentials is not the same as proving no
   // credential BYTES reached the snapshot tree. Search it, with a positive

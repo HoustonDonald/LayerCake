@@ -171,9 +171,26 @@ export async function atomicWrite(absPath, data, { expectSha256 = null } = {}) {
   }
 }
 
-/** Sortable, filesystem safe, and readable at a glance in Explorer. */
-function newSnapshotId() {
-  return new Date().toISOString().replace(/[:.]/g, '-');
+/**
+ * Makes a new snapshot's folder and returns its id: the time, sortable and
+ * readable at a glance in Explorer, plus -1, -2 ... when that millisecond is
+ * taken. The folder is created WITHOUT `recursive`, so it fails on one that
+ * exists: two saves in the same millisecond used to share a folder, and the
+ * second manifest replaced the first, losing that save's undo (#140).
+ */
+async function newSnapshotFolder() {
+  const store = snapshotRoot();
+  await fs.mkdir(store, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  for (let n = 0; ; n += 1) {
+    const id = n === 0 ? stamp : `${stamp}-${n}`;
+    try {
+      await fs.mkdir(path.join(store, id));
+      return id;
+    } catch (err) {
+      if (err.code !== 'EEXIST' || n >= 999) throw err;
+    }
+  }
 }
 
 /**
@@ -206,7 +223,8 @@ async function sha256(absPath) {
  * because a backup silently containing credentials would be the worst possible
  * failure of this feature.
  */
-function collectTargets(lineage) {
+function collectTargets(lineage, paths = null) {
+  const only = paths ? new Set(paths.map((p) => samePathKey(p))) : null;
   const targets = [];
   // One physical file can legitimately appear at two levels: when the project
   // sits under the home directory, the directory walk passes through home and
@@ -224,6 +242,7 @@ function collectTargets(lineage) {
         : path.resolve(entry.absPath);
       if (seen.has(key)) continue;
       seen.add(key);
+      if (only && !only.has(samePathKey(entry.absPath))) continue;
       targets.push({
         absPath: entry.absPath,
         category: entry.category,
@@ -299,11 +318,11 @@ async function captureOne(target, filesRoot) {
 }
 
 /**
- * Local files are copied this many at a time (#137). Every save, delete and
- * restore snapshots the whole lineage first, and one file at a time that was
- * 1.4 to 2.6 s per save on a project with plugins, mostly per-file latency
- * (antivirus on each open) rather than bytes. The cost is up to this many
- * open handles.
+ * Local files are copied this many at a time (#137). A snapshot of the whole
+ * lineage (taken on request; every save took one until 2026-09-27) is about
+ * 100 files on a project with plugins, and one at a time that was 1.4 to 2.6 s,
+ * mostly per-file latency (antivirus on each open) rather than bytes. The cost
+ * is up to this many open handles.
  */
 const LOCAL_COPIES_AT_ONCE = 8;
 
@@ -317,19 +336,27 @@ async function inLanes(indices, limit, work) {
 }
 
 /**
- * Captures a snapshot of everything in a lineage.
+ * Captures a snapshot of a lineage: every file in it, or, given `paths`, only
+ * the scanned files among those.
+ *
+ * Owner decision, 2026-09-27 ("b"): the automatic snapshot taken before an
+ * edit, delete or restore holds only the files that operation replaces or
+ * removes. A full copy of about 100 files to protect one made every save
+ * slow (#137), grew the store by the whole lineage per save (#138), and
+ * buried the one row that mattered among the rest (#143). A snapshot taken on
+ * request (Take snapshot, `layercake backup`) is still the whole lineage.
  *
  * Oversized files are SKIPPED and recorded, never truncated. A truncated file in
  * a backup is worse than an absent one: restoring it would silently destroy the
  * tail of a config, and nothing downstream would report it.
  */
-export async function createSnapshot(lineage, { label = '' } = {}) {
-  const id = newSnapshotId();
+export async function createSnapshot(lineage, { label = '', paths = null } = {}) {
+  const id = await newSnapshotFolder();
   const root = path.join(snapshotRoot(), id);
   const filesRoot = path.join(root, FILES_DIR);
   await fs.mkdir(filesRoot, { recursive: true });
 
-  const targets = collectTargets(lineage);
+  const targets = collectTargets(lineage, paths);
   const outcomes = new Array(targets.length);
   const local = [];
   const onShare = [];
@@ -538,7 +565,9 @@ export async function restoreFiles(id, absPaths, lineage, { absentPaths = [] } =
     throw err;
   }
 
-  const undo = await createSnapshot(lineage, { label: `Before restore from ${id}` });
+  // Only the files this restore may replace: a file absent from the scan is
+  // created, never replaced, so there is nothing of it to hold.
+  const undo = await createSnapshot(lineage, { label: `Before restore from ${id}`, paths: chosen.map((f) => f.absPath) });
   const held = new Map(undo.files.map((f) => [samePathKey(f.absPath), f]));
 
   const restored = [];

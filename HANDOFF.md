@@ -366,6 +366,14 @@ Made by the owner on 2026-09-26, when asked about the open issues:
     "Leave site?" prompt, only while the editor is dirty. The exe's window then stays open, and the exe
     running, until it is answered.
 
+Made by the owner on 2026-09-27 ("b"):
+
+12. **Automatic snapshots hold only the files the operation changes.** The snapshot before an edit,
+    delete or restore copies just the files it replaces or removes; **Take snapshot** and
+    `layercake backup` still copy the whole lineage. Chosen over keeping full copies with content
+    stored once. It narrows how decision 3 applies: an automatic snapshot no longer records the rest of
+    the configuration as it was at that moment.
+
 ---
 
 ## Open work lives in GitHub issues

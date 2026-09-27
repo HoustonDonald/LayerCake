@@ -78,16 +78,17 @@ export default function SnapshotPanel({ scanId, onRestored }) {
     try {
       const cmp = await compareSnapshot(id, scanId);
       setComparison(cmp);
-      // Preselect only what actually differs and can be put back. Restoring an
-      // identical file is a write with no effect, and it would pad the
-      // confirmation with noise. A file Claude Code rewrites as it runs
+      // Preselect only what actually differs and can be put back, a file gone
+      // from disk included: the undo of a delete is that one row, and it used
+      // to open as "Restore 0 selected" (#143). Restoring an identical file is
+      // a write with no effect, and it would pad the confirmation with noise. A file Claude Code rewrites as it runs
       // (~/.claude.json, the plugin manifests) is never preselected: it always
       // differs, and rolling it back rolls back Claude Code's own state (#96,
       // #109). The server marks those rows, for this page and the CLI (#134).
       setChecked(
         new Set(
           cmp.rows
-            .filter((r) => r.status === 'changed' && r.restorable !== false && !r.rewrittenByClaudeCode)
+            .filter((r) => (r.status === 'changed' || r.status === 'missing') && r.restorable !== false && !r.rewrittenByClaudeCode)
             .map((r) => r.absPath)
         )
       );
@@ -132,7 +133,10 @@ export default function SnapshotPanel({ scanId, onRestored }) {
     }
   }
 
-  const rows = comparison?.rows || [];
+  // Rows that differ first, in the snapshot's own order within each group: in
+  // a full snapshot the two that differ used to sit among a hundred that do
+  // not (#143).
+  const rows = [...(comparison?.rows || [])].sort((a, b) => (a.status === 'same') - (b.status === 'same'));
   const differing = rows.filter((r) => r.status !== 'same').length;
   const sensitive = comparison?.manifest?.counts?.sensitive || 0;
 
@@ -229,7 +233,7 @@ export default function SnapshotPanel({ scanId, onRestored }) {
                   Restore {checked.size} selected
                 </button>
                 <span className="editor-hint">
-                  A snapshot of the current state is taken first, so a restore is itself undoable.
+                  The files it replaces are snapshotted first, so a restore is itself undoable.
                 </span>
               </div>
             </>

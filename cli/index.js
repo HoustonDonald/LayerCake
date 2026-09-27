@@ -334,7 +334,7 @@ async function cmdRestore(args) {
 
   out(paint.bold(`Snapshot ${id}`));
   out(paint.dim(`taken ${localTime(manifest.createdAt)}   ${manifest.label || '(no label)'}`));
-  out(paint.dim(`undo snapshot will be taken of the lineage for ${dir}`));
+  out(paint.dim(`an undo snapshot of the files it replaces is taken first (scan of ${dir})`));
   if (needles.length) out(paint.dim(`--only ${values.only.join(', ')}: ${selected.length} of ${rows.length} files match`));
   out();
 

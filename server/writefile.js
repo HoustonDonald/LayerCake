@@ -193,8 +193,11 @@ export async function editFile({
   await assertUnchanged(entry.absPath, expectedMtime);
   if (!acknowledgeExecutable) await assertNoNewCommands(entry, content);
 
+  // Only this file: automatic snapshots hold what the operation replaces
+  // (owner decision, 2026-09-27; see createSnapshot).
   const undo = await createSnapshot(lineage, {
     label: `Before editing ${path.basename(entry.absPath)}`,
+    paths: [entry.absPath],
   });
   // A file the snapshot could not hold (over the 2 MB cap, or unreadable) is
   // not replaced: the save would have no way back (#96). The editor never
@@ -417,7 +420,7 @@ export async function deleteFile({ entry, lineage, expectedMtime = null }) {
     throw err;
   }
 
-  const undo = await createSnapshot(lineage, { label: `Before deleting ${path.basename(entry.absPath)}` });
+  const undo = await createSnapshot(lineage, { label: `Before deleting ${path.basename(entry.absPath)}`, paths: [entry.absPath] });
   const held = assertHeld(undo, entry.absPath, 'Not deleted');
   // Changed between the snapshot and now: the snapshot would restore an
   // older version than the one being deleted.
