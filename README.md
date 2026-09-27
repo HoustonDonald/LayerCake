@@ -334,7 +334,9 @@ has unsaved work, Rescan asks again before discarding it.
 
 **What raises an event.** A path the scan already knows about, present or absent, plus any new file
 or folder inside one of the `.claude/` subtrees (`agents/`, `skills/`, `commands/`, `hooks/`,
-`rules/`, `memory/`), where the set of valid names is open-ended. A `CLAUDE.md` that does not exist
+`rules/`, `memory/`), where the set of valid names is open-ended. Those subtrees are the ones the scan
+walked, in each directory's `.claude` folder and in the configuration home itself, so a home moved by
+`CLAUDE_CONFIG_DIR` to a folder with another name is covered too. A `CLAUDE.md` that does not exist
 yet is still a path the scan probed, so its creation is reported. Inside a subtree every folder from
 its root down to each config file is watched, and so is a subtree that exists but holds nothing yet,
 because that is where new config lands: a new skill is a new folder in `skills/`, and the event names

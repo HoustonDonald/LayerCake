@@ -791,6 +791,37 @@ try {
 
   await watch.close();
 
+  // --- open config trees found by level, not by folder name (#65, #80) ------
+  // A config home moved by CLAUDE_CONFIG_DIR to a folder not named .claude, or
+  // one spelled .Claude, still holds open trees: a new agent there is news.
+  // The lineage is built by hand around the imported watcher, so this needs no
+  // second server with another CLAUDE_CONFIG_DIR.
+  {
+    const { watchLineage } = await import('../server/watch.js');
+    const homes = [
+      ['a config home not named .claude (#65)', path.join(smokeDir, 'watch-cfg')],
+      ['a config home spelled .Claude (#80)', path.join(smokeDir, 'watch-home', '.Claude')],
+    ];
+    for (const [label, home] of homes) {
+      const agentsDir = path.join(home, 'agents');
+      await fs.mkdir(agentsDir, { recursive: true });
+      await fs.writeFile(path.join(agentsDir, 'existing.md'), '---\nname: existing\n---\n');
+      const lin = {
+        levels: [{ kind: 'user', dir: home, entries: [{ absPath: path.join(agentsDir, 'existing.md'), type: 'file', category: 'agent' }], absent: [], errors: [] }],
+        networkDrives: [],
+      };
+      const seen = [];
+      const w = watchLineage(lin, (batch) => seen.push(...batch));
+      await new Promise((r) => setTimeout(r, 300));
+      await fs.writeFile(path.join(agentsDir, 'brand-new.md'), '---\nname: brand-new\n---\n');
+      const until = Date.now() + 5000;
+      while (Date.now() < until && !seen.some((c) => c.name === 'brand-new.md')) await new Promise((r) => setTimeout(r, 100));
+      w.close();
+      check(`a new agent in ${label} raises a change event`, seen.some((c) => c.name === 'brand-new.md'),
+        JSON.stringify(seen.map((c) => c.name)));
+    }
+  }
+
   // --- watching on a network share (#14) -----------------------------------
   //
   // Share-side folders are polled rather than watched, because binding

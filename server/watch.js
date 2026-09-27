@@ -52,47 +52,68 @@ import { SHARE_STUCK, shareKeyOf, timedFsCall } from './sharegate.js';
 const TREE_NAMES = new Set(CLAUDE_DIR_TREES.map((t) => t.name.toLowerCase()));
 
 /**
- * True for a path inside one of the .claude/ config subtrees.
+ * The open config subtrees of a lineage (agents/, skills/ and the rest), and
+ * two questions about them.
  *
  * These are the directories whose contents are OPEN: any .md under `agents/` is
  * an agent, so a file appearing there is news even though no scan ever probed
  * that exact name. Everywhere else the set of interesting names is closed and
  * the scan already enumerated it, absences included.
  *
- * Matched on the segment after `.claude` so it survives the depth-3 nesting of
- * `skills/<name>/SKILL.md` without hard-coding a depth.
+ * The roots are the ones the scan walked: in the configuration home itself at
+ * the user level, and in <dir>/.claude on the directory walk. They used to be
+ * found by a ".claude" path segment, which missed a configuration home moved
+ * by CLAUDE_CONFIG_DIR to a folder with another name (#65) and one spelled
+ * .Claude, which NTFS treats as the same folder (#80). Compared with
+ * samePathKey, like every other path here.
  */
-function inConfigTree(absPath) {
-  const parts = String(absPath).split(/[\\/]/);
-  const i = parts.lastIndexOf('.claude');
-  return i !== -1 && i + 1 < parts.length && TREE_NAMES.has(parts[i + 1].toLowerCase());
-}
-
-/**
- * Every folder between a config subtree's root and a path inside it: for
- * `.claude/skills/x/SKILL.md`, `.claude/skills/x` and `.claude/skills`. Empty
- * for a path outside the subtrees, and for a subtree root itself.
- *
- * These are where new config lands. A skill is a new FOLDER in skills/, so the
- * watch that sees it is the one on skills/, and skills/ holds no file of its
- * own, so nothing else puts it in the watched set. Without this, a new skill
- * raised no event at all (#56): the watch on .claude does not reliably report
- * a change one level down, and on a share, where .claude is polled and a
- * folder is compared by presence only, it cannot. Same segment rule as
- * inConfigTree, so the two agree on what a subtree is.
- */
-function treeFoldersAbove(absPath) {
-  const parts = String(absPath).split(/[\\/]/);
-  const i = parts.lastIndexOf('.claude');
-  if (i === -1 || i + 2 >= parts.length || !TREE_NAMES.has(parts[i + 1].toLowerCase())) return [];
-  const folders = [];
-  let dir = path.dirname(absPath);
-  // parts[i + 1] is the subtree root; the last part is absPath's own name.
-  for (let n = parts.length - i - 3; n >= 0; n -= 1) {
-    folders.push(dir);
-    dir = path.dirname(dir);
+function configTrees(lineage) {
+  const roots = new Set();
+  for (const level of lineage.levels) {
+    if (!level.dir) continue;
+    const base = level.kind === 'user' ? level.dir : level.kind === 'directory' ? path.join(level.dir, '.claude') : null;
+    if (!base) continue;
+    for (const name of TREE_NAMES) roots.add(samePathKey(path.join(base, name)));
   }
-  return folders;
+
+  /** The subtree root that holds absPath, never absPath itself; null outside them. */
+  function rootOf(absPath) {
+    let dir = path.dirname(path.resolve(absPath));
+    for (;;) {
+      if (roots.has(samePathKey(dir))) return dir;
+      const up = path.dirname(dir);
+      if (up === dir) return null;
+      dir = up;
+    }
+  }
+
+  return {
+    /** True for a path inside one of the subtrees. */
+    inConfigTree: (absPath) => rootOf(absPath) !== null,
+
+    /**
+     * Every folder between a subtree's root and a path inside it: for
+     * `skills/x/SKILL.md`, `skills/x` and `skills`. Empty for a path outside
+     * the subtrees, and for a subtree root itself.
+     *
+     * These are where new config lands. A skill is a new FOLDER in skills/, so
+     * the watch that sees it is the one on skills/, and skills/ holds no file
+     * of its own, so nothing else puts it in the watched set. Without this, a
+     * new skill raised no event at all (#56): the watch on .claude does not
+     * reliably report a change one level down, and on a share, where .claude is
+     * polled and a folder is compared by presence only, it cannot.
+     */
+    treeFoldersAbove(absPath) {
+      const root = rootOf(absPath);
+      if (!root) return [];
+      const folders = [];
+      const rootKey = samePathKey(root);
+      for (let dir = path.dirname(path.resolve(absPath)); ; dir = path.dirname(dir)) {
+        folders.push(dir);
+        if (samePathKey(dir) === rootKey) return folders;
+      }
+    },
+  };
 }
 
 /**
@@ -190,6 +211,7 @@ export function watchTargets(lineage) {
   const polled = new Map();
   const skipped = new Map();
   const onNetwork = onNetworkTest(lineage);
+  const { treeFoldersAbove } = configTrees(lineage);
 
   const consider = (target, scanError = null) => {
     const key = samePathKey(target);
@@ -283,6 +305,7 @@ export function watchLineage(lineage, onChange, onCoverage) {
     for (const entry of level.entries) known.add(samePathKey(entry.absPath));
     for (const missing of level.absent) known.add(samePathKey(missing.absPath));
   }
+  const { inConfigTree } = configTrees(lineage);
 
   /**
    * Whether a child of `dir` is worth an event.
