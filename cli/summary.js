@@ -136,7 +136,8 @@ export async function buildSummary(lineage) {
       shadowed: mcp.servers.filter((s) => s.shadowed).length,
       repeated: mcp.servers.filter((s) => s.reachedByMultipleRoutes).length,
       names: mcp.servers.map((s) => s.name),
-      badSources: mcp.sources.filter((s) => s.error || s.jsonError).length,
+      badSources: mcp.sources.filter((s) => !s.notRead && (s.error || s.jsonError)).length,
+      notRead: mcp.sources.filter((s) => s.notRead).map((s) => s.path),
     },
     settings: {
       files: settingsFiles,

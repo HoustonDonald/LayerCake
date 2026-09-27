@@ -76,7 +76,7 @@ scanned.
 ~\.claude\settings.local.json
 ~\.claude\CLAUDE.md
 ~\.claude\CLAUDE.local.md
-~\.claude\.mcp.json
+~\.claude\.mcp.json               listed, marked not read: Claude Code does not read it (#121)
 ~\.claude\keybindings.json
 ~\.claude\agents\**\*.md          (depth 2)
 ~\.claude\skills\**               (depth 3, .md .json .yaml .yml)
@@ -135,7 +135,7 @@ Every directory from the filesystem root down to the project directory. For each
 <dir>\.claude\settings.local.json
 <dir>\.claude\CLAUDE.md
 <dir>\.claude\CLAUDE.local.md
-<dir>\.claude\.mcp.json
+<dir>\.claude\.mcp.json           listed, marked not read: Claude Code does not read it (#121)
 <dir>\.claude\keybindings.json
 <dir>\.claude\agents\**\*.md
 <dir>\.claude\skills\**
@@ -182,7 +182,7 @@ Four chains, each stating its own merge rule in the UI rather than leaving it im
 | **CLAUDE.md chain** | `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `MEMORY.md` concatenated top to bottom with per-level headers. Individual per-project memory files are excluded: they are recalled on demand, not loaded every session, and sweeping in 60+ of them would bury the actual instruction set. |
 | **settings.json chain** | Every settings file in precedence order, plus a computed effective merge and a table naming the level that won each key. |
 | **Agents & skills** | Definitions grouped by declared name (frontmatter `name`, else filename or skill folder), showing which level's version shadows the others. |
-| **MCP servers** | Every `.mcp.json` on the chain, plus the global and per-project `mcpServers` blocks in `~/.claude.json` (the per-project key is described below), with shadowed definitions flagged. |
+| **MCP servers** | The `.mcp.json` in the project folder and every folder above it, plus the global and per-project `mcpServers` blocks in `~/.claude.json` (the per-project key is described below), with shadowed definitions flagged. A `.mcp.json` inside a `.claude` folder is listed as not read, naming the servers it defines, which are not loaded. |
 
 The settings merge is **computed by this tool**, not read back out of Claude Code, and it follows
 what Claude Code 2.1.283 was observed to read for a session started in the project directory:
@@ -220,6 +220,11 @@ and `commondir`), never by running git; a submodule's is its own folder, which i
 measured. How it was established: a scratch config home, then `claude mcp add --scope local` and
 `claude mcp list` from a repository's root, a subfolder, a worktree, a folder in no repository and
 the same folders typed in lower case. Neither command calls the model.
+
+The same method placed a `.mcp.json` in every plausible folder (#121). Claude Code 2.1.283 read the
+one in the project folder and in every folder above it, past the git root too, each as project
+scope awaiting approval, and none inside a `.claude` folder, the configuration home's included. So
+a server defined only in `~\.claude\.mcp.json` is not loaded; the MCP view says so.
 
 ---
 

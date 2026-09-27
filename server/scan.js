@@ -173,6 +173,23 @@ async function probeFile(absPath, category, level, note) {
 }
 
 /**
+ * Marks a found file as one Claude Code does not read. It stays listed, with
+ * its note saying why; flattened views show it as not read and take nothing
+ * from it.
+ */
+function markInactive(level, absPath) {
+  const entry = level.entries.find((e) => samePathKey(e.absPath) === samePathKey(absPath));
+  if (entry) entry.inactive = true;
+}
+
+/** A named file in a .claude folder (or the config home), marked when Claude Code does not read it. */
+async function probeClaudeDirFile(claudeDir, target, level) {
+  const abs = path.join(claudeDir, target.name);
+  await probeFile(abs, target.category, level, target.notRead);
+  if (target.notRead) markInactive(level, abs);
+}
+
+/**
  * Depth-limited directory walk. Symlinks are stat'ed, not followed as trees:
  * a cycle would otherwise walk forever.
  */
@@ -341,7 +358,7 @@ async function scanUser() {
   }
 
   for (const target of CLAUDE_DIR_FILE_TARGETS) {
-    await probeFile(path.join(claudeDir, target.name), target.category, level);
+    await probeClaudeDirFile(claudeDir, target, level);
   }
   for (const tree of CLAUDE_DIR_TREES) {
     const abs = path.join(claudeDir, tree.name);
@@ -378,10 +395,7 @@ async function scanUser() {
       : 'Home config blob: per-project state and MCP servers. Often very large.'
   );
   // Flattened views leave it out while the legacy file is the one in use.
-  if (legacyInUse) {
-    const shadowed = level.entries.find((e) => samePathKey(e.absPath) === samePathKey(globalConfigFile()));
-    if (shadowed) shadowed.inactive = true;
-  }
+  if (legacyInUse) markInactive(level, globalConfigFile());
   await probeFile(
     path.join(home, 'CLAUDE.md'),
     'memory',
@@ -538,7 +552,7 @@ async function scanDirectory(dir, label) {
   }
 
   for (const target of CLAUDE_DIR_FILE_TARGETS) {
-    await probeFile(path.join(claudeDir, target.name), target.category, level);
+    await probeClaudeDirFile(claudeDir, target, level);
   }
 
   const known = new Set(CLAUDE_DIR_TREES.map((t) => t.name));

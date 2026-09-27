@@ -280,16 +280,21 @@ function McpView({ data }) {
         </div>
         <div className="flat-file-body">
           {data.sources.map((source) => (
-            <div className="def-row" key={source.path}>
+            <div className={`def-row${source.notRead ? ' not-read' : ''}`} key={source.path}>
               <span className="tag">{String(source.precedence).padStart(2, '0')}</span>
               <span>
                 {source.path}
+                {source.notRead && <> <span className="badge partial">not read by Claude Code</span></>}
                 {source.jsonError ? ` — JSON error: ${source.jsonError}` : ''}
                 {source.error ? ` — ${source.error.message}` : ''}
-                {!source.error && !source.jsonError
+                {!source.error && !source.jsonError && !source.notRead
                   ? ` — ${source.serverNames.length} server(s)`
                   : ''}
+                {source.notRead && !source.error && !source.jsonError
+                  ? ` — defines ${source.serverNames.length ? source.serverNames.join(', ') : 'no servers'}, not loaded`
+                  : ''}
                 <AlsoReached from={source.alsoReachedFrom} />
+                {source.notRead && <div className="notice info">{source.notRead}</div>}
               </span>
             </div>
           ))}

@@ -22,7 +22,17 @@ export const CLAUDE_DIR_FILE_TARGETS = [
   { name: 'settings.local.json', category: 'settings' },
   { name: 'CLAUDE.md', category: 'memory' },
   { name: 'CLAUDE.local.md', category: 'memory' },
-  { name: '.mcp.json', category: 'mcp' },
+  // Listed because people put one here, and it does nothing: measured on
+  // 2.1.283 with `claude mcp list` (#121), Claude Code reads .mcp.json in the
+  // project folder and every folder above it, never inside .claude, the
+  // configuration home's included. The scan marks it inactive with this note.
+  {
+    name: '.mcp.json',
+    category: 'mcp',
+    notRead:
+      'Not read by Claude Code: it reads .mcp.json in the project folder and each folder above it, ' +
+      'never inside .claude, so the servers here are not loaded (#121).',
+  },
   { name: 'keybindings.json', category: 'settings' },
 ];
 

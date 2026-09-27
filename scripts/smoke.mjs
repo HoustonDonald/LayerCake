@@ -204,8 +204,9 @@ async function makeFixture() {
   if (process.platform === 'win32') projects[gitRepo] = localServer('local-backslash');
   await fs.writeFile(path.join(configHome, '.claude.json'), JSON.stringify({ projects }, null, 2));
   await fs.writeFile(path.join(configHome, 'agents', 'home-agent.md'), '---\nname: home-agent\n---\n');
-  // One MCP server in one file, which the walk reaches twice: it must read as
-  // defined once, never as shadowing itself.
+  // One MCP server in one file, which the walk reaches twice: the file is
+  // listed once. Claude Code does not read a .mcp.json inside .claude (#121),
+  // so it is listed as not read and its server is not loaded.
   await fs.writeFile(
     path.join(configHome, '.mcp.json'),
     JSON.stringify({ mcpServers: { 'smoke-two-routes': { command: 'home' } } }, null, 2)
@@ -630,14 +631,21 @@ try {
     repeatedDefs.length === 0 && homeAgent?.definitions.length === 1 && homeAgent.definitions[0].alsoReachedFrom?.length === 1,
     JSON.stringify({ repeated: repeatedDefs.map((g) => g.name), homeAgent: homeAgent?.definitions }));
   const repeatedServers = (mcp.servers || []).filter((s) => twice(s.definitions, (d) => `${samePathKey(d.path)}|${d.scope}`));
-  const twoRoutes = (mcp.servers || []).find((s) => s.name === 'smoke-two-routes');
-  check('an MCP server reached by two routes is listed once, naming the other route (#117)',
-    repeatedServers.length === 0 && twoRoutes?.definitions.length === 1 && twoRoutes.definitions[0].alsoReachedFrom?.length === 1,
-    JSON.stringify({ repeated: repeatedServers.map((s) => s.name), twoRoutes: twoRoutes?.definitions }));
   const homeMcp = (mcp.sources || []).filter((s) => samePathKey(s.path) === samePathKey(path.join(configHome, '.mcp.json')));
   check('an MCP source file reached by two routes is listed once (#117)',
-    !twice(mcp.sources || [], (s) => samePathKey(s.path)) && homeMcp.length === 1 && homeMcp[0].alsoReachedFrom?.length === 1,
+    !twice(mcp.sources || [], (s) => samePathKey(s.path)) && repeatedServers.length === 0 &&
+      homeMcp.length === 1 && homeMcp[0].alsoReachedFrom?.length === 1,
     JSON.stringify(homeMcp));
+  // #121: Claude Code never reads a .mcp.json inside .claude, the config
+  // home's included. It is listed as not read, naming the server it defines,
+  // and that server is not among the servers loaded; the scan marks it too.
+  const homeMcpEntries = lineage.levels.flatMap((l) => l.entries).filter((e) => samePathKey(e.absPath) === samePathKey(path.join(configHome, '.mcp.json')));
+  check('a .mcp.json inside .claude is listed as not read, and its servers are not loaded (#121)',
+    /Not read by Claude Code/.test(homeMcp[0]?.notRead || '') && JSON.stringify(homeMcp[0]?.serverNames) === '["smoke-two-routes"]' &&
+      !(mcp.servers || []).some((s) => s.name === 'smoke-two-routes') &&
+      homeMcpEntries.length === 2 && homeMcpEntries.every((e) => e.inactive === true && /Not read by Claude Code/.test(e.note || '')) &&
+      (mcp.servers || []).some((s) => s.name === 'smoke-shadowed'),
+    JSON.stringify({ source: homeMcp[0], servers: (mcp.servers || []).map((s) => s.name) }));
 
   // --- write refusals -----------------------------------------------------
   check(

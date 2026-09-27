@@ -149,6 +149,13 @@ export function renderHere(summary) {
   if (summary.mcp.badSources) {
     continued(paint.yellow(`${plural(summary.mcp.badSources, 'source')} unreadable or unparseable`));
   }
+  if (summary.mcp.notRead.length) {
+    continued(
+      paint.yellow(
+        `${plural(summary.mcp.notRead.length, 'file')} found but not read by Claude Code, see: layercake show mcp`
+      )
+    );
+  }
 
   labelled(
     'Settings',
@@ -402,10 +409,20 @@ function renderMcpView(view, lineage) {
   const rows = view.sources.map((s) => [
     shortenPath(s.path, lineage.home),
     `${s.serverNames.length} ${s.serverNames.length === 1 ? 'server' : 'servers'}`,
-    s.error ? paint.red(s.error.code) : s.jsonError ? paint.red('parse error') : '',
+    s.error
+      ? paint.red(s.error.code)
+      : s.jsonError
+        ? paint.red('parse error')
+        : s.notRead
+          ? paint.yellow('not read by Claude Code, not loaded')
+          : '',
   ]);
   if (rows.length === 0) out(paint.dim('  none'));
   for (const line of columns(rows)) out(`  ${line}`);
+  // The reason once per distinct note, since it is usually the same one (#121).
+  for (const note of new Set(view.sources.filter((s) => s.notRead).map((s) => s.notRead))) {
+    for (const line of wrapText(note, Math.max(40, termWidth() - 4), '  ')) out(paint.dim(line));
+  }
   out();
 
   out(paint.cyan('Servers'));

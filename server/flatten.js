@@ -439,10 +439,7 @@ async function flattenMcp(lineage) {
     // there, not in a .mcp.json. Leaving it out would make the view look complete
     // while missing the servers most likely to be in play.
     const mcpFiles = level.entries.filter(
-      (e) =>
-        e.type === 'file' &&
-        !e.inactive &&
-        (e.category === 'mcp' || e.name === '.mcp.json' || e.category === 'home-config')
+      (e) => e.type === 'file' && (e.category === 'mcp' || e.name === '.mcp.json' || e.category === 'home-config')
     );
     for (const entry of mcpFiles) {
       const read = await readForDisplay(entry.absPath);
@@ -457,6 +454,17 @@ async function flattenMcp(lineage) {
         truncated: read.truncated || false,
         serverNames: [],
       };
+
+      // A file Claude Code does not read (#121, #87) is listed with the servers
+      // it defines, so they can be found, and contributes none of them.
+      if (entry.inactive) {
+        source.notRead = entry.note || 'Not read by Claude Code.';
+        if (parsed?.mcpServers && typeof parsed.mcpServers === 'object') {
+          source.serverNames.push(...Object.keys(parsed.mcpServers));
+        }
+        sources.push(source);
+        continue;
+      }
 
       source.serverNames.push(
         ...addServers(parsed?.mcpServers, {
@@ -515,7 +523,7 @@ async function flattenMcp(lineage) {
     kind: 'mcp',
     heading: 'MCP servers',
     rule:
-      'Collected from every .mcp.json on the chain, plus the global and per-project mcpServers blocks ' +
+      'Collected from the .mcp.json in the project folder and every folder above it, plus the global and per-project mcpServers blocks ' +
       `in ~/.claude.json. The per-project block is the one keyed "${wantedKey}": ` +
       (lineage.gitRoot?.dir
         ? `the git repository's root${lineage.gitRoot.via === 'worktree' ? ' (the main repository, since this is a worktree)' : ''}, ` +
@@ -527,6 +535,8 @@ async function flattenMcp(lineage) {
         ? 'Claude Code reads only the key spelled like the folder it was started in, forward slashes and ' +
           'letter case included; a key differing from this one only in case is listed too. '
         : '') +
+      'A .mcp.json inside a .claude folder, the configuration home\'s included, is not read by Claude Code: ' +
+      'it is listed among the sources as not read, and its servers are not. ' +
       'A server defined at more than one level is flagged; the definition closest to the project is shown ' +
       'as the winner. Servers still awaiting per-project approval are listed here even though Claude Code ' +
       'will not have loaded them. A file reachable by two routes is listed once.',

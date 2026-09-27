@@ -197,6 +197,7 @@ function Level({ level, selectedPath, onSelect, defaultOpen, overlay, createOpti
                   />
                   <span className="entry-name">{entryLabel(entry)}</span>
                   {overlay?.recorded && entry.category === 'memory' && <LoadedBadge reason={overlay.byKey.get(pathKey(entry.absPath))} />}
+                  {entry.inactive && <span className="loaded-badge no" title={entry.note || 'Not read by Claude Code'}>not read</span>}
                   <span className="entry-size">{formatBytes(entry.size)}</span>
                 </button>
               ))}
