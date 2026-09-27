@@ -475,8 +475,10 @@ Where it comes from, and what that means:
 - The main transcript is written when each API response completes, so during a long reply the
   view lags until it finishes. Subagent files are written as they stream.
 - **Retention:** Claude Code deletes a transcript after `cleanupPeriodDays` (default 30) without
-  activity. LayerCake keeps a small summary card for every session it has listed, so a deleted
-  session stays in the list ("Kept after deletion"), with its card but no prompts or replies.
+  activity. Whenever it lists sessions, LayerCake keeps a small summary card for every session it
+  finds on disk, including ones in other projects that a project's list does not show, so a
+  deleted session stays in the list ("Kept after deletion"), with its card but no prompts or
+  replies.
 - **Prompt history only:** `~/.claude/history.jsonl` keeps every submitted prompt, across projects,
   long after transcripts are gone. Sessions known only from there are listed with their prompts and
   nothing else. That file also keeps a separate copy of anything you pasted, which LayerCake

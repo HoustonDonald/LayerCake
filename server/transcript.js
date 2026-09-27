@@ -47,6 +47,45 @@ const IGNORED_TYPES = new Set([
   'progress',
 ]);
 
+/**
+ * Attachment subtypes known to carry nothing the product shows. The handled
+ * ones are the cases in applyAttachment. Anything in neither is counted as
+ * unrecognised, like a top-level type: Claude Code moved subagent completions
+ * and queued prompts INTO an attachment (queued_command), and while attachments
+ * went uncounted that change dropped data with the drift counter at zero (#113).
+ * Surveyed from 44 real sessions (2.1.197 to 2.1.283), 2026-09-26.
+ */
+const IGNORED_ATTACHMENTS = new Set([
+  'total_tokens_reminder',
+  'deferred_tools_record',
+  'diagnostics',
+  'batching_reminder_sent',
+  'bash_output_audience_note',
+  'task_reminder',
+  'environment',
+  'silent_turn_reminder',
+  'agent_listing_delta',
+  'command_permissions',
+  'auto_mode',
+  'auto_mode_exit',
+  'prompt_snapshot',
+  'date',
+  'date_change',
+  'remote_session_change',
+  'session_context',
+  'ultrathink_effort',
+  'file',
+  'credential_org',
+  'compact_file_reference',
+  'invoked_skills',
+  'read_truncation_notice',
+  'workflow_size_guideline_change',
+  'task_status',
+  'plan_file_reference',
+  'thinking_stripped',
+  'thinking_drop',
+]);
+
 const SYSTEM_SUBTYPES = new Set([
   'compact_boundary',
   'turn_duration',
@@ -94,7 +133,6 @@ function emptyModel(sessionId) {
     filesEdited: [],
     toolFailures: 0,
     permissionDenials: 0,
-    backgroundPending: 0,
     costState: null,
     continuedIn: null,
     unknown: {},
@@ -188,6 +226,8 @@ function newTurn(model, at, cls) {
     text: cls.text || '',
     images: cls.images || 0,
     source: cls.source || null,
+    // Typed while Claude was working, and handed to it mid-turn (#112).
+    queued: Boolean(cls.queued),
     interrupted: false,
     responseText: '',
     tools: [],
@@ -248,7 +288,7 @@ export function applyRecord(model, r, state) {
     case 'assistant':
       return applyAssistant(model, r, at, state);
     case 'attachment':
-      return applyAttachment(model, r.attachment || {}, at);
+      return applyAttachment(model, r.attachment || {}, at, state);
     case 'system':
       return applySystem(model, r, at);
     case 'ai-title':
@@ -299,18 +339,7 @@ function applyUser(model, r, at, state) {
     return;
   }
   if (cls.kind === 'task_notification') {
-    const id = /<tool-use-id>([^<]+)<\/tool-use-id>/.exec(cls.text)?.[1];
-    const sub = id && state.subagentsByToolUse.get(id.trim());
-    if (sub) {
-      sub.status = /<status>([^<]+)<\/status>/.exec(cls.text)?.[1]?.trim() || 'completed';
-      sub.endAt = at;
-      const tokens = /<subagent_tokens>(\d+)/.exec(cls.text)?.[1];
-      const toolUses = /<tool_uses>(\d+)/.exec(cls.text)?.[1];
-      const duration = /<duration_ms>(\d+)/.exec(cls.text)?.[1];
-      if (tokens) sub.tokens = Number(tokens);
-      if (toolUses) sub.toolUses = Number(toolUses);
-      if (duration) sub.durationMs = Number(duration);
-    }
+    applyTaskNotification(model, cls.text, at, state);
     return;
   }
   if (cls.kind === 'handback') {
@@ -335,6 +364,13 @@ function applyUser(model, r, at, state) {
       if (/Permission for this action was denied|doesn't want to proceed/.test(textOf(block.content))) {
         model.permissionDenials += 1;
       }
+      // An Agent call that failed never starts its subagent, and nothing
+      // else will end it: it read "starting" forever (#114).
+      const failed = state.subagentsByToolUse.get(block.tool_use_id);
+      if (failed && (failed.status === 'starting' || failed.status === 'running')) {
+        failed.status = 'failed';
+        failed.endAt = at;
+      }
     }
   }
   const result = r.toolUseResult;
@@ -350,6 +386,56 @@ function applyUser(model, r, at, state) {
     if (typeof result.totalDurationMs === 'number') sub.durationMs = result.totalDurationMs;
     if (result.status && result.status !== 'async_launched') sub.endAt = at;
   }
+}
+
+/**
+ * A background task's completion notice: the <task-notification> text Claude
+ * Code sends back to the model when a subagent (or a background shell) ends.
+ * It arrives as a user record, or, more and more often, as a queued_command
+ * attachment (#111); both carry the same tags. The subagent is found by the
+ * tool-use id of the call that started it, or failing that by <task-id>,
+ * which is its agent id: 46 of 299 notices seen carried no tool-use id.
+ */
+function applyTaskNotification(model, text, at, state) {
+  const tag = (name) => new RegExp(`<${name}>([^<]+)</${name}>`).exec(text)?.[1]?.trim() || null;
+  const toolUseId = tag('tool-use-id');
+  const taskId = tag('task-id');
+  const sub =
+    (toolUseId && state.subagentsByToolUse.get(toolUseId)) ||
+    (taskId && model.subagents.find((s) => s.agentId === taskId)) ||
+    null;
+  if (!sub) return;
+  sub.status = tag('status') || 'completed';
+  sub.endAt = at;
+  const tokens = /<subagent_tokens>(\d+)/.exec(text)?.[1];
+  const toolUses = /<tool_uses>(\d+)/.exec(text)?.[1];
+  const duration = /<duration_ms>(\d+)/.exec(text)?.[1];
+  if (tokens) sub.tokens = Number(tokens);
+  if (toolUses) sub.toolUses = Number(toolUses);
+  if (duration) sub.durationMs = Number(duration);
+}
+
+/**
+ * A command Claude Code queued and handed to the model mid-turn (#111, #112):
+ * a task notification, or a prompt the user typed while Claude was working.
+ * A queued prompt is written ONLY here, never also as a user record, so it
+ * becomes a turn of its own, marked queued. A peer message (origin "peer",
+ * isMeta) classifies as ignored, as it does in a user record. Any other mode
+ * is counted as unrecognised, so a new one shows instead of vanishing.
+ */
+function applyQueuedCommand(model, a, at, state) {
+  const text = typeof a.prompt === 'string' ? a.prompt : textOf(a.prompt);
+  if (a.commandMode === 'task-notification') {
+    applyTaskNotification(model, text, at, state);
+    return;
+  }
+  if (a.commandMode === 'prompt') {
+    const cls = classifyUser({ origin: a.origin, isMeta: a.isMeta, message: { content: a.prompt } });
+    if (cls.kind === 'prompt' || cls.kind === 'command' || cls.kind === 'bash') newTurn(model, at, { ...cls, queued: true });
+    return;
+  }
+  const key = `attachment:queued_command:${a.commandMode || '(none)'}`;
+  model.unknown[key] = (model.unknown[key] || 0) + 1;
 }
 
 function applyAssistant(model, r, at, state) {
@@ -421,7 +507,6 @@ function applyAssistant(model, r, at, state) {
           agentId: null,
           type: block.input?.subagent_type || 'general-purpose',
           description: clip(block.input?.description || '', SUMMARY_CHARS),
-          background: Boolean(block.input?.run_in_background),
           status: 'starting',
           at,
           endAt: null,
@@ -442,8 +527,11 @@ function applyAssistant(model, r, at, state) {
   }
 }
 
-function applyAttachment(model, a, at) {
+function applyAttachment(model, a, at, state) {
   switch (a.type) {
+    case 'queued_command':
+      applyQueuedCommand(model, a, at, state);
+      return;
     case 'instructions':
       for (const f of Array.isArray(a.files) ? a.files : []) addInstruction(model, f.path, f.type, 'session_start', at);
       return;
@@ -490,8 +578,13 @@ function applyAttachment(model, a, at) {
       model.planMode = false;
       return;
     default:
-      // Attachment subtypes are many and mostly harness bookkeeping. They are
-      // not counted as unrecognised; the top-level type is what signals drift.
+      // Mostly harness bookkeeping, listed in IGNORED_ATTACHMENTS. A subtype in
+      // neither list is counted, so a format change inside an attachment shows
+      // in "Transcript read" instead of silently dropping data (#113).
+      if (!IGNORED_ATTACHMENTS.has(a.type)) {
+        const key = `attachment:${a.type || '(none)'}`;
+        model.unknown[key] = (model.unknown[key] || 0) + 1;
+      }
       return;
   }
 }
@@ -522,7 +615,6 @@ function applySystem(model, r, at) {
   } else if (subtype === 'turn_duration') {
     const turn = model.turns[model.turns.length - 1];
     if (turn && typeof r.durationMs === 'number') turn.durationMs = r.durationMs;
-    if (typeof r.pendingBackgroundAgentCount === 'number') model.backgroundPending = r.pendingBackgroundAgentCount;
   } else if (subtype === 'away_summary') {
     if (r.content) model.awaySummaries.push({ at, text: clip(String(r.content), 4000) });
   } else if (subtype === 'stop_hook_summary') {

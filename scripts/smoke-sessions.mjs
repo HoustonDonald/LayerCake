@@ -106,6 +106,9 @@ export const IDS = {
 };
 const AGENT_BG = 'a0123456789abcdef';
 const AGENT_HANDBACK = 'afedcba9876543210';
+// Background agents that finish through queued_command attachments (#111).
+const AGENT_Q1 = 'a1111111111111111';
+const AGENT_Q2 = 'a2222222222222222';
 
 let seq = 0;
 function rec(fields, at) {
@@ -173,6 +176,27 @@ function transcript(proj) {
     { type: 'user', isCompactSummary: true, message: { role: 'user', content: 'This session is being continued from a previous conversation.' } },
     human('Third prompt after compaction'),
     assistant('msg_5', { type: 'text', text: 'Done.' }, usage(3, 100, 29000, 20)),
+    // Two more background agents, finished the way Claude Code now often
+    // reports it: a queued_command attachment, not a user record (#111). The
+    // second notice carries only a task id, which is the agent id.
+    assistant('msg_6', { type: 'tool_use', id: 'toolu_5', name: 'Agent', input: { subagent_type: 'Explore', description: 'scan logs', prompt: 'z' } }, usage(1, 0, 7200, 10)),
+    assistant('msg_6', { type: 'tool_use', id: 'toolu_6', name: 'Agent', input: { subagent_type: 'general-purpose', description: 'draft', prompt: 'w' } }, usage(1, 0, 7200, 10)),
+    { type: 'user', sourceToolUseID: 'toolu_5', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_5', content: 'launched' }] }, toolUseResult: { agentId: AGENT_Q1, status: 'async_launched' } },
+    { type: 'user', sourceToolUseID: 'toolu_6', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_6', content: 'launched' }] }, toolUseResult: { agentId: AGENT_Q2, status: 'async_launched' } },
+    { type: 'attachment', attachment: { type: 'queued_command', commandMode: 'task-notification', prompt: `<task-notification><task-id>${AGENT_Q1}</task-id><tool-use-id>toolu_5</tool-use-id><status>completed</status><usage><subagent_tokens>555</subagent_tokens><tool_uses>3</tool_uses><duration_ms>4000</duration_ms></usage></task-notification>` } },
+    { type: 'attachment', attachment: { type: 'queued_command', commandMode: 'task-notification', prompt: `<task-notification><task-id>${AGENT_Q2}</task-id><status>killed</status></task-notification>` } },
+    // A prompt typed while Claude worked: written ONLY as this attachment (#112).
+    { type: 'attachment', attachment: { type: 'queued_command', commandMode: 'prompt', origin: { kind: 'human' }, humanTurn: true, prompt: 'Fourth prompt, typed while Claude was busy' } },
+    // A peer message queued the same way is not the user's prompt.
+    { type: 'attachment', attachment: { type: 'queued_command', commandMode: 'prompt', origin: { kind: 'peer', from: AGENT_Q1 }, isMeta: true, prompt: 'peer report' } },
+    // An Agent call that failed: its subagent must not stay "starting" (#114).
+    assistant('msg_7', { type: 'tool_use', id: 'toolu_7', name: 'Agent', input: { subagent_type: 'Explore', description: 'broken', prompt: 'v' } }, usage(1, 0, 7300, 10)),
+    { type: 'user', sourceToolUseID: 'toolu_7', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_7', is_error: true, content: 'Agent type not found' }] }, toolUseResult: 'Error: Agent type not found' },
+    // Drift inside attachments (#113): a known bookkeeping subtype is not
+    // counted; an unknown subtype and an unknown queued mode are.
+    { type: 'attachment', attachment: { type: 'total_tokens_reminder' } },
+    { type: 'attachment', attachment: { type: 'future-attachment' } },
+    { type: 'attachment', attachment: { type: 'queued_command', commandMode: 'future-mode', prompt: 'x' } },
     { type: 'ai-title', aiTitle: 'Fix the widget' },
     { type: 'system', subtype: 'away_summary', content: 'You were fixing the widget.' },
     { type: 'file-history-snapshot', snapshot: { trackedFileBackups: { 'widget.js': {} } } },
@@ -403,9 +427,10 @@ export async function runSessionChecks({ base, token, check, skip, proj, appData
   const card = list.data.sessions.find((s) => s.sessionId === IDS.onDisk);
   check('the on-disk session is listed', Boolean(card));
   check('its title comes from the AI title Claude Code wrote', card?.title === 'Fix the widget' && card.titleSource === 'ai');
-  check('prompts exclude tool results, meta, notifications and the duplicated line', card?.prompts === 3, `got ${card?.prompts}`);
+  check('prompts exclude tool results, meta, notifications and the duplicated line, and include a queued prompt', card?.prompts === 4, `got ${card?.prompts}`);
   check('slash commands are counted apart from prompts', card?.commands === 1, `got ${card?.commands}`);
-  check('usage is counted once per API call, not once per block', card?.tokens.apiCalls === 5 && card.tokens.input === 21 && card.tokens.output === 190, JSON.stringify(card?.tokens));
+  // Seven calls: msg_1 to msg_7, each counted once however many block records it has.
+  check('usage is counted once per API call, not once per block', card?.tokens.apiCalls === 7 && card.tokens.input === 23 && card.tokens.output === 210, JSON.stringify(card?.tokens));
   check('a running session is marked live', card?.live === true && card.status === 'busy');
   check('retention defaults to 30 days when unset', list.data.retentionDays === 30);
   check('a session known only from history is listed as prompt-only', list.data.promptOnly.some((p) => p.sessionId === IDS.historyOnly && p.prompts === 1));
@@ -414,7 +439,8 @@ export async function runSessionChecks({ base, token, check, skip, proj, appData
   const detail = await json(`/api/session/${IDS.onDisk}`);
   const d = detail.data;
   check('session detail loads', detail.status === 200, `got ${detail.status}`);
-  check('context is the last call: input + cache creation + cache read', d?.context?.tokens === 29103, `got ${d?.context?.tokens}`);
+  // msg_7, the last call: 1 + 0 + 7300.
+  check('context is the last call: input + cache creation + cache read', d?.context?.tokens === 7301, `got ${d?.context?.tokens}`);
   check('a 1M model id gives a 1M window', d?.health.context.window === 1_000_000);
   // #12: the model table cannot know a family that shipped after it was written.
   const future = (await json(`/api/session/${IDS.future}`)).data;
@@ -444,10 +470,27 @@ export async function runSessionChecks({ base, token, check, skip, proj, appData
   check('a background subagent completes through its task notification', bg?.status === 'completed' && bg.tokens === 1234, JSON.stringify(bg));
   check('a subagent completes through a peer hand-back', hb?.status === 'completed', JSON.stringify(hb));
   // The fixture's last turn_duration still says 1 pending; the subagents say done.
-  check('running subagents come from their statuses, not the stale turn record', d?.runningSubagents === 0 && d.backgroundPending === 1, `running ${d?.runningSubagents}, pending ${d?.backgroundPending}`);
+  // The fixture's last turn_duration still says 1 pending, a field no longer served (#115).
+  check('running subagents come from their statuses, not the stale turn record', d?.runningSubagents === 0 && !('backgroundPending' in d), `running ${d?.runningSubagents}`);
+  const bySub = (pred) => d?.subagents.find(pred);
+  const q1 = bySub((s) => s.agentId === AGENT_Q1);
+  const q2 = bySub((s) => s.agentId === AGENT_Q2);
+  check('a subagent completes through a queued task notification (#111)', q1?.status === 'completed' && q1.tokens === 555, JSON.stringify(q1));
+  check('a queued notice with only a task id finds its subagent by agent id', q2?.status === 'killed', JSON.stringify(q2));
+  const failedAgent = bySub((s) => s.toolUseId === 'toolu_7');
+  check('a failed Agent call ends its subagent as failed, not starting (#114)', failedAgent?.status === 'failed' && Boolean(failedAgent.endAt), JSON.stringify(failedAgent));
+  const queuedTurn = d?.turns.find((t) => t.preview.startsWith('Fourth prompt'));
+  check('a prompt typed while Claude was busy is a turn of its own, marked queued; a queued peer message is not (#112)',
+    queuedTurn?.kind === 'prompt' && queuedTurn.queued === true && !d.turns.some((t) => t.preview.startsWith('peer report')),
+    JSON.stringify(queuedTurn));
+  check('an unknown attachment subtype and an unknown queued mode are counted; known bookkeeping is not (#113)',
+    d?.parse.unknown['attachment:future-attachment'] === 1 && d.parse.unknown['attachment:queued_command:future-mode'] === 1 &&
+      !('attachment:total_tokens_reminder' in d.parse.unknown),
+    JSON.stringify(d?.parse.unknown));
   check('an API error is recorded', d?.errors.length === 1 && d.errors[0].code === 'rate_limit');
   check('a compaction is recorded with its token counts', d?.compactions.length === 1 && d.compactions[0].preTokens === 900000);
-  check('a denied tool call counts as a failure and a denial', d?.toolFailures === 1 && d.permissionDenials === 1);
+  // Two failures: the denied Bash call, and the failed Agent call (#114); one denial.
+  check('a denied tool call counts as a failure and a denial', d?.toolFailures === 2 && d.permissionDenials === 1, `${d?.toolFailures} ${d?.permissionDenials}`);
   check('the interrupted turn is flagged', d?.turns.find((t) => t.kind === 'prompt' && t.preview.startsWith('Second'))?.interrupted === true);
   check('an unrecognised record type is counted, not ignored (drift canary)', d?.parse.unknown['future-record-type'] === 1, JSON.stringify(d?.parse.unknown));
   check('a torn line is counted, not fatal', d?.parse.badLines === 1);

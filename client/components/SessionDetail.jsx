@@ -242,6 +242,7 @@ function PromptRail({ turns, selected, onSelect }) {
               <span>{clock(t.at)}</span>
               {t.tools > 0 && <span>{t.tools} tools</span>}
               {t.toolErrors > 0 && <span className="err">{t.toolErrors} failed</span>}
+              {t.queued && <span className="muted" title="Typed while Claude was working, and handed to it mid-turn">sent while busy</span>}
               {t.interrupted && <span className="warn">interrupted</span>}
               {t.running && <span className="live">running</span>}
               {t.durationMs != null && <span>{duration(t.durationMs)}</span>}
@@ -278,6 +279,7 @@ function TurnView({ sessionId, n, lastAt }) {
         <div className="turn-label">
           {turn.kind === 'prompt' ? 'Prompt' : turn.kind === 'command' ? 'Command' : turn.kind === 'bash' ? 'Shell' : 'Session start'} · {clock(turn.at)}
           {turn.images > 0 && ` · ${turn.images} image${turn.images > 1 ? 's' : ''}`}
+          {turn.queued && ' · sent while Claude was working, and handed to it mid-turn'}
           {turn.interrupted && ' · interrupted'}
         </div>
         <pre className="turn-text">{turn.text}</pre>

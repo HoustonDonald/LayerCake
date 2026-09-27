@@ -67,6 +67,7 @@ function turnSummary(t) {
     preview: clip(t.text.replace(/\s+/g, ' ').trim(), PREVIEW_CHARS),
     images: t.images,
     source: t.source,
+    queued: t.queued,
     interrupted: t.interrupted,
     responsePreview: clip(t.responseText.replace(/\s+/g, ' ').trim(), PREVIEW_CHARS),
     tools: t.tools.length,
@@ -112,7 +113,6 @@ function sessionDetail(model) {
     filesEditedCount: model.filesEdited.length,
     toolFailures: model.toolFailures,
     permissionDenials: model.permissionDenials,
-    backgroundPending: model.backgroundPending,
     // From each subagent's own status, not the last turn_duration record, which
     // is only written when a turn ends and so lags behind a completion.
     runningSubagents: model.subagents.filter((s) => s.status === 'running' || s.status === 'starting').length,
@@ -362,7 +362,6 @@ export function registerSessionRoutes(app) {
           turns: m.turns.length,
           health,
           context: m.context,
-          backgroundPending: m.backgroundPending,
           live: live ? { status: live.status, pid: live.pid } : null,
         };
         // A launched session changes without writing its transcript (a tool starts, a
