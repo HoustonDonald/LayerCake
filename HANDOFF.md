@@ -23,7 +23,7 @@ npm run smoke                       # expect: 0 failed
 node cli/index.js here C:\dev\LayerCake   # expect: ~18 line summary, exit 0
 ```
 
-Smoke was 318 passed, 0 failed, 2 skipped on 2026-09-27 after 0eec620 (Windows; the 2 skips are the opt-in
+Smoke was 324 passed, 0 failed, 2 skipped on 2026-09-27 after c53c3c3 (Windows; the 2 skips are the opt-in
 mapped-drive checks and a Linux-only one). The last recorded WSL Ubuntu run was 258/0, before the
 checks added since; it has not been rerun.
 
@@ -46,6 +46,21 @@ Shipped and closed, each commit message listing its measurements, checks and mut
 
 Filed: #146 (macOS/Linux git-root `settings.local.json`, not modelled) and #147 (managed-settings.d,
 registry and server-managed policy not scanned).
+
+Then, after the owner started trying the exe:
+- **5cabd14** (#129): long settings keys wrap instead of printing over the Mode column.
+- **55064be** (#131, reproduced): a file that was only READ was reported changed. NTFS updates last
+  access when about an hour stale and the Windows watcher reports it; a native change now counts only
+  if mtime or ctime moved. The owner hit it by clicking files.
+- **c53c3c3** (owner decision 12 below; #140; part of #143): automatic snapshots hold only the files
+  they protect; snapshot folders cannot be shared by two saves; a delete's undo opens ticked.
+  #138 is now only the retention question (retitled, `question`); #139 and the rest of #143 are open.
+- `dist\LayerCake.exe` rebuilt from c53c3c3 and launch-checked (`exe-lifecycle-final.ps1`, which
+  also asks the embedded server a #135 question, since a bundle marker cannot see server code).
+
+Owner asked about the ambient lighting (session-wrap plan, physical lights): not started. It needs
+the owner's choice of hardware (ASUS Aura fans via its local REST, or a WLED strip) and a ruling on
+the no-outbound invariant (Aura is on this machine; WLED is on the LAN).
 
 **Owner-facing finding:** the 23 `permissions.allow` rules in `~\.claude\settings.local.json` apply
 only to sessions started in `C:\Users\donal`. For this repo the real count is 7 (the old view said
