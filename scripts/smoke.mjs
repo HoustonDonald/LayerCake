@@ -152,7 +152,31 @@ async function makeFixture() {
   const configHome = path.join(smokeDir, '.claude');
   await fs.mkdir(path.join(configHome, 'agents'), { recursive: true });
   await fs.writeFile(path.join(configHome, 'CLAUDE.md'), '# user-level memory in the relocated home\n');
-  await fs.writeFile(path.join(configHome, 'settings.json'), JSON.stringify({ model: 'smoke' }, null, 2));
+  // The settings model (#119): each file below is one Claude Code reads for a
+  // session in proj, or one it does not, and every key tells which rule
+  // applied. A marker key (userLocalOnly, ancestorOnly, bindings) is set only
+  // by a file that must not be merged.
+  const hook = (says) => [{ hooks: [{ type: 'command', command: `echo ${says}` }] }];
+  await fs.writeFile(path.join(configHome, 'settings.json'), JSON.stringify({
+    model: 'smoke',
+    permissions: { allow: ['Read'] },
+    env: { SMOKE_USER: 'user', SMOKE_WIN: 'user' },
+    hooks: { SessionStart: hook('user') },
+    fallbackModel: ['user-fallback'],
+    modelPicker: { fromUser: true },
+  }, null, 2));
+  await fs.writeFile(path.join(configHome, 'settings.local.json'), JSON.stringify({ userLocalOnly: true, env: { SMOKE_WIN: 'user-local' } }, null, 2));
+  await fs.writeFile(path.join(configHome, 'keybindings.json'), JSON.stringify({ bindings: [] }, null, 2));
+  await fs.mkdir(path.join(parent, '.claude'), { recursive: true });
+  await fs.writeFile(path.join(parent, '.claude', 'settings.json'), JSON.stringify({ ancestorOnly: true, permissions: { allow: ['Ancestor'] } }, null, 2));
+  await fs.writeFile(path.join(proj, '.claude', 'settings.local.json'), JSON.stringify({
+    model: 'local',
+    permissions: { allow: ['Read', 'Edit'] },
+    env: { SMOKE_LOCAL: 'local', SMOKE_WIN: 'local' },
+    hooks: { SessionStart: hook('local') },
+    fallbackModel: ['local-fallback'],
+    modelPicker: { fromLocal: true },
+  }, null, 2));
   await fs.writeFile(path.join(configHome, '.claude.json'), JSON.stringify({ projects: {} }, null, 2));
   await fs.writeFile(path.join(configHome, 'agents', 'home-agent.md'), '---\nname: home-agent\n---\n');
   // One MCP server in one file, which the walk reaches twice: it must read as
@@ -449,6 +473,60 @@ try {
     const r = await fetch(`${BASE}/api/flatten?scanId=${scanId}&kind=${kind}`, { headers: H });
     check(`flatten "${kind}" renders`, r.status === 200);
   }
+
+  // --- the settings view is Claude Code's model, not a walk (#118, #119) ---
+  // Observed on Claude Code 2.1.283: user, then the project's settings.json
+  // and settings.local.json, managed on top; no parent folder; objects merge
+  // per key, lists combine.
+  const settingsView = async (id) =>
+    (await fetch(`${BASE}/api/flatten?scanId=${id}&kind=settings`, { headers: H })).json();
+  const sv = await settingsView(scanId);
+  const svFiles = sv.sections.flatMap((s) => s.files);
+  const svFile = (p) => svFiles.find((f) => samePathKey(f.path) === samePathKey(p));
+  const allowed = sv.merged.permissions?.allow || [];
+  check('settings: local beats project beats user', sv.merged.model === 'local', JSON.stringify(sv.merged.model));
+  check('settings: permission lists from user, project and local are combined once each',
+    allowed.length === 3 && ['Read', 'Bash', 'Edit'].every((r) => allowed.includes(r)), JSON.stringify(allowed));
+  check('settings: env merges per variable',
+    sv.merged.env?.SMOKE_USER === 'user' && sv.merged.env?.SMOKE_LOCAL === 'local' && sv.merged.env?.SMOKE_WIN === 'local',
+    JSON.stringify(sv.merged.env));
+  check('settings: hook lists from two files both apply', sv.merged.hooks?.SessionStart?.length === 2,
+    JSON.stringify(sv.merged.hooks));
+  check('settings: fallbackModel is taken whole from the strongest file',
+    JSON.stringify(sv.merged.fallbackModel) === JSON.stringify(['local-fallback']), JSON.stringify(sv.merged.fallbackModel));
+  check('settings: modelPicker in a local file is ignored, and says so',
+    sv.merged.modelPicker?.fromUser === true && sv.merged.modelPicker?.fromLocal === undefined &&
+      sv.ignored?.some((i) => i.keyPath === 'modelPicker' && i.source === 'local'),
+    JSON.stringify([sv.merged.modelPicker, sv.ignored]));
+  check("settings: a parent folder's settings are listed as not read, and not merged",
+    sv.merged.ancestorOnly === undefined && !allowed.includes('Ancestor') &&
+      /parent folder/.test(svFile(path.join(path.dirname(proj), '.claude', 'settings.json'))?.notRead || ''),
+    JSON.stringify(svFile(path.join(path.dirname(proj), '.claude', 'settings.json'))));
+  check("settings: the config home's settings.local.json is not read for a project elsewhere",
+    sv.merged.userLocalOnly === undefined && Boolean(svFile(path.join(configHome, 'settings.local.json'))?.notRead));
+  check('settings: keybindings.json is shown but not merged',
+    sv.merged.bindings === undefined && Boolean(svFile(path.join(configHome, 'keybindings.json'))?.notRead));
+  const allowRow = sv.provenance.find((p) => p.keyPath === 'permissions.allow');
+  check('settings: a combined list names every file that added to it',
+    JSON.stringify(allowRow?.sources?.map((s) => s.source)) === JSON.stringify(['user', 'project', 'local']) &&
+      allowRow.sources[2]?.added?.length === 1,
+    JSON.stringify(allowRow));
+  check('settings: the config home is applied once and credited to the user level, not to the walk (#118)',
+    svFiles.filter((f) => samePathKey(f.path) === samePathKey(path.join(configHome, 'settings.json'))).length === 1 &&
+      JSON.stringify(svFile(path.join(configHome, 'settings.json'))?.sources) === JSON.stringify(['user']) &&
+      sv.provenance.every((p) => p.sources?.every((s) => ['user', 'project', 'local'].includes(s.source))),
+    JSON.stringify(sv.provenance.map((p) => p.sources?.map((s) => s.source))));
+  // A session started in the folder above the config home: its settings.json
+  // is the user and the project file at once, read once, and only then is the
+  // config home's settings.local.json read, as that folder's local settings.
+  const homeScan = await (await fetch(`${BASE}/api/scan`, { method: 'POST', headers: H, body: JSON.stringify({ dir: path.dirname(configHome) }) })).json();
+  const hv = await settingsView(homeScan.scanId);
+  const hvFile = (p) => hv.sections.flatMap((s) => s.files).find((f) => samePathKey(f.path) === samePathKey(p));
+  check("settings: started above the config home, its settings.local.json is read as local settings",
+    hv.merged.userLocalOnly === true && hv.merged.env?.SMOKE_WIN === 'user-local' &&
+      JSON.stringify(hvFile(path.join(configHome, 'settings.json'))?.sources) === JSON.stringify(['user', 'project']) &&
+      JSON.stringify(hvFile(path.join(configHome, 'settings.local.json'))?.sources) === JSON.stringify(['local']),
+    JSON.stringify([hv.merged, hv.sections.flatMap((s) => s.files).map((f) => [f.path, f.sources])]));
 
   // A file reached by two routes is not a shadow of itself. The fixture's
   // config home is an ancestor's .claude folder, so the walk re-finds it.

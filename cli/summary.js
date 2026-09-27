@@ -110,11 +110,13 @@ export async function buildSummary(lineage) {
     files: countEntries(lineage, category),
   }));
 
-  const settingsFiles = settings.sections.reduce((n, s) => n + s.files.length, 0);
-  const settingsErrors = settings.sections.reduce(
-    (n, s) => n + s.files.filter((f) => f.error || f.jsonError).length,
-    0
-  );
+  // Merged means read by Claude Code (#119): a parent folder's settings file
+  // is found, shown and counted apart, never merged.
+  const allSettingsFiles = settings.sections.flatMap((s) => s.files);
+  const readSettingsFiles = allSettingsFiles.filter((f) => f.sources.length);
+  const settingsFiles = readSettingsFiles.length;
+  const settingsNotRead = allSettingsFiles.length - readSettingsFiles.length;
+  const settingsErrors = readSettingsFiles.filter((f) => f.error || f.jsonError).length;
 
   const levelsWithContent = lineage.levels.filter((l) => l.entries.length > 0).length;
 
@@ -136,6 +138,7 @@ export async function buildSummary(lineage) {
     },
     settings: {
       files: settingsFiles,
+      notRead: settingsNotRead,
       unreadable: settingsErrors,
       highlights: settingsHighlights(settings.merged),
       empty: Object.keys(settings.merged).length === 0,

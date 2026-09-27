@@ -58,12 +58,16 @@ see what was looked for and did not exist.
 Existence-probed on all three platforms, never assumed:
 
 ```
-%ProgramData%\ClaudeCode\managed-settings.json
-%ProgramData%\Claude Code\managed-settings.json
+%ProgramData%\ClaudeCode\managed-settings.json                   (legacy, not read by Claude Code)
+%ProgramData%\Claude Code\managed-settings.json                  (legacy, not read by Claude Code)
 %ProgramFiles%\ClaudeCode\managed-settings.json
 /Library/Application Support/ClaudeCode/managed-settings.json    (macOS)
 /etc/claude-code/managed-settings.json                           (Linux)
 ```
+
+The legacy locations are still probed, because a policy left there is one its owner may believe is
+in force; the settings view shows it as not read. `managed-settings.d\` and registry policy are not
+scanned.
 
 ### 01 User / home
 
@@ -173,11 +177,30 @@ Four chains, each stating its own merge rule in the UI rather than leaving it im
 | **Agents & skills** | Definitions grouped by declared name (frontmatter `name`, else filename or skill folder), showing which level's version shadows the others. |
 | **MCP servers** | Every `.mcp.json` on the chain, plus the global and per-project `mcpServers` blocks in `~/.claude.json`, with shadowed definitions flagged. |
 
-The settings merge is **this tool's model**, not something read back out of Claude Code: applied
-weakest to strongest (user, then root down to project, `settings.json` before `settings.local.json`),
-with managed settings applied last so they win. `permissions.allow` / `deny` / `ask` /
-`additionalDirectories` are unioned; everything else is overridden. The UI states this above the
-result so a wrong assumption is visible rather than silent.
+The settings merge is **computed by this tool**, not read back out of Claude Code, and it follows
+what Claude Code 2.1.283 was observed to read for a session started in the project directory:
+
+- **Four sources, weakest first:** user (`settings.json` in the config home), the project's
+  `.claude\settings.json`, its `.claude\settings.local.json`, then managed settings, which win.
+- **No ancestor walk.** A parent folder's `.claude\settings.json` is not inherited, unlike
+  `CLAUDE.md`. Such files are still listed, marked "not read by Claude Code" with the reason, and
+  never merged. So are `keybindings.json`, the config home's `settings.local.json` (read only as
+  the local settings of a session started in the folder above the config home, where the user and
+  project file are one file, applied once), and the legacy managed locations.
+- **Merge:** objects merge key by key, so `env` merges per variable; lists are combined and
+  de-duplicated, so `permissions.allow` rules and hooks from every file apply. `fallbackModel` is
+  taken whole from the strongest file, `modelPicker` is ignored in project and local files (listed
+  as ignored), and a managed `availableModels` is taken as-is.
+- **Not modelled, and said so in the rule:** `--settings` for one session, `managed-settings.d\`,
+  registry and server-managed policy, `modelSettings`, the few security keys where a stricter lower
+  value wins over managed, and on macOS and Linux the git-root location of `settings.local.json`.
+
+How it was established (#119): a scratch config home and project tree, a marker hook, a distinct
+`model` and an `env` pair in every candidate settings file, and `claude -p` pointed at a local stub
+API, so no request left the machine and no usage was spent. The hooks that fired name the files
+read; the `model` in the request names the precedence winner. Re-run that when Claude Code's
+settings loader changes. The UI states the rule above the result so a wrong assumption is visible
+rather than silent.
 
 ---
 

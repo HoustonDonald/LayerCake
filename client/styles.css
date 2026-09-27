@@ -694,6 +694,11 @@ pre.code {
   padding: 14px 18px;
 }
 
+/* A settings file Claude Code does not read (#119): shown, never merged. */
+.flat-file.not-read .code {
+  opacity: 0.55;
+}
+
 .group-card {
   margin: 0 18px 10px;
   border: 1px solid var(--border);
@@ -777,6 +782,19 @@ pre.code {
   color: var(--text-faint);
   font-weight: 500;
   font-family: var(--sans);
+}
+
+.prov-table th:first-child {
+  width: 34%;
+}
+
+.prov-table th:nth-child(2) {
+  width: 110px;
+}
+
+/* One line per file that supplied a combined list (#119). */
+.prov-source + .prov-source {
+  margin-top: 3px;
 }
 
 .prov-table td:first-child {

@@ -294,7 +294,7 @@ async function scanManaged() {
           level: { dir: path.dirname(candidate.file) },
           st,
           error: null,
-          note: `${candidate.platform} location`,
+          note: candidate.legacy ? `${candidate.platform} legacy location, which Claude Code no longer reads` : `${candidate.platform} location`,
         })
       );
     } else if (error && error.code !== 'ENOENT') {
@@ -304,7 +304,7 @@ async function scanManaged() {
         absPath: candidate.file,
         name: path.basename(candidate.file),
         category: 'settings',
-        note: `${candidate.platform} location`,
+        note: candidate.legacy ? `${candidate.platform} legacy location, which Claude Code no longer reads` : `${candidate.platform} location`,
       });
     }
   }

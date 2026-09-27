@@ -8,7 +8,7 @@
 
 import path from 'node:path';
 
-import { samePathKey } from './paths.js';
+import { managedCandidates, samePathKey } from './paths.js';
 import { readForDisplay, splitFrontmatter } from './readfile.js';
 
 /** Levels ordered weakest to strongest for settings merging. */
@@ -133,69 +133,158 @@ async function flattenMemory(lineage) {
   };
 }
 
-const PERMISSION_ARRAY_KEYS = new Set(['allow', 'deny', 'ask', 'additionalDirectories']);
+/**
+ * The settings files Claude Code reads for a session started in the project
+ * directory, weakest first (#119). There is NO ancestor walk: a parent
+ * folder's .claude/settings.json is not inherited, unlike CLAUDE.md. Observed
+ * on Claude Code 2.1.283 with a marker hook in every candidate file, and
+ * stated in its docs. On Windows settings.local.json sits beside
+ * settings.json in the starting folder; on macOS and Linux inside a git
+ * repository it moves to the repository root, which is not modelled (#146).
+ *
+ * The user file and the project file are one file when the project is the
+ * folder above the config home (a session started in the home folder); it is
+ * read once, and that is also the only case in which the config home's
+ * settings.local.json is read.
+ */
+const SETTINGS_SOURCES = [
+  { source: 'user', label: 'User' },
+  { source: 'project', label: 'Project' },
+  { source: 'local', label: 'Local' },
+  { source: 'managed', label: 'Managed' },
+];
 
-function mergeInto(target, source, provenance, levelLabel, filePath, prefix = '') {
+function settingsSourcePaths(lineage) {
+  const configHome = lineage.levels.find((l) => l.kind === 'user')?.dir || null;
+  const projectClaude = path.join(lineage.projectDir, '.claude');
+  const paths = [
+    ['user', configHome && path.join(configHome, 'settings.json')],
+    ['project', path.join(projectClaude, 'settings.json')],
+    ['local', path.join(projectClaude, 'settings.local.json')],
+    ...managedCandidates()
+      .filter((c) => c.platform === lineage.platform && !c.legacy)
+      .map((c) => ['managed', c.file]),
+  ];
+  /** samePathKey -> the sources it is, in application order. */
+  const roles = new Map();
+  for (const [source, p] of paths) {
+    if (!p) continue;
+    const key = samePathKey(p);
+    roles.set(key, [...(roles.get(key) || []), source]);
+  }
+  return { roles, configHome };
+}
+
+/** Why a settings-category file found on the walk is not merged. */
+function notReadReason(entry, level, lineage, configHome) {
+  const name = entry.name.toLowerCase();
+  if (level.kind === 'managed') {
+    return 'A legacy managed location: Claude Code no longer reads it, so a policy here is not in force.';
+  }
+  if (name !== 'settings.json' && name !== 'settings.local.json') {
+    return 'Not a settings file (key bindings and the like): Claude Code does not merge it into settings.';
+  }
+  if (configHome && samePathKey(path.dirname(entry.absPath)) === samePathKey(configHome)) {
+    return `Read only by a session started in ${path.dirname(configHome)}, as that folder's local settings.`;
+  }
+  if (level.kind === 'directory' && name === 'settings.local.json' && lineage.platform !== 'win32') {
+    return (
+      'A parent folder\'s local settings. On macOS and Linux, Claude Code 2.1.211 and later reads ' +
+      'settings.local.json at the git repository root; LayerCake does not find the repository root, ' +
+      'so if this is it, this file is read but not merged here.'
+    );
+  }
+  return 'A parent folder\'s settings: Claude Code reads settings from the folder it starts in, not from its parents (unlike CLAUDE.md).';
+}
+
+/**
+ * Top-level keys Claude Code does not simply merge (docs, "Lists merge
+ * instead of overriding"): taken whole from the strongest file that sets
+ * them, or ignored in some files. Not modelled: modelSettings, resolved one
+ * model at a time together with effortLevel.
+ */
+const WHOLE_VALUE_KEYS = new Set(['fallbackModel']);
+const MANAGED_WHOLE_VALUE_KEYS = new Set(['fallbackModel', 'availableModels']);
+const IGNORED_IN = { modelPicker: new Set(['project', 'local']) };
+
+/** Array items de-duplicated as lodash uniq does: by value for primitives, never for objects. */
+function concatUnique(before, value) {
+  const seen = new Set(before);
+  const added = [];
+  for (const item of value) {
+    if (item !== null && typeof item === 'object') added.push(item);
+    else if (!seen.has(item)) {
+      seen.add(item);
+      added.push(item);
+    }
+  }
+  return added;
+}
+
+/**
+ * Merges one source into `target`, as Claude Code does: objects key by key
+ * (so `env` merges per variable, measured), lists concatenated and
+ * de-duplicated, anything else overridden. `record(keyPath, mode, added)`
+ * notes each leaf and list this source touched; `whole` names the top-level
+ * lists this source replaces instead.
+ */
+function mergeSettingsInto(target, source, record, whole, prefix = '') {
   for (const [key, value] of Object.entries(source)) {
     const keyPath = prefix ? `${prefix}.${key}` : key;
     if (Array.isArray(value)) {
-      const isPermissionArray = PERMISSION_ARRAY_KEYS.has(key) && prefix.startsWith('permissions');
-      if (isPermissionArray && Array.isArray(target[key])) {
-        const before = new Set(target[key]);
-        const added = value.filter((v) => !before.has(v));
-        target[key] = [...target[key], ...added];
-        provenance.push({ keyPath, level: levelLabel, file: filePath, mode: 'union', added });
-      } else {
+      if (prefix === '' && whole.has(key)) {
         target[key] = [...value];
-        provenance.push({ keyPath, level: levelLabel, file: filePath, mode: 'replace' });
+        record(keyPath, 'replace', [...value]);
+      } else {
+        const before = Array.isArray(target[key]) ? target[key] : [];
+        const added = concatUnique(before, value);
+        target[key] = [...before, ...added];
+        record(keyPath, 'concat', added);
       }
       continue;
     }
     if (value && typeof value === 'object') {
-      if (!target[key] || typeof target[key] !== 'object' || Array.isArray(target[key])) {
-        target[key] = {};
-      }
-      mergeInto(target[key], value, provenance, levelLabel, filePath, keyPath);
+      if (!target[key] || typeof target[key] !== 'object' || Array.isArray(target[key])) target[key] = {};
+      mergeSettingsInto(target[key], value, record, whole, keyPath);
       continue;
     }
     target[key] = value;
-    provenance.push({ keyPath, level: levelLabel, file: filePath, mode: 'override' });
+    record(keyPath, 'override', null);
   }
 }
 
 /** settings.json chain plus a computed effective merge. */
 async function flattenSettings(lineage) {
+  const { roles, configHome } = settingsSourcePaths(lineage);
   const sections = [];
-  const merged = {};
-  const provenance = [];
+  /** samePathKey -> { entry, parsed } of every file read. */
+  const readFiles = new Map();
 
   for (const level of settingsOrder(lineage.levels)) {
-    const settingsFiles = level.entries.filter(
-      (e) => e.category === 'settings' && e.type === 'file' && e.name.endsWith('.json')
-    );
-    // settings.json before settings.local.json: local overrides shared at the same level.
-    settingsFiles.sort((a, b) => a.name.length - b.name.length || a.name.localeCompare(b.name));
-
-    if (settingsFiles.length === 0) {
-      sections.push({
-        levelId: level.id,
-        title: levelTitle(level),
-        precedence: level.precedence,
-        empty: true,
-        files: [],
-      });
-      continue;
-    }
+    const all = level.entries.filter((e) => e.category === 'settings' && e.type === 'file' && e.name.endsWith('.json'));
+    // settings.json before settings.local.json, the order they apply in.
+    all.sort((a, b) => a.name.length - b.name.length || a.name.localeCompare(b.name));
+    // The config home is also the .claude folder of an ancestor when the
+    // project is under home: its files are listed once, where first reached,
+    // as the other views do (#118).
+    const repeated = all.filter((e) => readFiles.has(samePathKey(e.absPath)));
+    const settingsFiles = all.filter((e) => !readFiles.has(samePathKey(e.absPath)));
 
     const files = [];
     for (const entry of settingsFiles) {
+      const key = samePathKey(entry.absPath);
       const read = await readForDisplay(entry.absPath);
       const parsed = read.parsed && typeof read.parsed === 'object' ? read.parsed : null;
-      if (parsed) mergeInto(merged, parsed, provenance, levelTitle(level), entry.absPath);
+      // Only an object merges; a list at the top (a key bindings file) is shown, not merged.
+      readFiles.set(key, { entry, parsed: Array.isArray(parsed) ? null : parsed });
+      const sources = roles.get(key) || [];
       files.push({
         path: entry.absPath,
         name: entry.name,
         sensitive: entry.sensitive,
+        // The sources this file is, empty when Claude Code does not read it.
+        sources,
+        notRead: sources.length ? null : notReadReason(entry, level, lineage, configHome),
         error: read.error,
         jsonError: read.jsonError || null,
         content: read.error ? '' : read.content,
@@ -206,26 +295,59 @@ async function flattenSettings(lineage) {
       levelId: level.id,
       title: levelTitle(level),
       precedence: level.precedence,
-      empty: false,
+      empty: files.length === 0,
       files,
+      repeatedNote: repeated.length
+        ? `${repeated.length} file(s) here are the same files already shown above, reached again by the directory walk. Claude Code reads each once.`
+        : null,
+      repeatedPaths: repeated.map((e) => e.absPath),
     });
   }
 
-  // Last writer per key path wins, which is what the merge already produced.
-  const winners = new Map();
-  for (const record of provenance) winners.set(record.keyPath, record);
+  // Applied in Claude Code's order, not the display order: user, project,
+  // local, managed. A file that is two sources is applied once.
+  const merged = {};
+  const byKeyPath = new Map();
+  const ignored = [];
+  const applied = new Set();
+  for (const { source, label } of SETTINGS_SOURCES) {
+    for (const [key, { entry, parsed }] of readFiles) {
+      if (!parsed || applied.has(key) || !(roles.get(key) || []).includes(source)) continue;
+      applied.add(key);
+      const from = { source, label, file: entry.absPath };
+      const kept = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        if (IGNORED_IN[k]?.has(source)) ignored.push({ keyPath: k, ...from, reason: `Claude Code ignores ${k} in ${source} settings.` });
+        else kept[k] = v;
+      }
+      const record = (keyPath, mode, added) => {
+        const row = byKeyPath.get(keyPath);
+        if (mode === 'concat' && row?.mode === 'concat') row.sources.push({ ...from, added });
+        else byKeyPath.set(keyPath, { keyPath, mode, sources: [mode === 'override' ? from : { ...from, added }] });
+      };
+      mergeSettingsInto(merged, kept, record, source === 'managed' ? MANAGED_WHOLE_VALUE_KEYS : WHOLE_VALUE_KEYS);
+    }
+  }
 
   return {
     kind: 'settings',
     heading: 'Settings chain',
     rule:
-      'Applied weakest to strongest: user, then each directory from filesystem root down to the project ' +
-      '(settings.json before settings.local.json), then managed settings last so they win. ' +
-      'permissions.allow / deny / ask / additionalDirectories are unioned; every other key is overridden. ' +
-      'This merge is computed by this tool, not read back from Claude Code.',
+      'The files Claude Code reads for a session started in this folder, applied weakest to strongest: ' +
+      'user settings (settings.json in the config home), the project\'s .claude/settings.json, its ' +
+      '.claude/settings.local.json, then managed settings, which win. Settings in parent folders are not ' +
+      'inherited (unlike CLAUDE.md) and are listed as not read. Objects merge key by key, env per variable. ' +
+      'Lists are combined and de-duplicated, except fallbackModel (taken whole from the strongest file), ' +
+      'modelPicker (ignored in project and local files) and a managed availableModels (taken as-is). ' +
+      'Not modelled: --settings for one session, managed-settings.d, registry and server-managed policy, ' +
+      'modelSettings, the few security keys where a stricter lower value wins, and on macOS and Linux the ' +
+      'git-root location of settings.local.json. Matches Claude Code 2.1.283 and its docs; computed by ' +
+      'LayerCake, not read back from Claude Code.',
     sections,
     merged,
-    provenance: [...winners.values()].sort((a, b) => a.keyPath.localeCompare(b.keyPath)),
+    // One row per leaf or list; a combined list names every file that added to it.
+    provenance: [...byKeyPath.values()].sort((a, b) => a.keyPath.localeCompare(b.keyPath)),
+    ignored,
   };
 }
 

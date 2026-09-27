@@ -451,7 +451,8 @@ partially. A truncated file restored is silent data loss.
   kept every sighting for its clients to collapse, the CLI did and the page did not (#117). So the
   definitions and MCP views now collapse in flatten.js (`collapseRoutes`, the other routes in
   `alsoReachedFrom`), as the chain view already did, and a client renders what it is given rather
-  than deduping again. The settings view still applies such a file twice (#118).
+  than deduping again. The settings view lists such a file once too, and merges only the files
+  Claude Code reads (#118, #119).
 
   Note the MCP key is `samePathKey(path)` **plus scope**, not path alone: `~/.claude.json` defines a
   server in both its global block and its per-project block, and that is a genuine shadow. Deduping

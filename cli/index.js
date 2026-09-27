@@ -113,8 +113,8 @@ Print one flattened view together with the merge rule that produced it.
 
 Kinds
   claude-md     the instruction set, concatenated in precedence order
-  settings      every settings file, the effective merge, and the winning level
-                for each key
+  settings      the settings files Claude Code reads here and the ones it does
+                not, the effective merge, and the file that supplied each key
   definitions   agents, skills and commands grouped by declared name
   mcp           MCP servers from every source on the chain
 

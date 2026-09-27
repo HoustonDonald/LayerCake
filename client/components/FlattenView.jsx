@@ -82,6 +82,8 @@ function MemoryView({ data }) {
   );
 }
 
+const MODE_LABEL = { override: 'override', concat: 'combined', replace: 'taken whole' };
+
 function SettingsView({ data }) {
   return (
     <>
@@ -97,7 +99,7 @@ function SettingsView({ data }) {
       {data.provenance.length > 0 && (
         <div className="flat-section">
           <div className="flat-section-head">
-            <span className="flat-section-title">Which level supplied each key</span>
+            <span className="flat-section-title">Which file supplied each key</span>
           </div>
           <div className="flat-file-body">
             <table className="prov-table">
@@ -105,17 +107,23 @@ function SettingsView({ data }) {
                 <tr>
                   <th>Key</th>
                   <th>Mode</th>
-                  <th>Winning level</th>
-                  <th>File</th>
+                  <th>From</th>
                 </tr>
               </thead>
               <tbody>
                 {data.provenance.map((row) => (
                   <tr key={row.keyPath}>
                     <td>{row.keyPath}</td>
-                    <td>{row.mode}</td>
-                    <td>{row.level}</td>
-                    <td>{row.file}</td>
+                    <td>{MODE_LABEL[row.mode] || row.mode}</td>
+                    <td>
+                      {row.sources.map((s) => (
+                        <div className="prov-source" key={s.file}>
+                          {s.label}
+                          {row.mode === 'concat' ? ` (+${s.added.length})` : ''}{' '}
+                          <span className="muted">{s.file}</span>
+                        </div>
+                      ))}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -124,13 +132,48 @@ function SettingsView({ data }) {
         </div>
       )}
 
+      {data.ignored?.length > 0 && (
+        <div className="flat-section">
+          <div className="flat-section-head">
+            <span className="flat-section-title">Set but ignored by Claude Code</span>
+          </div>
+          <div className="flat-file-body">
+            {data.ignored.map((row) => (
+              <div className="notice warn" key={`${row.keyPath} ${row.file}`}>
+                {row.keyPath} in {row.file}: {row.reason}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {data.sections.map((section) => (
-        <div className={`flat-section${section.empty ? ' empty' : ''}`} key={section.levelId}>
+        <div className={`flat-section${section.empty && !repeatsOnly(section) ? ' empty' : ''}`} key={section.levelId}>
           <SectionHead section={section} />
+          {section.repeatedNote && (
+            <div className="flat-file-body">
+              <div className="notice info">
+                {section.repeatedNote}
+                <ul>
+                  {section.repeatedPaths.map((p) => (
+                    <li key={p}>{p}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
           {section.files.map((file) => (
-            <div className="flat-file" key={file.path}>
-              <div className="flat-file-head">{file.path}</div>
+            <div className={`flat-file${file.notRead ? ' not-read' : ''}`} key={file.path}>
+              <div className="flat-file-head">
+                {file.path}{' '}
+                {file.sources.length > 0 ? (
+                  <span className="badge">{file.sources.join(' + ')} settings</span>
+                ) : (
+                  <span className="badge partial">not read by Claude Code</span>
+                )}
+              </div>
               <div className="flat-file-body">
+                {file.notRead && <div className="notice info">{file.notRead}</div>}
                 {file.error ? (
                   <div className="notice err">
                     {file.error.code}: {file.error.message}

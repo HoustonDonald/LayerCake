@@ -105,13 +105,18 @@ export function claudeHomeSource() {
 /**
  * Managed / enterprise settings candidates for all three platforms.
  * Every candidate is probed for existence; none is assumed.
+ *
+ * `legacy` marks a location Claude Code no longer reads. The docs say so of
+ * %ProgramData%\ClaudeCode ("doesn't read the legacy Windows path"), and
+ * 2.1.283's debug log probes only %ProgramFiles%\ClaudeCode. Still probed,
+ * because a policy left there is one its owner believes is in force (#119).
  */
 export function managedCandidates() {
   const programData = process.env.ProgramData || 'C:\\ProgramData';
   const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
   return [
-    { platform: 'win32', file: path.join(programData, 'ClaudeCode', 'managed-settings.json') },
-    { platform: 'win32', file: path.join(programData, 'Claude Code', 'managed-settings.json') },
+    { platform: 'win32', file: path.join(programData, 'ClaudeCode', 'managed-settings.json'), legacy: true },
+    { platform: 'win32', file: path.join(programData, 'Claude Code', 'managed-settings.json'), legacy: true },
     { platform: 'win32', file: path.join(programFiles, 'ClaudeCode', 'managed-settings.json') },
     { platform: 'darwin', file: '/Library/Application Support/ClaudeCode/managed-settings.json' },
     { platform: 'linux', file: '/etc/claude-code/managed-settings.json' },

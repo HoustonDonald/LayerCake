@@ -144,9 +144,14 @@ export function renderHere(summary) {
   labelled(
     'Settings',
     summary.settings.empty
-      ? paint.dim('no settings files on this chain')
+      ? paint.dim(
+          summary.settings.notRead
+            ? `nothing merged; ${summary.settings.notRead} found but not read by Claude Code`
+            : 'no settings files on this chain'
+        )
       : `${plural(summary.settings.files, 'file')} merged` +
-          (summary.settings.unreadable ? paint.yellow(`, ${summary.settings.unreadable} unreadable`) : '')
+          (summary.settings.unreadable ? paint.yellow(`, ${summary.settings.unreadable} unreadable`) : '') +
+          (summary.settings.notRead ? paint.dim(`, ${summary.settings.notRead} found but not read by Claude Code`) : '')
   );
   for (const [key, value] of summary.settings.highlights) {
     continued(`${paint.dim(padEnd(key, 14))} ${value}`);
@@ -297,33 +302,55 @@ function renderSettingsView(view, lineage) {
   printRule(view.rule);
   out();
 
+  const files = view.sections.flatMap((section) => section.files);
+  const status = (file) =>
+    file.error ? paint.red(file.error.code) : file.jsonError ? paint.red('parse error') : paint.green('ok');
+
   out(paint.cyan('Sources, weakest first'));
-  const sourceRows = [];
-  for (const section of view.sections) {
-    for (const file of section.files) {
-      sourceRows.push([
-        shortenPath(file.path, lineage.home),
-        file.sensitive ? paint.yellow('sensitive') : '',
-        file.error ? paint.red(file.error.code) : file.jsonError ? paint.red('parse error') : paint.green('ok'),
-      ]);
-    }
-  }
+  const sourceRows = files
+    .filter((file) => file.sources.length)
+    .map((file) => [
+      file.sources.join('+'),
+      shortenPath(file.path, lineage.home),
+      file.sensitive ? paint.yellow('sensitive') : '',
+      status(file),
+    ]);
   if (sourceRows.length === 0) out(paint.dim('  none'));
   for (const line of columns(sourceRows)) out(`  ${line}`);
+
+  const notRead = files.filter((file) => !file.sources.length);
+  if (notRead.length) {
+    out();
+    out(paint.cyan('Found but not read by Claude Code'));
+    for (const file of notRead) {
+      out(`  ${shortenPath(file.path, lineage.home)}`);
+      out(paint.dim(`    ${file.notRead}`));
+    }
+  }
+  const repeated = view.sections.flatMap((section) => section.repeatedPaths || []);
+  if (repeated.length) {
+    out(paint.dim(`  ${plural(repeated.length, 'file')} reached again by the directory walk, listed once above.`));
+  }
   out();
 
   out(paint.cyan('Effective merge'));
   out(JSON.stringify(view.merged, null, 2));
   out();
 
-  out(paint.cyan('Which level supplied each key'));
+  out(paint.cyan('Which file supplied each key'));
   const provRows = view.provenance.map((p) => [
     p.keyPath,
-    p.mode === 'union' ? paint.yellow(p.mode) : paint.dim(p.mode),
-    elide(shortenPath(p.file, lineage.home), Math.max(24, w - 60)),
+    p.mode === 'concat' ? paint.yellow('combined') : p.mode === 'replace' ? paint.yellow('taken whole') : paint.dim(p.mode),
+    elide(
+      p.sources.map((s) => (p.mode === 'concat' ? `${s.source} +${s.added.length}` : s.source)).join(', '),
+      Math.max(24, w - 60)
+    ),
   ]);
   if (provRows.length === 0) out(paint.dim('  nothing merged'));
   for (const line of columns(provRows)) out(`  ${line}`);
+  for (const row of view.ignored || []) {
+    out(paint.yellow(`  ${row.keyPath} in ${shortenPath(row.file, lineage.home)}: ${row.reason}`));
+  }
 }
 
 function renderDefinitionsView(view, lineage) {
