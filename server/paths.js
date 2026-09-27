@@ -76,6 +76,16 @@ export function claudeHome() {
  * join(process.env.CLAUDE_CONFIG_DIR || homedir(), '.claude.json'). The docs
  * sentence above names ~/.claude paths only, so this was checked, not assumed.
  */
+/**
+ * The global config file's legacy name. Claude Code reads it IN PLACE OF
+ * globalConfigFile() whenever it exists: To() in the 2.1.283 bundle returns
+ * <config home>/.config.json if present, else .claude.json (checked in the
+ * installed claude.exe, 2026-09-26; #87).
+ */
+export function legacyGlobalConfigFile() {
+  return path.join(claudeHome(), '.config.json');
+}
+
 export function globalConfigFile() {
   return path.join(claudeConfigDirEnv() || homeDir(), '.claude.json');
 }
@@ -203,6 +213,18 @@ export function appDataRoot() {
  * that can be overwritten by the restore it is feeding is not a backup.
  */
 export function snapshotRoot() {
+  const root = snapshotRootUnchecked();
+  // The config tree is a restore target, and a backup the restore can
+  // overwrite is not a backup. CLAUDE.md stated this; nothing enforced it (#88).
+  for (const forbidden of claudeTrees()) {
+    if (isInsideDir(root, forbidden)) {
+      throw new Error(`Refusing to keep snapshots inside ${forbidden}, which a restore writes to; set LAYERCAKE_SNAPSHOT_DIR elsewhere.`);
+    }
+  }
+  return root;
+}
+
+function snapshotRootUnchecked() {
   if (process.env.LAYERCAKE_SNAPSHOT_DIR) {
     return path.resolve(process.env.LAYERCAKE_SNAPSHOT_DIR);
   }
@@ -211,4 +233,25 @@ export function snapshotRoot() {
     return path.join(local, 'LayerCake', 'snapshots');
   }
   return path.join(homeDir(), '.layercake', 'snapshots');
+}
+
+/** The trees LayerCake's own stores must stay out of: Claude Code's data and config homes. */
+export function claudeTrees() {
+  return [claudeDataDir(), claudeHome(), path.join(homeDir(), '.claude')];
+}
+
+/** Whether `child` is `parent` or inside it, folded the way the filesystem folds names. */
+export function isInsideDir(child, parent) {
+  const c = samePathKey(child);
+  const p = samePathKey(parent);
+  return c === p || c.startsWith(p.endsWith(path.sep) ? p : p + path.sep);
+}
+
+/** A root, or why it was refused, for a payload that must not fail over it (#88). */
+export function rootState(getRoot) {
+  try {
+    return { root: getRoot(), error: null };
+  } catch (err) {
+    return { root: null, error: err.message };
+  }
 }

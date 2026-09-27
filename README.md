@@ -80,9 +80,14 @@ Existence-probed on all three platforms, never assumed:
 ~\.claude\hooks\**                (depth 2, any extension)
 ~\.claude\rules\**\*.md           (depth 2)
 ~\.claude\memory\**\*.md          (depth 2)
+~\.claude\.config.json           legacy name: read in place of ~\.claude.json while it exists
 ~\.claude.json                    flagged sensitive
 ~\CLAUDE.md                       flagged: only inherited when the project sits under home
 ```
+
+Claude Code reads `.config.json` in the configuration home instead of `.claude.json` whenever that
+file exists (checked in the 2.1.283 bundle). The scan then marks `.claude.json` as not read, and
+the flattened MCP view leaves it out.
 
 If `CLAUDE_CONFIG_DIR` is set, as Claude Code reads it, the `~\.claude` part of every path above
 (and the plugins, project memory, sessions and history below) is that directory instead, and

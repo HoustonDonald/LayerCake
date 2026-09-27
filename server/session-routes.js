@@ -18,7 +18,7 @@ import { dataRoot, readAiSummary, readCards, readLedger, writeCard } from './app
 import { computeHealth, HEALTH_STATES } from './health.js';
 import { wrappedFor } from './ingest.js';
 import { readHistory } from './history.js';
-import { samePathKey } from './paths.js';
+import { rootState, samePathKey } from './paths.js';
 import {
   discoverSessions,
   getReader,
@@ -242,15 +242,18 @@ export function registerSessionRoutes(app) {
       }));
 
       const byRecent = (a, b) => String(b.lastAt || '').localeCompare(String(a.lastAt || ''));
+      // A refused data folder is reported here, not a 500 for the whole list (#88).
+      const data = rootState(dataRoot);
       res.json({
         dir: dir || null,
         retentionDays: retention,
-        dataRoot: dataRoot(),
+        dataRoot: data.root,
+        dataRootError: data.error,
         live,
         sessions: sessions.sort(byRecent),
         expired: expired.sort(byRecent),
         promptOnly: promptOnly.sort(byRecent),
-        persist: { saved, error: persistError },
+        persist: { saved, error: persistError || data.error },
         states: HEALTH_STATES,
       });
     } catch (err) {
@@ -416,14 +419,16 @@ export function registerSessionRoutes(app) {
       // A "running" entry older than any run can last is a run LayerCake did
       // not see finish: it was stopped mid-run, and the usage is unknown (#3).
       const now = Date.now();
-      const entries = (await readLedger()).map((e) =>
+      const data = rootState(dataRoot);
+      const entries = (data.error ? [] : await readLedger()).map((e) =>
         e?.status === 'running' && now - Date.parse(e.at) > RUN_TIMEOUT_MS + 60_000
           ? { ...e, status: 'interrupted', error: 'LayerCake stopped during this run, so its usage was never reported (it may have spent some).' }
           : e
       );
       const sum = (key) => entries.reduce((n, e) => n + (typeof e[key] === 'number' ? e[key] : 0), 0);
       res.json({
-        dataRoot: dataRoot(),
+        dataRoot: data.root,
+        dataRootError: data.error,
         entries: entries.slice(-200).reverse(),
         totals: {
           runs: entries.length,

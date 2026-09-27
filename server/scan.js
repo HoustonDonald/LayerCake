@@ -24,6 +24,7 @@ import {
   claudeHome,
   claudeHomeSource,
   globalConfigFile,
+  legacyGlobalConfigFile,
   homeDir,
   isUncPath,
   managedCandidates,
@@ -348,11 +349,25 @@ async function scanUser() {
   }
 
   await probeFile(
+    legacyGlobalConfigFile(),
+    'home-config',
+    level,
+    'Legacy global config. While it exists Claude Code reads it in place of .claude.json.'
+  );
+  const legacyInUse = level.entries.some((e) => samePathKey(e.absPath) === samePathKey(legacyGlobalConfigFile()));
+  await probeFile(
     globalConfigFile(),
     'home-config',
     level,
-    'Home config blob: per-project state and MCP servers. Often very large.'
+    legacyInUse
+      ? 'Not read by Claude Code while .config.json exists in the configuration home: that file takes its place (#87).'
+      : 'Home config blob: per-project state and MCP servers. Often very large.'
   );
+  // Flattened views leave it out while the legacy file is the one in use.
+  if (legacyInUse) {
+    const shadowed = level.entries.find((e) => samePathKey(e.absPath) === samePathKey(globalConfigFile()));
+    if (shadowed) shadowed.inactive = true;
+  }
   await probeFile(
     path.join(home, 'CLAUDE.md'),
     'memory',

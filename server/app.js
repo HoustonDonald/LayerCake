@@ -54,7 +54,9 @@ import {
   claudeHomeSource,
   globalConfigFile,
   homeDir,
+  legacyGlobalConfigFile,
   managedCandidates,
+  rootState,
   snapshotRoot,
 } from './paths.js';
 
@@ -182,6 +184,7 @@ export function createApp({ port, staticFiles }) {
       })),
       managedCandidates: managedCandidates(),
       homeExtras: [
+        legacyGlobalConfigFile(),
         globalConfigFile(),
         path.join(homeDir(), 'CLAUDE.md'),
         path.join(claudeHome(), 'plugins'),
@@ -191,7 +194,10 @@ export function createApp({ port, staticFiles }) {
       // the user discovering it from a 403. Derived from the guards themselves.
       write: {
         ...writePolicy(),
-        snapshotRoot: snapshotRoot(),
+        // Reported, not thrown, so a refused store (#88) reads as a message
+        // rather than as a page with no write policy at all.
+        snapshotRoot: rootState(snapshotRoot).root,
+        snapshotRootError: rootState(snapshotRoot).error,
         rules: [
           'Only files discovered by the current scan can be written or deleted.',
           'New files are created only at a user or directory level, at places the scan offers, from a template, and never over an existing file.',

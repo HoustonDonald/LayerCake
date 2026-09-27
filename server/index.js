@@ -12,7 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { HOST, createApp, diskStatic, listen } from './app.js';
-import { homeDir, snapshotRoot } from './paths.js';
+import { homeDir, rootState, snapshotRoot } from './paths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -44,4 +44,5 @@ try {
 
 process.stdout.write(`\nLayerCake  ->  http://${HOST}:${PORT}\n`);
 process.stdout.write(`Home: ${homeDir()}  Platform: ${process.platform}\n`);
-process.stdout.write(`Snapshots: ${snapshotRoot()}\n\n`);
+const snaps = rootState(snapshotRoot);
+process.stdout.write(snaps.error ? `Snapshots: REFUSED. ${snaps.error}\n\n` : `Snapshots: ${snaps.root}\n\n`);

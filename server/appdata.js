@@ -17,7 +17,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { appDataRoot, claudeDataDir, claudeHome, homeDir, samePathKey } from './paths.js';
+import { appDataRoot, claudeTrees, isInsideDir } from './paths.js';
 import { readForDisplay } from './readfile.js';
 import { DIR_TIMEOUT_MS, withTimeout } from './safety.js';
 import { atomicWrite } from './snapshot.js';
@@ -26,11 +26,7 @@ const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 /** Enough history to answer "what has LayerCake cost me"; old entries roll off. */
 const MAX_LEDGER_ENTRIES = 2000;
 
-function inside(child, parent) {
-  const c = samePathKey(child);
-  const p = samePathKey(parent);
-  return c === p || c.startsWith(p.endsWith(path.sep) ? p : p + path.sep);
-}
+const inside = isInsideDir;
 
 function root() {
   const r = appDataRoot();
@@ -40,7 +36,7 @@ function root() {
   if (/^[\\/]{2}/.test(r)) {
     throw new Error(`LayerCake data must be on a local drive path, not ${r}.`);
   }
-  for (const forbidden of [claudeDataDir(), claudeHome(), path.join(homeDir(), '.claude')]) {
+  for (const forbidden of claudeTrees()) {
     if (inside(r, forbidden)) {
       throw new Error(`Refusing to keep LayerCake data inside ${forbidden}; set LAYERCAKE_APPDATA_DIR elsewhere.`);
     }

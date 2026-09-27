@@ -367,4 +367,99 @@ export async function runCreateChecks({ base, token, check, skip, smokeDir, conf
   } else {
     skip('a write landing while a delete waits on a locked file is never deleted unseen', 'needs a Windows share-mode lock');
   }
+
+  // --- #87: a legacy .config.json takes the place of .claude.json -----------
+  // Last in the run, and undone at the end: it changes the shared config home.
+  {
+    const legacy = path.join(configHome, '.config.json');
+    const modern = path.join(configHome, '.claude.json');
+    const modernBefore = await fs.readFile(modern, 'utf8');
+    await fs.writeFile(legacy, JSON.stringify({ mcpServers: { 'smoke-legacy-server': { command: 'legacy' } } }));
+    await fs.writeFile(modern, JSON.stringify({ projects: {}, mcpServers: { 'smoke-modern-server': { command: 'modern' } } }));
+    try {
+      lin = await scan(proj);
+      const user = lin.levels.find((l) => l.kind === 'user');
+      const modernEntry = user.entries.find((e) => same(e.absPath, modern));
+      const mcpView = await get(`/api/flatten?scanId=${lin.scanId}&kind=mcp`);
+      const names = mcpView.status === 200 ? (JSON.parse(mcpView.text).servers || []).map((x) => x.name) : [];
+      check('while a legacy .config.json exists it is the global config read, and .claude.json is marked not read',
+        user.entries.some((e) => same(e.absPath, legacy)) && modernEntry?.inactive === true && /Not read by Claude Code/.test(modernEntry?.note || '') &&
+          names.includes('smoke-legacy-server') && !names.includes('smoke-modern-server'),
+        JSON.stringify({ names, inactive: modernEntry?.inactive }));
+    } finally {
+      await fs.rm(legacy, { force: true });
+      await fs.writeFile(modern, modernBefore);
+    }
+  }
+
+  // --- #88: LayerCake's stores are refused inside the config tree -------------
+  {
+    const { snapshotRoot } = await import('../server/paths.js');
+    const saved = { cfg: process.env.CLAUDE_CONFIG_DIR, snaps: process.env.LAYERCAKE_SNAPSHOT_DIR };
+    const fakeHome = path.join(smokeDir, 'refuse-home');
+    const verdict = (dir) => {
+      process.env.CLAUDE_CONFIG_DIR = fakeHome;
+      process.env.LAYERCAKE_SNAPSHOT_DIR = dir;
+      try {
+        return snapshotRoot() ? 'allowed' : 'none';
+      } catch {
+        return 'refused';
+      } finally {
+        for (const [k, v] of [['CLAUDE_CONFIG_DIR', saved.cfg], ['LAYERCAKE_SNAPSHOT_DIR', saved.snaps]]) {
+          if (v === undefined) delete process.env[k];
+          else process.env[k] = v;
+        }
+      }
+    };
+    const inside = verdict(path.join(fakeHome, 'snaps'));
+    const beside = verdict(path.join(smokeDir, 'refuse-snaps'));
+    check('a snapshot store inside the config home is refused; one beside it is not', inside === 'refused' && beside === 'allowed', `${inside} ${beside}`);
+  }
+
+  // A data folder inside the config home no longer fails the session list and
+  // the usage view: they answer and say why nothing is kept. Its own server,
+  // because the data folder is fixed when the main one starts.
+  {
+    const { spawn } = await import('node:child_process');
+    const net = await import('node:net');
+    const port = await new Promise((resolve, reject) => {
+      const probe = net.createServer();
+      probe.once('error', reject);
+      probe.listen(0, '127.0.0.1', () => {
+        const { port: p } = probe.address();
+        probe.close(() => resolve(p));
+      });
+    });
+    const home2 = path.join(smokeDir, 'refuse-home2');
+    await fs.mkdir(home2, { recursive: true });
+    const second = spawn(process.execPath, [path.join(path.dirname(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'))), 'server', 'index.js')], {
+      env: {
+        ...process.env,
+        PORT: String(port),
+        CLAUDE_CONFIG_DIR: home2,
+        LAYERCAKE_APPDATA_DIR: path.join(home2, 'layercake-data'),
+        LAYERCAKE_SNAPSHOT_DIR: path.join(smokeDir, 'refuse-snaps2'),
+        LAYERCAKE_CLAUDE_DATA_DIR: path.join(smokeDir, 'refuse-claudedata'),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let said = '';
+    second.stdout.setEncoding('utf8').on('data', (c) => (said += c));
+    try {
+      for (let i = 0; i < 200 && !said.includes('LayerCake  ->'); i += 1) await new Promise((r) => setTimeout(r, 50));
+      const base2 = `http://127.0.0.1:${port}`;
+      const html = await (await fetch(`${base2}/`)).text();
+      const token2 = /name="layercake-token" content="([a-f0-9]+)"/.exec(html)?.[1];
+      const h2 = { 'X-LayerCake-Token': token2 };
+      const list = await fetch(`${base2}/api/sessions`, { headers: h2 });
+      const usage = await fetch(`${base2}/api/usage`, { headers: h2 });
+      const listJson = list.status === 200 ? await list.json() : null;
+      const usageJson = usage.status === 200 ? await usage.json() : null;
+      check('a data folder inside the config home is reported by the session list and usage, not a 500',
+        Boolean(token2) && listJson?.dataRootError && usageJson?.dataRootError && /Refusing/.test(listJson.dataRootError),
+        `${list.status} ${usage.status} ${JSON.stringify(listJson?.dataRootError)}`);
+    } finally {
+      second.kill();
+    }
+  }
 }

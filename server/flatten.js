@@ -308,6 +308,7 @@ async function flattenMcp(lineage) {
     const mcpFiles = level.entries.filter(
       (e) =>
         e.type === 'file' &&
+        !e.inactive &&
         (e.category === 'mcp' || e.name === '.mcp.json' || e.category === 'home-config')
     );
     for (const entry of mcpFiles) {
