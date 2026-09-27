@@ -58,9 +58,9 @@ Then, after the owner started trying the exe:
 - `dist\LayerCake.exe` rebuilt from c53c3c3 and launch-checked (`exe-lifecycle-final.ps1`, which
   also asks the embedded server a #135 question, since a bundle marker cannot see server code).
 
-Owner asked about the ambient lighting (session-wrap plan, physical lights): not started. It needs
-the owner's choice of hardware (ASUS Aura fans via its local REST, or a WLED strip) and a ruling on
-the no-outbound invariant (Aura is on this machine; WLED is on the LAN).
+Ambient lighting (session-wrap plan, physical lights): tried on the owner's Aura case fans and
+shelved, decision 14 and #148. The owner turned Windows Dynamic Lighting off for the test and was told
+he can turn it back on.
 
 **Owner-facing finding:** the 23 `permissions.allow` rules in `~\.claude\settings.local.json` apply
 only to sessions started in `C:\Users\donal`. For this repo the real count is 7 (the old view said
@@ -390,8 +390,10 @@ Made by the owner on 2026-09-27 ("b"):
     the configuration as it was at that moment.
 13. **Snapshots are kept 30 days** ("30 days for now", #138), manual ones included, then deleted when
     the next snapshot is taken.
-14. **Ambient lighting: the ASUS Aura case fans, and LayerCake may make that network call** (the
-    Aura service on 127.0.0.1:27339). A WLED strip was the alternative, deferred.
+14. **Ambient lighting: shelved** ("let's forget about it"). The owner first chose the ASUS Aura case
+    fans and allowed the local network call; both Aura interfaces accepted every command and the fans
+    never changed. Findings and what to try first are in #148 (closed, not planned). The no-outbound
+    invariant stands: no lighting code was written.
 
 ---
 
