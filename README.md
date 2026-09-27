@@ -193,8 +193,11 @@ The app reads the whole lineage and can edit the files it found. Writes are narr
   guard. New files are the one addition, and they are fenced: see
   [Creating and deleting files](#creating-and-deleting-files).
 - **Every edit, delete and restore is preceded by an automatic snapshot**, and the response carries
-  that snapshot id so the change can be undone. A create replaces nothing, so it takes none. This is enforced by the import graph: `writefile.js` depends on
-  `snapshot.js`, so a new route cannot skip it by forgetting.
+  that snapshot id so the change can be undone. Each one then checks that the snapshot actually holds
+  the file it is about to replace or remove, and refuses that file if not: a snapshot skips a file
+  over the 2 MB cap, and replacing one would leave no copy anywhere. A create replaces nothing, so it
+  takes none. This is enforced by the import graph: `writefile.js` depends on `snapshot.js`, so a
+  new route cannot skip it by forgetting.
 - **Writes land atomically**, via a temp file in the same directory followed by a rename. A crash
   leaves either the old file or the new one, never a half-written config.
 - **Structural validation before the write, with a deliberate severity split.** Invalid JSON or YAML
@@ -298,10 +301,17 @@ that tree is a restore target, and a backup the restore can overwrite is not a b
 - Restore is selective: pick a snapshot, see a per-file comparison against disk right now
   (`same` / `changed` / `missing` / `error`), then choose what to put back. Changed files are
   preselected; identical ones are not, because restoring them is a write with no effect.
-- **A restore takes its own snapshot first**, so it is itself undoable.
-- **A file gone from disk can be restored**, including after a rescan that no longer lists it, if it
-  lies inside a user or directory level's config folders (or is one of a directory's own config
-  files). It is created rather than written over: if something has appeared at that path since the
+  `~/.claude.json` is never preselected: Claude Code rewrites it constantly, so it always differs,
+  and rolling it back rolls back Claude Code's own state. A row the current scan cannot restore is
+  disabled, and says why.
+- **A restore takes its own snapshot first**, so it is itself undoable, and it does not replace a
+  file that snapshot could not hold (over the 2 MB cap): that row fails and says so. A row that
+  fails does not stop the others.
+- **A file gone from disk can be restored**, including after a rescan that no longer lists it,
+  wherever the current scan would list it: a file it probes by name (`~/CLAUDE.md`, a directory's
+  `CLAUDE.md`, a settings file), a file in a `.claude` folder's trees, or a file in the
+  project-memory or plugins folders. So anything **Delete** removed can come back. It is created
+  rather than written over: if something has appeared at that path since the
   scan, the restore of that file fails and says so, because the restore's own snapshot could not
   hold the newcomer. Missing folders, such as a removed skill's, are made again.
 

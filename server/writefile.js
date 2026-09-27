@@ -15,7 +15,7 @@ import {
   MAX_WRITE_BYTES,
   isEditableCategory,
   isExecutableCategory,
-  isNonConfigDir,
+  isTreeSkipDir,
   isSecret,
   commandKeysChanged,
   createFiles,
@@ -138,6 +138,24 @@ export function validateContent(absPath, content) {
 }
 
 /**
+ * The snapshot's record of `absPath`, or a refusal saying why it has none. Every
+ * write that replaces or removes a file calls this after its undo snapshot, so
+ * "undoable" is checked per file rather than assumed: a snapshot skips a file
+ * over the 2 MB cap, and one it could not read (#96).
+ */
+function assertHeld(snapshot, absPath, verb) {
+  const key = samePathKey(absPath);
+  const held = snapshot.files.find((f) => samePathKey(f.absPath) === key);
+  if (held) return held;
+  const why = [...snapshot.skipped, ...snapshot.errors].find((f) => samePathKey(f.absPath) === key);
+  throw refuse(
+    `${verb}: the snapshot taken first could not hold this file${why ? ` (${why.reason || why.message})` : ''}, so there would be no way back.`,
+    'ENOBACKUP',
+    409
+  );
+}
+
+/**
  * Detects a concurrent change since the editor loaded the file.
  *
  * The realistic case is not two people, it is one person with the file open in
@@ -176,6 +194,10 @@ export async function editFile({
   const undo = await createSnapshot(lineage, {
     label: `Before editing ${path.basename(entry.absPath)}`,
   });
+  // A file the snapshot could not hold (over the 2 MB cap, or unreadable) is
+  // not replaced: the save would have no way back (#96). The editor never
+  // offers such a file; the API used to accept it.
+  assertHeld(undo, entry.absPath, 'Not saved');
 
   await atomicWrite(entry.absPath, Buffer.from(content, 'utf8'));
   const st = await fs.stat(entry.absPath);
@@ -362,16 +384,7 @@ export async function deleteFile({ entry, lineage, expectedMtime = null }) {
   }
 
   const undo = await createSnapshot(lineage, { label: `Before deleting ${path.basename(entry.absPath)}` });
-  const key = samePathKey(entry.absPath);
-  const held = undo.files.find((f) => samePathKey(f.absPath) === key);
-  if (!held) {
-    const why = [...undo.skipped, ...undo.errors].find((f) => samePathKey(f.absPath) === key);
-    throw refuse(
-      `Not deleted: the snapshot taken first could not hold this file${why ? ` (${why.reason || why.message})` : ''}, so there would be no way back.`,
-      'ENOBACKUP',
-      409
-    );
-  }
+  const held = assertHeld(undo, entry.absPath, 'Not deleted');
   // Changed between the snapshot and now: the snapshot would restore an
   // older version than the one being deleted.
   const st = await fs.stat(entry.absPath);
@@ -390,23 +403,64 @@ export async function deleteFile({ entry, lineage, expectedMtime = null }) {
   };
 }
 
+/** absPath's segments below `base`, or null when it is not strictly inside it. */
+function segmentsUnder(base, absPath) {
+  const rel = path.relative(base, absPath);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;
+  return rel.split(/[\\/]/);
+}
+
+const sameName = (a, b) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
+
 /**
- * Whether a restore may put back a file the current scan did not find (#92).
- * Inside a user or directory level's config folders, or one of a directory's
- * own config files, never a secret, never under runtime state. The route also
- * requires the file to be in the snapshot, which only ever holds scanned files.
+ * Whether a scan would list `absPath` inside a .claude folder (or the
+ * configuration home), read from the same manifest the scan walks: one of
+ * the folder's own files, or a file in one of its trees, within the tree's
+ * depth, with one of its extensions, and not under a folder the walk skips.
+ */
+function manifestShape(claudeDir, absPath) {
+  const parts = segmentsUnder(claudeDir, absPath);
+  if (!parts) return false;
+  if (parts.length === 1) return CLAUDE_DIR_FILE_TARGETS.some((t) => sameName(t.name, parts[0]));
+  const tree = CLAUDE_DIR_TREES.find((t) => sameName(t.name, parts[0]));
+  // walkTree lists files down to maxDepth folders below the tree root.
+  if (!tree || parts.length - 1 > tree.maxDepth + 1) return false;
+  if (parts.slice(1, -1).some((segment) => isTreeSkipDir(segment))) return false;
+  return !tree.exts || tree.exts.includes(path.extname(absPath).toLowerCase());
+}
+
+/**
+ * Whether a restore may put back a file the current scan did not find (#92):
+ * a place the current scan would list it, so a delete's undo always works
+ * (#97). The route also requires the file to be in the snapshot, which only
+ * ever holds scanned files.
+ *
+ * - Any path the scan probed and recorded as absent: ~/CLAUDE.md, the global
+ *   config file, managed files, a directory's fixed targets.
+ * - A directory's own config files, and the manifest shapes under its .claude
+ *   folder; the same under the configuration home at the user level.
+ * - Anywhere in the project-memory and plugins folders, whose files the scan
+ *   walks without a fixed shape, outside the folders a walk skips.
+ *
+ * Never a secret. It used to allow only the first two, while delete allowed
+ * every editable file, so a deleted ~/CLAUDE.md or memory note could not come
+ * back (#97).
  */
 export function restorableWhenAbsent(lineage, absPath) {
   if (isSecret(absPath)) return false;
   const key = samePathKey(absPath);
   for (const level of lineage.levels) {
-    if (!createLevelAllowed(level.kind) || !level.dir) continue;
-    if (level.kind === 'directory' && DIR_FILE_TARGETS.some((t) => samePathKey(path.join(level.dir, t.name)) === key)) {
-      return true;
+    if (level.absent.some((a) => samePathKey(a.absPath) === key)) return true;
+    if (!level.dir) continue;
+    if (level.kind === 'directory') {
+      if (DIR_FILE_TARGETS.some((t) => samePathKey(path.join(level.dir, t.name)) === key)) return true;
+      if (manifestShape(path.join(level.dir, '.claude'), absPath)) return true;
+    } else if (level.kind === 'user') {
+      if (manifestShape(level.dir, absPath)) return true;
+    } else if (level.kind === 'project-memory' || level.kind === 'plugins') {
+      const parts = segmentsUnder(level.dir, absPath);
+      if (parts && !parts.slice(0, -1).some((segment) => isTreeSkipDir(segment))) return true;
     }
-    const rel = path.relative(claudeDirOf(level), absPath);
-    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) continue;
-    if (!rel.split(/[\\/]/).slice(0, -1).some((segment) => isNonConfigDir(segment))) return true;
   }
   return false;
 }

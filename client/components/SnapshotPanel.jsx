@@ -76,11 +76,20 @@ export default function SnapshotPanel({ scanId, onRestored }) {
     setError(null);
     setBusy(true);
     try {
-      const cmp = await compareSnapshot(id);
+      const cmp = await compareSnapshot(id, scanId);
       setComparison(cmp);
-      // Preselect only what actually differs. Restoring an identical file is a
-      // write with no effect, and it would pad the confirmation with noise.
-      setChecked(new Set(cmp.rows.filter((r) => r.status === 'changed').map((r) => r.absPath)));
+      // Preselect only what actually differs and can be put back. Restoring an
+      // identical file is a write with no effect, and it would pad the
+      // confirmation with noise. ~/.claude.json (home-config) is never
+      // preselected: Claude Code rewrites it constantly, so it always differs,
+      // and rolling it back rolls back Claude Code's own state (#96).
+      setChecked(
+        new Set(
+          cmp.rows
+            .filter((r) => r.status === 'changed' && r.restorable !== false && r.category !== 'home-config')
+            .map((r) => r.absPath)
+        )
+      );
     } catch (err) {
       setError(err.message);
     } finally {
@@ -190,14 +199,18 @@ export default function SnapshotPanel({ scanId, onRestored }) {
                           type="checkbox"
                           checked={checked.has(r.absPath)}
                           onChange={() => toggle(r.absPath)}
-                          disabled={r.status === 'error'}
+                          disabled={r.status === 'error' || r.restorable === false}
+                          title={r.restorable === false ? r.notRestorable : undefined}
                         />
                       </td>
                       <td className="snap-path" title={r.absPath}>
                         {r.absPath}
                         {r.sensitive && <span className="dot sensitive" title="May hold secrets" />}
                       </td>
-                      <td className={`snap-status status-${r.status}`}>{STATUS_LABEL[r.status]}</td>
+                      <td className={`snap-status status-${r.status}`} title={r.restorable === false ? r.notRestorable : undefined}>
+                        {STATUS_LABEL[r.status]}
+                        {r.restorable === false && <span className="snap-blocked"> · cannot restore here</span>}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

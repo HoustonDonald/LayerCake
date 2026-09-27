@@ -33,6 +33,7 @@ import {
 import {
   describeError,
   isNonConfigDir,
+  isTreeSkipDir,
   isSecret,
   isSensitive,
 } from './safety.js';
@@ -194,7 +195,7 @@ async function walkTree(root, { maxDepth, exts, category, level, depth = 0, seen
       continue;
     }
     if (dirent.isDirectory()) {
-      if (isNonConfigDir(dirent.name)) {
+      if (isTreeSkipDir(dirent.name)) {
         const { st } = await statOf(abs);
         level.entries.push(
           makeEntry({

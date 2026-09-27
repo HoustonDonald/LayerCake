@@ -41,10 +41,6 @@ const SENSITIVE_BASENAMES = new Set([
  * can hold tens of full checkouts.
  */
 const NON_CONFIG_DIRS = new Set([
-  // Claude Code moves removed skills here (skills/.trash/<epoch>-<pid>-<id>/),
-  // and nothing loads from it. Seen 2026-09-26; walking it listed dozens of
-  // deleted skills as if they were live config.
-  '.trash',
   'worktrees',
   'sessions',
   'projects',
@@ -231,6 +227,22 @@ export function isSensitive(filePath) {
 
 export function isNonConfigDir(name) {
   return NON_CONFIG_DIRS.has(name.toLowerCase());
+}
+
+/**
+ * Folders skipped INSIDE a config tree (agents/, skills/, ...), a much shorter
+ * list than the one above, which describes the .claude root. Inside a tree a
+ * folder called debug, tasks or logs is a skill or a command namespace, and
+ * applying the root's list there hid it (#98).
+ *
+ * `.trash`: Claude Code moves removed skills to skills/.trash/<epoch>-<pid>-<id>/
+ * and nothing loads from there. Seen 2026-09-26; walking it listed dozens of
+ * deleted skills as if they were live config.
+ */
+const TREE_SKIP_DIRS = new Set(['.trash', 'node_modules', '.git']);
+
+export function isTreeSkipDir(name) {
+  return TREE_SKIP_DIRS.has(String(name).toLowerCase());
 }
 
 export function isEditableCategory(category) {

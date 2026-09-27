@@ -347,8 +347,45 @@ export async function readSnapshotFile(id, absPath) {
     err.status = 404;
     throw err;
   }
-  const stored = path.join(snapshotRoot(), safeId(id), FILES_DIR, ...entry.stored.split('/'));
-  return { entry, content: await fs.readFile(stored, 'utf8') };
+  return { entry, content: await fs.readFile(storedPathOf(id, entry), 'utf8') };
+}
+
+function fail(message, status, code) {
+  const err = new Error(message);
+  err.status = status;
+  err.code = code;
+  return err;
+}
+
+/**
+ * Where a manifest entry's stored copy is, checked rather than trusted: the
+ * manifest is a plain file in LayerCake's folder, and an edited `stored` of
+ * ../../../x read any file on disk, credentials included (#101). The copy
+ * must sit inside this snapshot's files/ folder, and neither it nor the file
+ * it stands for may be a credential file. Equality with mirrorPath() is not
+ * required, so a future change to that function cannot orphan old snapshots.
+ */
+function storedPathOf(id, entry) {
+  const root = path.join(snapshotRoot(), safeId(id), FILES_DIR);
+  const stored = path.join(root, ...String(entry.stored || '').split('/'));
+  const rel = path.relative(root, stored);
+  if (!entry.stored || !rel || rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw fail('This snapshot entry points outside its snapshot.', 400, 'EBADMANIFEST');
+  }
+  if (isSecret(String(entry.absPath || '')) || isSecret(stored)) {
+    throw fail('Credential file. Never read and never written by this tool.', 403, 'EREDACTED');
+  }
+  return stored;
+}
+
+/** Whether something is at `p`. Only "not there" says no; any other error counts as present. */
+async function presentOnDisk(p) {
+  try {
+    await fs.stat(p);
+    return true;
+  } catch (err) {
+    return err.code !== 'ENOENT';
+  }
 }
 
 /**
@@ -360,8 +397,9 @@ export async function compareSnapshot(id) {
   const rows = [];
   for (const entry of manifest.files) {
     try {
+      const { size } = await fs.stat(entry.absPath);
       const current = await sha256(entry.absPath);
-      rows.push({ ...entry, status: current === entry.sha256 ? 'same' : 'changed', currentSha256: current });
+      rows.push({ ...entry, status: current === entry.sha256 ? 'same' : 'changed', currentSha256: current, currentSize: size });
     } catch (err) {
       const described = describeError(err);
       rows.push({
@@ -396,15 +434,30 @@ export async function restoreFiles(id, absPaths, lineage, { absentPaths = [] } =
   }
 
   const undo = await createSnapshot(lineage, { label: `Before restore from ${id}` });
+  const held = new Set(undo.files.map((f) => samePathKey(f.absPath)));
 
   const restored = [];
   const failed = [];
   for (const entry of chosen) {
-    const stored = path.join(snapshotRoot(), safeId(id), FILES_DIR, ...entry.stored.split('/'));
     try {
-      const data = await fs.readFile(stored);
-      if (absentKeys.has(samePathKey(entry.absPath))) await createExclusive(entry.absPath, data);
-      else await atomicWrite(entry.absPath, data);
+      const data = await fs.readFile(storedPathOf(id, entry));
+      const key = samePathKey(entry.absPath);
+      if (absentKeys.has(key) || !(await presentOnDisk(entry.absPath))) {
+        // Nothing there to lose: created, and never over a file that has
+        // appeared since, which no snapshot holds.
+        await createExclusive(entry.absPath, data);
+      } else if (!held.has(key)) {
+        // There, but the undo snapshot could not hold it (over the 2 MB cap,
+        // or unreadable): replacing it would leave no copy anywhere (#96).
+        failed.push({
+          absPath: entry.absPath,
+          code: 'ENOBACKUP',
+          message: 'Not restored: the snapshot taken first could not hold the current file (over the 2 MB cap, or unreadable), so replacing it would have no way back.',
+        });
+        continue;
+      } else {
+        await atomicWrite(entry.absPath, data);
+      }
       restored.push(entry.absPath);
     } catch (err) {
       const described = describeError(err);

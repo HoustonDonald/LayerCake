@@ -142,8 +142,10 @@ Claude data folder.
 
 **Every write that replaces or removes bytes snapshots first, and that is structural.** `writefile.js`
 imports `snapshot.js`, not the reverse, so a new route cannot skip the snapshot by forgetting to call
-it. Keep that direction. A delete (#15) is refused unless that snapshot provably holds the file, so a
-file over the 2 MB cap cannot be deleted. A create is the one write with no snapshot, by design: it
+it. Keep that direction. Every edit, delete and restore then checks, per file, that the snapshot
+holds the file it is about to replace or remove (`assertHeld`, and the same test in `restoreFiles`),
+and refuses that file if not, so a file over the 2 MB cap is never replaced or removed with no copy
+left (#96; delete had it first, #15). A create is the one write with no snapshot, by design: it
 publishes with a hard link (`createExclusive`), which refuses an existing file, so it never replaces
 bytes and has nothing to back up; its undo is a delete. Anything that could replace a file stays on
 `atomicWrite` behind a snapshot.
@@ -155,6 +157,11 @@ target gives the same EPERM, so it is checked and fails at once instead of after
 
 **The snapshot store must never live under `~/.claude`.** That tree is a restore target, and a
 backup the restore can overwrite is not a backup. See `snapshotRoot()`.
+
+**A snapshot manifest is checked, not trusted.** It is a plain file in LayerCake's own folder, and an
+edited `stored` path of `../../../x` once read any file on disk (#101). `storedPathOf` requires the
+copy to sit inside that snapshot's `files/` folder, and refuses a credential file either as the copy
+or as the file it stands for.
 
 **Absence is data.** Every probed-but-missing path is recorded in `level.absent` and rendered. Never
 "optimize" a probe away because it is usually missing; the point of the tool is showing what was
@@ -178,8 +185,10 @@ Three routes extend it without breaking it (#15, #92):
   every name in those tables is a scan manifest target, so a created file is one the next scan lists.
 - **`/api/delete` takes a scan entry**, like a write.
 - **`/api/restore` may put back a file the current scan did not find** only when it is in the snapshot
-  and `restorableWhenAbsent` places it inside a user or directory level's config folders. It is then
-  created, never written over, because the restore's own snapshot comes from the scan and cannot hold
+  and `restorableWhenAbsent` says the current scan would list it there: a probed path it recorded
+  absent, a manifest shape under a `.claude` folder or the config home, or a file in the
+  project-memory or plugins folders. That covers everything delete allows, so a delete is always
+  undoable (#97). It is then created, never written over, because the restore's own snapshot comes from the scan and cannot hold
   a file that appeared since.
 
 **Watch events carry paths and verbs, never content.** `/api/watch` streams from whole directories,

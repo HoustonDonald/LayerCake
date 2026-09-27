@@ -1987,3 +1987,8 @@ pre.code {
   justify-content: space-between;
   gap: 12px;
 }
+
+.snap-blocked {
+  color: var(--text-faint);
+  font-size: 11px;
+}

@@ -41,7 +41,7 @@ import {
   readSnapshotFile,
   restoreFiles,
 } from './snapshot.js';
-import { isSecret, describeError, writePolicy } from './safety.js';
+import { MAX_FILE_BYTES, isSecret, describeError, writePolicy } from './safety.js';
 import { hostGuard, injectToken, originGuard, requireToken } from './security.js';
 import { registerSessionRoutes } from './session-routes.js';
 import { listLaunches, registerIngestRoutes } from './ingest.js';
@@ -59,6 +59,9 @@ import {
 } from './paths.js';
 
 export const HOST = '127.0.0.1';
+
+const NOT_RESTORABLE =
+  'Not restorable under this scan: it would not list this path. Scan the project the snapshot came from.';
 
 // The state below is per process, not per app: one process serves one app.
 
@@ -438,9 +441,26 @@ export function createApp({ port, staticFiles }) {
     }
   });
 
+  // With a scanId, each row also says whether a restore under that scan would
+  // put it back, and why not, so the page can disable a row before the click
+  // rather than report it after (#96, #97). The restore route decides again.
   app.get('/api/snapshot/:id/compare', async (req, res) => {
     try {
-      return res.json(await compareSnapshot(req.params.id));
+      const result = await compareSnapshot(req.params.id);
+      const scan = scans.get(String(req.query.scanId || ''));
+      if (scan) {
+        for (const row of result.rows) {
+          const inScan = scan.allowed.has(allowKey(row.absPath));
+          if (!inScan && !(row.status === 'missing' && restorableWhenAbsent(scan.lineage, row.absPath))) {
+            row.restorable = false;
+            row.notRestorable = NOT_RESTORABLE;
+          } else if (row.status !== 'missing' && row.currentSize > MAX_FILE_BYTES) {
+            row.restorable = false;
+            row.notRestorable = 'The file on disk is over the 2 MB snapshot cap, so no snapshot can hold it and replacing it would have no way back.';
+          } else row.restorable = true;
+        }
+      }
+      return res.json(result);
     } catch (err) {
       return sendError(res, err);
     }
@@ -467,13 +487,27 @@ export function createApp({ port, staticFiles }) {
       // one exception is a file gone from disk (#92), which no later scan can
       // find: it may come back inside a level's config folders, and is then
       // created rather than written over.
+      //
+      // A path this scan cannot take is reported with the other failures
+      // rather than refusing the batch, so one such row no longer stops the
+      // rest being restored (#97). Only a batch with nothing restorable is
+      // refused outright.
+      const accepted = [];
       const absentPaths = [];
+      const refused = [];
       for (const p of paths.map(String)) {
-        if (scan.allowed.has(allowKey(p))) continue;
-        if (restorableWhenAbsent(scan.lineage, p)) absentPaths.push(p);
-        else requireEntry(String(scanId), p);
+        if (scan.allowed.has(allowKey(p))) accepted.push(p);
+        else if (restorableWhenAbsent(scan.lineage, p)) {
+          accepted.push(p);
+          absentPaths.push(p);
+        } else refused.push({ absPath: p, code: 'ENOTINSCAN', message: NOT_RESTORABLE });
       }
-      return res.json(await restoreFiles(String(id || ''), paths.map(String), scan.lineage, { absentPaths }));
+      if (!accepted.length) {
+        return res.status(403).json({ message: NOT_RESTORABLE, code: 'ENOTINSCAN', details: { refused } });
+      }
+      const result = await restoreFiles(String(id || ''), accepted, scan.lineage, { absentPaths });
+      result.failed.push(...refused);
+      return res.json(result);
     } catch (err) {
       return sendError(res, err);
     }

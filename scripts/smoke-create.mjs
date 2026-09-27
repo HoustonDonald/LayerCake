@@ -13,10 +13,16 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { projectSlug } from '../server/paths.js';
+
 const exists = (p) => fs.access(p).then(() => true, () => false);
 
-export async function runCreateChecks({ base, token, check, smokeDir, configHome }) {
+export async function runCreateChecks({ base, token, check, smokeDir, configHome, snaps }) {
   const H = { 'X-LayerCake-Token': token, 'Content-Type': 'application/json' };
+  const get = async (pathname) => {
+    const res = await fetch(`${base}${pathname}`, { headers: H });
+    return { status: res.status, text: await res.text() };
+  };
   const post = async (pathname, body) => {
     const res = await fetch(`${base}${pathname}`, { method: 'POST', headers: H, body: JSON.stringify(body) });
     const text = await res.text();
@@ -140,11 +146,26 @@ export async function runCreateChecks({ base, token, check, smokeDir, configHome
   // have no way back and must be refused.
   const big = path.join(proj, '.claude', 'rules', 'big.md');
   await fs.mkdir(path.dirname(big), { recursive: true });
-  await fs.writeFile(big, Buffer.alloc(2 * 1024 * 1024 + 1, 0x61));
+  await fs.writeFile(big, '# small, when the snapshot is taken\n');
+  lin = await scan(proj);
+  const smallSnap = await post('/api/snapshot', { scanId: lin.scanId, label: 'big.md while small' });
+  const BIG = 2 * 1024 * 1024 + 1;
+  await fs.writeFile(big, Buffer.alloc(BIG, 0x61));
   lin = await scan(proj);
   const bigDel = await post('/api/delete', { scanId: lin.scanId, path: big, expectedMtime: entriesOf(lin).find((e) => same(e.absPath, big))?.mtime });
   check('delete is refused when the snapshot could not hold the file, which stays',
     bigDel.status === 409 && bigDel.json?.code === 'ENOBACKUP' && (await exists(big)), `${bigDel.status} ${bigDel.json?.code}`);
+
+  // #96: the same holds for a restore or a save over it. Each used to replace
+  // the file although its undo snapshot had skipped it, leaving no copy.
+  const bigRestore = await post('/api/restore', { scanId: lin.scanId, id: smallSnap.json?.id, paths: [big] });
+  const bigSize = async () => (await fs.stat(big)).size;
+  check('a restore over a file the undo snapshot cannot hold is refused for that file, which stays',
+    bigRestore.status === 200 && bigRestore.json?.failed?.[0]?.code === 'ENOBACKUP' && (await bigSize()) === BIG,
+    `${bigRestore.status} ${JSON.stringify(bigRestore.json?.failed)} size ${await bigSize()}`);
+  const bigWrite = await post('/api/write', { scanId: lin.scanId, path: big, content: 'x' });
+  check('a save over a file the undo snapshot cannot hold is refused, and it stays',
+    bigWrite.status === 409 && bigWrite.json?.code === 'ENOBACKUP' && (await bigSize()) === BIG, `${bigWrite.status} ${bigWrite.json?.code}`);
 
   // --- #92: restore a file that is gone, after a scan that no longer lists it
   const otherScan = await scan(other);
@@ -173,4 +194,82 @@ export async function runCreateChecks({ base, token, check, smokeDir, configHome
   lin = await scan(proj);
   const userDel = await post('/api/delete', { scanId: lin.scanId, path: userAgent, expectedMtime: entriesOf(lin).find((e) => same(e.absPath, userAgent))?.mtime });
   check('a user-level file is deleted the same way', userDel.status === 200 && !(await exists(userAgent)), `${userDel.status}`);
+
+  // --- #97: every file delete accepts can come back, not only .claude ones --
+  // A project-memory note and a plugin file, both in the fixture's config
+  // home; each used to delete fine and then be refused by restore.
+  const note = path.join(configHome, 'projects', projectSlug(proj), 'memory', 'smoke-note.md');
+  const plug = path.join(configHome, 'plugins', 'cache', 'smoke-mkt', 'smoke-plugin', '1.0.0', 'agents', 'plug-agent.md');
+  for (const [label, file, body] of [['a project-memory note', note, '# note\n'], ['a plugin file', plug, '---\nname: plug-agent\n---\n']]) {
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, body);
+    lin = await scan(proj);
+    const d = await post('/api/delete', { scanId: lin.scanId, path: file, expectedMtime: entriesOf(lin).find((e) => same(e.absPath, file))?.mtime });
+    lin = await scan(proj);
+    const r = await post('/api/restore', { scanId: lin.scanId, id: d.json?.undoSnapshotId, paths: [file] });
+    check(`${label} that was deleted can be restored`,
+      d.status === 200 && r.status === 200 && r.json?.restored?.length === 1 && (await fs.readFile(file, 'utf8').catch(() => '')) === body,
+      `${d.status} ${r.status} ${JSON.stringify(r.json?.failed || r.json)}`);
+  }
+
+  // One row that cannot be restored under this scan no longer blocks the rest.
+  const homeMemo = path.join(configHome, 'CLAUDE.md');
+  const otherLin = await scan(other);
+  const mixed = await post('/api/restore', { scanId: otherLin.scanId, id: del2.json?.undoSnapshotId, paths: [homeMemo, agentPath] });
+  check('a restore batch restores what this scan can take and reports the rest',
+    mixed.status === 200 && mixed.json?.restored?.some((p) => same(p, homeMemo)) &&
+      mixed.json?.failed?.some((x) => same(x.absPath, agentPath) && x.code === 'ENOTINSCAN'),
+    `${mixed.status} ${JSON.stringify(mixed.json)}`);
+  const cmp = await get(`/api/snapshot/${encodeURIComponent(del2.json?.undoSnapshotId)}/compare?scanId=${encodeURIComponent(otherLin.scanId)}`);
+  const rows = cmp.status === 200 ? JSON.parse(cmp.text).rows : [];
+  check('compare says, per row, whether this scan could restore it',
+    rows.find((r) => same(r.absPath, agentPath))?.restorable === false && rows.find((r) => same(r.absPath, homeMemo))?.restorable === true,
+    `${cmp.status}`);
+
+  // The other half of #97: a file the scan probes by name, such as ~/CLAUDE.md
+  // outside the config home, restores because the rescan records it absent.
+  // End to end that means deleting the real ~/CLAUDE.md, which smoke never
+  // touches, so this one asks the fence directly, over a synthetic lineage.
+  {
+    const { restorableWhenAbsent } = await import('../server/writefile.js');
+    const fakeHome = path.join(smokeDir, 'fake-home');
+    const lineage = {
+      levels: [{ kind: 'user', dir: path.join(fakeHome, '.claude'), entries: [], absent: [{ absPath: path.join(fakeHome, 'CLAUDE.md') }] }],
+    };
+    check('a probed file the scan recorded absent is restorable; a neighbour it never probed is not',
+      restorableWhenAbsent(lineage, path.join(fakeHome, 'CLAUDE.md')) === true &&
+        restorableWhenAbsent(lineage, path.join(fakeHome, 'OTHER.md')) === false);
+  }
+
+  // --- #98: a skill named like runtime state is still a skill ----------------
+  lin = await scan(proj);
+  const debugSkill = await post('/api/create', { scanId: lin.scanId, createId: option(lin, 'proj', ':tree:skills')?.id, name: 'debug' });
+  lin = await scan(proj);
+  const debugPath = path.join(proj, '.claude', 'skills', 'debug', 'SKILL.md');
+  check('a skill named debug is created and the next scan lists it as a skill',
+    debugSkill.status === 200 && entriesOf(lin).some((e) => same(e.absPath, debugPath) && e.category === 'skill'),
+    `${debugSkill.status}`);
+
+  // --- #101: a manifest edited on disk cannot reach outside its snapshot -----
+  await fs.writeFile(path.join(smokeDir, 'tamper-secret.txt'), 'SMOKE-TAMPER-SENTINEL\n');
+  const t = await post('/api/snapshot', { scanId: lin.scanId, label: 'to be tampered with' });
+  const manifestPath = path.join(snaps, t.json.id, 'manifest.json');
+  const m = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+  const projMemo = path.join(proj, 'CLAUDE.md');
+  m.files.find((x) => same(x.absPath, projMemo)).stored = '../../../tamper-secret.txt';
+  await fs.mkdir(path.join(snaps, t.json.id, 'files', 'x'), { recursive: true });
+  await fs.writeFile(path.join(snaps, t.json.id, 'files', 'x', '.credentials.json'), 'SMOKE-TAMPER-SENTINEL\n');
+  m.files.find((x) => same(x.absPath, homeMemo)).stored = 'x/.credentials.json';
+  await fs.writeFile(manifestPath, JSON.stringify(m, null, 2));
+  const readOut = await get(`/api/snapshot/${t.json.id}/file?path=${encodeURIComponent(projMemo)}`);
+  const readCred = await get(`/api/snapshot/${t.json.id}/file?path=${encodeURIComponent(homeMemo)}`);
+  check('a tampered stored path cannot read a file outside the snapshot, nor a credential file inside it',
+    readOut.status === 400 && readCred.status === 403 && !readOut.text.includes('SMOKE-TAMPER') && !readCred.text.includes('SMOKE-TAMPER'),
+    `${readOut.status} ${readCred.status}`);
+  const memoBefore = await fs.readFile(projMemo, 'utf8');
+  const tamperRestore = await post('/api/restore', { scanId: lin.scanId, id: t.json.id, paths: [projMemo, homeMemo] });
+  check('restoring from a tampered manifest writes nothing from outside it',
+    tamperRestore.status === 200 && tamperRestore.json?.failed?.length === 2 && (await fs.readFile(projMemo, 'utf8')) === memoBefore &&
+      !(await fs.readFile(homeMemo, 'utf8')).includes('SMOKE-TAMPER'),
+    `${tamperRestore.status} ${JSON.stringify(tamperRestore.json?.failed?.map((x) => x.code))}`);
 }

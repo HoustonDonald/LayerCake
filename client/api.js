@@ -84,8 +84,10 @@ export function getSnapshot(id) {
   return request(`/api/snapshot/${encodeURIComponent(id)}`);
 }
 
-export function compareSnapshot(id) {
-  return request(`/api/snapshot/${encodeURIComponent(id)}/compare`);
+/** With a scanId, each row also says whether a restore under that scan would put it back. */
+export function compareSnapshot(id, scanId) {
+  const q = scanId ? `?scanId=${encodeURIComponent(scanId)}` : '';
+  return request(`/api/snapshot/${encodeURIComponent(id)}/compare${q}`);
 }
 
 export function getSnapshotFile(id, filePath) {
