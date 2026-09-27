@@ -17,7 +17,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { TEMP_PREFIX, samePathKey, snapshotRoot } from './paths.js';
-import { MAX_FILE_BYTES, describeError, isSecret, isSensitive } from './safety.js';
+import { FILE_TIMEOUT_MS, MAX_FILE_BYTES, describeError, isSecret, isSensitive } from './safety.js';
+import { shareGatedCall } from './sharegate.js';
 
 /** Manifest schema version. Bumped when the on-disk shape changes. */
 const MANIFEST_VERSION = 1;
@@ -92,7 +93,8 @@ async function renameRetrying(from, to, before = async () => {}) {
  */
 async function assertStillHeld(absPath, expectSha256) {
   if (!expectSha256) return;
-  if ((await sha256(absPath)) !== expectSha256) {
+  // Gated on a share (#66): a dead one fails here, before any write is made.
+  if ((await shareGatedCall(absPath, () => sha256(absPath), absPath, FILE_TIMEOUT_MS)) !== expectSha256) {
     throw fail(
       'The file changed after the snapshot was taken, so the snapshot no longer holds what would be replaced. Nothing was changed; try again.',
       409,
@@ -252,7 +254,9 @@ export async function createSnapshot(lineage, { label = '' } = {}) {
   for (const target of collectTargets(lineage)) {
     let st;
     try {
-      st = await fs.stat(target.absPath);
+      // Reads of a scanned file are gated on a share (#66); the copy lands in
+      // the local snapshot store.
+      st = await shareGatedCall(target.absPath, () => fs.stat(target.absPath));
     } catch (err) {
       errors.push({ absPath: target.absPath, ...describeError(err) });
       continue;
@@ -272,7 +276,7 @@ export async function createSnapshot(lineage, { label = '' } = {}) {
       await fs.mkdir(path.dirname(dest), { recursive: true });
       // copyFile rather than a utf8 read/write round trip: hooks may be any
       // extension, including a binary, and a round trip would corrupt one.
-      await fs.copyFile(target.absPath, dest);
+      await shareGatedCall(target.absPath, () => fs.copyFile(target.absPath, dest), target.absPath, FILE_TIMEOUT_MS);
       files.push({
         absPath: target.absPath,
         stored: stored.split(path.sep).join('/'),
@@ -414,7 +418,7 @@ function storedPathOf(id, entry) {
 /** Whether something is at `p`. Only "not there" says no; any other error counts as present. */
 async function presentOnDisk(p) {
   try {
-    await fs.stat(p);
+    await shareGatedCall(p, () => fs.stat(p));
     return true;
   } catch (err) {
     return err.code !== 'ENOENT';
@@ -430,8 +434,8 @@ export async function compareSnapshot(id) {
   const rows = [];
   for (const entry of manifest.files) {
     try {
-      const { size } = await fs.stat(entry.absPath);
-      const current = await sha256(entry.absPath);
+      const { size } = await shareGatedCall(entry.absPath, () => fs.stat(entry.absPath));
+      const current = await shareGatedCall(entry.absPath, () => sha256(entry.absPath), entry.absPath, FILE_TIMEOUT_MS);
       rows.push({ ...entry, status: current === entry.sha256 ? 'same' : 'changed', currentSha256: current, currentSize: size });
     } catch (err) {
       const described = describeError(err);

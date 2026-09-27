@@ -35,10 +35,18 @@
  * alongside, stranded one more thread, so any fixed size runs out. With the
  * gate a dead share costs the scan and the watcher one thread between them.
  *
- * The key is the share, not the server, so a dead server with several of its
- * shares in use holds one thread per share. Local paths are not gated: they go
- * straight to `withTimeout`. A mapped drive letter pointing at a share is not
- * recognised as a network path (`isUncPath`), so it keeps the old behaviour.
+ * The key is the SERVER, not the share (#68): a dead server with several of
+ * its shares in use held one thread per share, and the pool has four. A mapped
+ * drive letter is keyed by the server behind it once the scan has resolved it.
+ * Local paths are not gated: they go straight to `withTimeout`.
+ *
+ * ONE BUDGET PER CALL, FROM THE MOMENT IT IS QUEUED (#69). A call that waited
+ * its turn behind slow calls used to get its own full timeout after that, so a
+ * caller could wait several timeouts in all. Now a call whose turn comes after
+ * its budget has run out is not made at all (ETIMEDOUT, and nothing stranded),
+ * and one that is made gets what is left, but at least MIN_CALL_MS, since a
+ * call given almost no time would time out, strand a thread and mark a merely
+ * slow share as stuck.
  */
 
 import path from 'node:path';
@@ -62,19 +70,31 @@ export const SHARE_STUCK = 'ESHARESTUCK';
  * filesystem, rather than asked again: a scan's own calls on a drive it has
  * not classified yet go ungated, and every call after that is gated.
  */
-const networkRoots = new Set();
+/** drive root key -> the server key it reaches, or the root itself when unknown. */
+const networkRoots = new Map();
 
-export function markNetworkRoot(root) {
-  networkRoots.add(samePathKey(path.parse(path.resolve(root)).root));
+/** `\\server` of a UNC path, folded, or null for anything else. */
+function serverKeyOf(p) {
+  const m = /^[\\/]{2}([^\\/?.][^\\/]*)/.exec(String(p));
+  return m ? `\\\\${m[1].toLowerCase()}` : null;
+}
+
+/**
+ * Records a drive root the scan found mapped to a share. `share` is the UNC
+ * path it resolved to, when known, so the drive shares its server's gate.
+ */
+export function markNetworkRoot(root, share = null) {
+  const key = samePathKey(path.parse(path.resolve(root)).root);
+  networkRoots.set(key, serverKeyOf(share) || key);
 }
 
 export function shareKeyOf(p) {
   const root = samePathKey(path.parse(path.resolve(p)).root);
-  if (isUncPath(p)) return root;
+  if (isUncPath(p)) return serverKeyOf(p) || root;
   // Found after the #13/#57 and #55 merges: without this a mapped drive had no
   // key, so every mapped drive fell into one null group in the watcher and
   // none of their calls were gated.
-  return networkRoots.has(root) ? root : null;
+  return networkRoots.get(root) || null;
 }
 
 /** share key -> the set of its timed-out calls that have not settled yet. */
@@ -115,6 +135,15 @@ function onTurn(shareKey, work) {
   return turn;
 }
 
+/** The least a call that is actually made gets, whatever its wait (#69). */
+const MIN_CALL_MS = 500;
+
+function queuedTooLong(label) {
+  const err = new Error(`Timed out waiting for its turn on a slow share: ${label}`);
+  err.code = 'ETIMEDOUT';
+  return err;
+}
+
 function stuckError(label) {
   const err = new Error(`Not tried, an earlier call to its share has not returned: ${label}`);
   err.code = SHARE_STUCK;
@@ -126,24 +155,40 @@ function stuckError(label) {
  * is on a share.
  *
  * `start` is a function rather than a promise so that a call the gate refuses
- * is never made at all: a started call is already a thread. The time spent
- * waiting for a turn is not counted against the timeout; it is bounded by the
- * calls ahead in the queue, each of which is.
+ * is never made at all: a started call is already a thread. `ms` is the whole
+ * budget, counted from now, the wait for a turn included (#69).
  *
  * Rejects with ETIMEDOUT when this call timed out (the share is then stuck
- * until the call comes back), and with ESHARESTUCK when it was not tried.
+ * until the call comes back) or its turn came too late to try it, and with
+ * ESHARESTUCK when it was not tried.
  */
-export function timedFsCall(target, start, label = target) {
+export function timedFsCall(target, start, label = target, ms = DIR_TIMEOUT_MS) {
   const shareKey = shareKeyOf(target);
-  if (shareKey === null) return withTimeout(start(), DIR_TIMEOUT_MS, label);
+  if (shareKey === null) return withTimeout(start(), ms, label);
+  const deadline = Date.now() + ms;
   return onTurn(shareKey, () => {
     if (isShareStuck(shareKey)) return Promise.reject(stuckError(label));
+    const left = deadline - Date.now();
+    if (left <= 0) return Promise.reject(queuedTooLong(label));
     const raw = start();
     // Marked stuck before this rejection settles the turn, so the next call in
     // the queue already sees it.
-    return withTimeout(raw, DIR_TIMEOUT_MS, label).catch((err) => {
+    return withTimeout(raw, Math.max(left, MIN_CALL_MS), label).catch((err) => {
       if (err?.code === 'ETIMEDOUT') rememberStuck(shareKey, raw);
       throw err;
     });
   });
+}
+
+/**
+ * A call gated only when `target` is on a share, and made as-is on a local
+ * disk (#66). For reading a file whole and for the write path: locally such a
+ * call is not bounded by a timeout, because an antivirus scan on close can
+ * legitimately take longer and abandoning a write reports an error for a
+ * write that then lands. On a share the same call could hang for 21 s and
+ * strand a threadpool thread, so there it takes its turn and its budget like
+ * every other share call.
+ */
+export function shareGatedCall(target, start, label = target, ms = DIR_TIMEOUT_MS) {
+  return shareKeyOf(target) === null ? start() : timedFsCall(target, start, label, ms);
 }

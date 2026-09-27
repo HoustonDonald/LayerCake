@@ -6,7 +6,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import yaml from 'js-yaml';
 
-import { MAX_FILE_BYTES, isSecret, isSensitive, describeError, withTimeout, DIR_TIMEOUT_MS } from './safety.js';
+import { FILE_TIMEOUT_MS, MAX_FILE_BYTES, isSecret, isSensitive, describeError } from './safety.js';
+import { timedFsCall } from './sharegate.js';
 
 const MARKDOWN_EXTS = new Set(['.md', '.markdown', '.mdx']);
 const JSON_EXTS = new Set(['.json', '.jsonc']);
@@ -69,7 +70,9 @@ export async function readForDisplay(absPath) {
 
   let st;
   try {
-    st = await withTimeout(fs.stat(absPath), DIR_TIMEOUT_MS, absPath);
+    // Through the share gate, like the scan (#66): a click on a file whose
+    // share has died costs a refusal, not a stranded thread per click.
+    st = await timedFsCall(absPath, () => fs.stat(absPath));
   } catch (err) {
     return { ...base, error: describeError(err) };
   }
@@ -81,16 +84,23 @@ export async function readForDisplay(absPath) {
   let content;
   try {
     if (truncated) {
-      const handle = await fs.open(absPath, 'r');
-      try {
-        const buf = Buffer.alloc(MAX_FILE_BYTES);
-        const { bytesRead } = await handle.read(buf, 0, MAX_FILE_BYTES, 0);
-        content = buf.subarray(0, bytesRead).toString('utf8');
-      } finally {
-        await handle.close();
-      }
+      content = await timedFsCall(
+        absPath,
+        async () => {
+          const handle = await fs.open(absPath, 'r');
+          try {
+            const buf = Buffer.alloc(MAX_FILE_BYTES);
+            const { bytesRead } = await handle.read(buf, 0, MAX_FILE_BYTES, 0);
+            return buf.subarray(0, bytesRead).toString('utf8');
+          } finally {
+            await handle.close();
+          }
+        },
+        absPath,
+        FILE_TIMEOUT_MS
+      );
     } else {
-      content = await withTimeout(fs.readFile(absPath, 'utf8'), DIR_TIMEOUT_MS, absPath);
+      content = await timedFsCall(absPath, () => fs.readFile(absPath, 'utf8'), absPath, FILE_TIMEOUT_MS);
     }
   } catch (err) {
     return { ...base, size: st.size, error: describeError(err) };

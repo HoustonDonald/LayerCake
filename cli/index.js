@@ -20,6 +20,7 @@ import { parseArgs } from 'node:util';
 
 import { flatten } from '../server/flatten.js';
 import { snapshotRoot } from '../server/paths.js';
+import { timedFsCall } from '../server/sharegate.js';
 import { resolveLineage } from '../server/scan.js';
 import {
   compareSnapshot,
@@ -185,7 +186,8 @@ async function targetDir(positional) {
   const dir = path.resolve(positional ?? process.cwd());
   let st;
   try {
-    st = await fs.stat(dir);
+    // Gated like the scan (#66): a dead share answers in DIR_TIMEOUT_MS, not 21 s.
+    st = await timedFsCall(dir, () => fs.stat(dir));
   } catch (e) {
     throw new CliError(`Cannot read directory: ${dir} (${e.code || e.message})`);
   }

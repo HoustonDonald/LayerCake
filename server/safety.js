@@ -217,6 +217,13 @@ export const MAX_WRITE_BYTES = MAX_FILE_BYTES;
 /** Per-directory filesystem timeout. Keeps a dead UNC share from hanging a scan. */
 export const DIR_TIMEOUT_MS = Number(process.env.CLAUDE_EXPLORER_DIR_TIMEOUT_MS || 3000);
 
+/**
+ * Budget for reading a file whole (a copy, a hash, a read of up to 2 MB). Longer
+ * than DIR_TIMEOUT_MS because over a slow share the transfer itself takes time;
+ * still bounded, because a dead share otherwise hangs for 21 s per call (#66).
+ */
+export const FILE_TIMEOUT_MS = 15000;
+
 export function isSecret(filePath) {
   return SECRET_BASENAMES.has(path.basename(filePath).toLowerCase());
 }

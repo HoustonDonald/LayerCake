@@ -347,6 +347,15 @@ Before that, one scan of a project four folders deep on a dead share stranded al
 reach a share, never a bare `withTimeout`. Raising `UV_THREADPOOL_SIZE` instead only moves the cliff:
 every further level, and every scan running alongside, strands one more thread.
 
+The gate is keyed by SERVER (`\\server`), not share, since a dead server with several shares in use
+held one thread per share (#68). A mapped drive shares its server's key once the scan has resolved
+it. Each call has one budget counted from when it is queued, and a call whose turn comes after its
+budget is not made at all (#69). The file reader, the CLI's directory check, and the READS before
+every write (the snapshot's stat and copy, the hash re-check, the conflict stat) go through it too
+(#66), via `shareGatedCall`: gated on a share, made as-is locally. The writes themselves are not
+gated. A timed-out write is abandoned, not cancelled, and could land after being reported as failed;
+the gated reads before it are what make a dead share fail before any write starts.
+
 A drive letter mapped to a share is polled the same way (#57), and the scan marks its root as a
 share for the gate (`markNetworkRoot`), so its calls are gated too once it is known; the first
 scan's own calls on it go ungated, because the drive is classified at the end. The scan detects it with Node's native
@@ -400,6 +409,10 @@ partially. A truncated file restored is silent data loss.
   arrange execution indirectly (`NODE_OPTIONS`, `PATH`) but is edited routinely. It stops an
   absent-minded edit, not a determined one. A restore puts a hook back without it: it is the
   undo of an earlier state, not a new edit.
+- **On a dead share the CLI answers in 3 s but its process lives about 21 s.** Windows does not finish
+  a process while one of its threads is inside an SMB connect, and `process.exit` cannot shorten
+  that (measured: exit called at 1 s, the process ended at 21.2 s). The message is on screen at
+  3.2 s, not 21.3 s as before #66; the prompt returns when Windows gives up.
 - **Paths are fenced lexically; junctions and symlinks are followed.** If `.claude/agents` (or
   `.claude` itself) is a junction, a create or save lands in its target, the way Claude Code reads
   it (#102). Whoever can plant a junction in a config folder can already write there.

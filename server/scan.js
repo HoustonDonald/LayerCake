@@ -104,7 +104,7 @@ async function networkDrive(root) {
   }
   if (found) {
     networkDriveCache.set(letter, found);
-    markNetworkRoot(root);
+    markNetworkRoot(root, found.share);
   }
   return found;
 }

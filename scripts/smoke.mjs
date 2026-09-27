@@ -943,7 +943,7 @@ try {
   // measured version, a real dead share through the HTTP API, is in the commit
   // that fixed #55.
   if (process.platform !== 'win32') {
-    skip('one call at a time per network share (5 checks)', 'UNC paths are a Windows form');
+    skip('one call at a time per network server (9 checks)', 'UNC paths are a Windows form');
   } else {
     const { timedFsCall } = await import('../server/sharegate.js');
     const { resolveLineage } = await import('../server/scan.js');
@@ -973,10 +973,46 @@ try {
         shareLevels.every((l) => l.status === 'error' && l.errors.length > 0 && l.errors.every((e) => e.code === 'ESHARESTUCK')),
       JSON.stringify(shareLevels.map((l) => l.errors.map((e) => e.code)))
     );
+    // #68: the gate is per SERVER. Another share on the same server waits its
+    // turn behind the stranded call; another server does not.
     check(
-      'positive control: another share is not held up by it',
-      (await timedFsCall('\\\\127.0.0.1\\layercake-smoke-other\\x', async () => 'answered').catch((e) => e.code)) === 'answered'
+      'another share on the same server is refused while the call is stranded',
+      (await timedFsCall('\\\\127.0.0.1\\layercake-smoke-other\\x', async () => 'answered').catch((e) => e.code)) === 'ESHARESTUCK'
     );
+    check(
+      'positive control: another server is not held up by it',
+      (await timedFsCall('\\\\localhost\\layercake-smoke-other\\x', async () => 'answered').catch((e) => e.code)) === 'answered'
+    );
+
+    // #66: the file reader and the snapshot go through the gate too, so a file
+    // on the stranded share is refused at once instead of costing a thread and
+    // 21 s per click, and a snapshot records it as an error rather than hanging.
+    {
+      const { readForDisplay } = await import('../server/readfile.js');
+      const { createSnapshot } = await import('../server/snapshot.js');
+      const onStuck = `${stuckShare}\\a\\CLAUDE.md`;
+      let t0 = Date.now();
+      const read = await readForDisplay(onStuck);
+      const readMs = Date.now() - t0;
+      const savedDir = process.env.LAYERCAKE_SNAPSHOT_DIR;
+      process.env.LAYERCAKE_SNAPSHOT_DIR = path.join(smokeDir, 'gate-snaps');
+      t0 = Date.now();
+      let snap;
+      try {
+        snap = await createSnapshot({
+          projectDir: stuckShare,
+          levels: [{ kind: 'directory', label: 'stuck', dir: `${stuckShare}\\a`, entries: [{ absPath: onStuck, type: 'file', category: 'memory' }] }],
+        });
+      } finally {
+        if (savedDir === undefined) delete process.env.LAYERCAKE_SNAPSHOT_DIR;
+        else process.env.LAYERCAKE_SNAPSHOT_DIR = savedDir;
+      }
+      const snapMs = Date.now() - t0;
+      check('a file on a stranded share is refused at once by the reader and the snapshot',
+        read.error?.code === 'ESHARESTUCK' && readMs < 1000 && snap.files.length === 0 &&
+          snap.errors.some((e) => e.code === 'ESHARESTUCK') && snapMs < 1000,
+        JSON.stringify({ read: read.error?.code, readMs, snap: snap.errors.map((e) => e.code), snapMs }));
+    }
 
     answer();
     await new Promise((r) => setTimeout(r, 0));
@@ -985,6 +1021,22 @@ try {
       return 'answered';
     }).catch((e) => e.code);
     check('once the stranded call returns, the share is tried again', again === 'answered' && started === 2, `${again}, ${started} started`);
+
+    // #69: one budget per call, counted from when it was queued. A call that
+    // waited behind a slow one used to get a fresh full timeout after, so it
+    // could take two timeouts in all.
+    {
+      const slowServer = `\\\\127.0.0.2\\layercake-smoke-slow-${crypto.randomBytes(3).toString('hex')}`;
+      let releaseB = null;
+      const a = timedFsCall(`${slowServer}\\a`, () => new Promise((r) => setTimeout(() => r('answered'), 2500)));
+      const queuedAt = Date.now();
+      const b = timedFsCall(`${slowServer}\\b`, () => new Promise((r) => (releaseB = r))).then(() => 'answered', (e) => e.code);
+      const [aCode, bCode] = [await a.catch((e) => e.code), await b];
+      const bMs = Date.now() - queuedAt;
+      releaseB?.('late');
+      check('a call queued behind a slow one times out within its own budget, not after a second one',
+        aCode === 'answered' && bCode === 'ETIMEDOUT' && bMs < 4200, `${aCode} ${bCode} ${bMs} ms`);
+    }
   }
 
   const changesIn = (stream) =>

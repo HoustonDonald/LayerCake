@@ -25,6 +25,7 @@ import {
 } from './safety.js';
 import { CLAUDE_DIR_FILE_TARGETS, CLAUDE_DIR_TREES, DIR_FILE_TARGETS, samePathKey } from './paths.js';
 import { readForDisplay, splitFrontmatter } from './readfile.js';
+import { shareGatedCall } from './sharegate.js';
 
 function refuse(message, code, status = 403) {
   const err = new Error(message);
@@ -163,7 +164,7 @@ function assertHeld(snapshot, absPath, verb) {
  */
 async function assertUnchanged(absPath, expectedMtime) {
   if (!expectedMtime) return;
-  const st = await fs.stat(absPath);
+  const st = await shareGatedCall(absPath, () => fs.stat(absPath));
   if (st.mtime.toISOString() !== expectedMtime) {
     throw refuse(
       'The file changed on disk since it was opened here. Reload it and reapply the edit.',
@@ -201,7 +202,7 @@ export async function editFile({
 
   // Replaced only while it still matches what the snapshot copied (#100).
   await atomicWrite(entry.absPath, Buffer.from(content, 'utf8'), { expectSha256: held.sha256 });
-  const st = await fs.stat(entry.absPath);
+  const st = await shareGatedCall(entry.absPath, () => fs.stat(entry.absPath));
 
   return {
     absPath: entry.absPath,
@@ -379,7 +380,7 @@ export async function createFile({ option, name, ext, acknowledgeExecutable = fa
     }
     throw err;
   }
-  const st = await fs.stat(absPath);
+  const st = await shareGatedCall(absPath, () => fs.stat(absPath));
   return {
     absPath,
     category: option.category,
@@ -411,7 +412,7 @@ export async function deleteFile({ entry, lineage, expectedMtime = null }) {
   const held = assertHeld(undo, entry.absPath, 'Not deleted');
   // Changed between the snapshot and now: the snapshot would restore an
   // older version than the one being deleted.
-  const st = await fs.stat(entry.absPath);
+  const st = await shareGatedCall(entry.absPath, () => fs.stat(entry.absPath));
   if (st.mtime.toISOString() !== held.mtime) {
     throw refuse('The file changed while it was being snapshotted. Nothing was deleted; try again.', 'ECONFLICT', 409);
   }
