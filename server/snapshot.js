@@ -18,7 +18,7 @@ import path from 'node:path';
 
 import { TEMP_PREFIX, samePathKey, snapshotRoot } from './paths.js';
 import { FILE_TIMEOUT_MS, MAX_FILE_BYTES, describeError, isSecret, isSensitive, rewrittenByClaudeCode } from './safety.js';
-import { shareGatedCall } from './sharegate.js';
+import { shareGatedCall, shareKeyOf } from './sharegate.js';
 
 /** Manifest schema version. Bumped when the on-disk shape changes. */
 const MANIFEST_VERSION = 1;
@@ -235,56 +235,44 @@ function collectTargets(lineage) {
 }
 
 /**
- * Captures a snapshot of everything in a lineage.
- *
- * Oversized files are SKIPPED and recorded, never truncated. A truncated file in
- * a backup is worse than an absent one: restoring it would silently destroy the
- * tail of a config, and nothing downstream would report it.
+ * Copies one file into the snapshot. Never throws: the outcome is a manifest
+ * row for `files`, `skipped` or `errors`.
  */
-export async function createSnapshot(lineage, { label = '' } = {}) {
-  const id = newSnapshotId();
-  const root = path.join(snapshotRoot(), id);
-  const filesRoot = path.join(root, FILES_DIR);
-  await fs.mkdir(filesRoot, { recursive: true });
-
-  const files = [];
-  const errors = [];
-  const skipped = [];
-
-  for (const target of collectTargets(lineage)) {
-    let st;
-    try {
-      // Reads of a scanned file are gated on a share (#66); the copy lands in
-      // the local snapshot store.
-      st = await shareGatedCall(target.absPath, () => fs.stat(target.absPath));
-    } catch (err) {
-      errors.push({ absPath: target.absPath, ...describeError(err) });
-      continue;
-    }
-    if (st.size > MAX_FILE_BYTES) {
-      skipped.push({
+async function captureOne(target, filesRoot) {
+  let st;
+  try {
+    // Reads of a scanned file are gated on a share (#66); the copy lands in
+    // the local snapshot store.
+    st = await shareGatedCall(target.absPath, () => fs.stat(target.absPath));
+  } catch (err) {
+    return { errors: { absPath: target.absPath, ...describeError(err) } };
+  }
+  if (st.size > MAX_FILE_BYTES) {
+    return {
+      skipped: {
         absPath: target.absPath,
         size: st.size,
         reason: `Larger than the ${MAX_FILE_BYTES} byte cap. Skipped rather than truncated, because a truncated backup restores as data loss.`,
-      });
-      continue;
-    }
+      },
+    };
+  }
 
+  try {
     const stored = mirrorPath(target.absPath);
     const dest = path.join(filesRoot, stored);
-    try {
-      await fs.mkdir(path.dirname(dest), { recursive: true });
-      // copyFile rather than a utf8 read/write round trip: hooks may be any
-      // extension, including a binary, and a round trip would corrupt one.
-      // Retried like a rename while another program holds the file (#107): an
-      // antivirus or backup tool's brief exclusive lock used to fail the
-      // snapshot, and so the save, delete or restore waiting on it. `dest`
-      // stands in for the read-only check, which is about the target of a write.
-      await retryingWhileLocked(
-        () => shareGatedCall(target.absPath, () => fs.copyFile(target.absPath, dest), target.absPath, FILE_TIMEOUT_MS),
-        dest
-      );
-      files.push({
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    // copyFile rather than a utf8 read/write round trip: hooks may be any
+    // extension, including a binary, and a round trip would corrupt one.
+    // Retried like a rename while another program holds the file (#107): an
+    // antivirus or backup tool's brief exclusive lock used to fail the
+    // snapshot, and so the save, delete or restore waiting on it. `dest`
+    // stands in for the read-only check, which is about the target of a write.
+    await retryingWhileLocked(
+      () => shareGatedCall(target.absPath, () => fs.copyFile(target.absPath, dest), target.absPath, FILE_TIMEOUT_MS),
+      dest
+    );
+    return {
+      files: {
         absPath: target.absPath,
         stored: stored.split(path.sep).join('/'),
         category: target.category,
@@ -303,10 +291,66 @@ export async function createSnapshot(lineage, { label = '' } = {}) {
         // appears the moment someone copies it to a share, a USB stick or
         // another machine, which is exactly when a warning is worth having.
         sensitive: isSensitive(target.absPath),
-      });
-    } catch (err) {
-      errors.push({ absPath: target.absPath, ...describeError(err) });
-    }
+      },
+    };
+  } catch (err) {
+    return { errors: { absPath: target.absPath, ...describeError(err) } };
+  }
+}
+
+/**
+ * Local files are copied this many at a time (#137). Every save, delete and
+ * restore snapshots the whole lineage first, and one file at a time that was
+ * 1.4 to 2.6 s per save on a project with plugins, mostly per-file latency
+ * (antivirus on each open) rather than bytes. The cost is up to this many
+ * open handles.
+ */
+const LOCAL_COPIES_AT_ONCE = 8;
+
+/** Runs `work(i)` for each index, at most `limit` at a time. */
+async function inLanes(indices, limit, work) {
+  let next = 0;
+  const lane = async () => {
+    while (next < indices.length) await work(indices[next++]);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, indices.length) }, lane));
+}
+
+/**
+ * Captures a snapshot of everything in a lineage.
+ *
+ * Oversized files are SKIPPED and recorded, never truncated. A truncated file in
+ * a backup is worse than an absent one: restoring it would silently destroy the
+ * tail of a config, and nothing downstream would report it.
+ */
+export async function createSnapshot(lineage, { label = '' } = {}) {
+  const id = newSnapshotId();
+  const root = path.join(snapshotRoot(), id);
+  const filesRoot = path.join(root, FILES_DIR);
+  await fs.mkdir(filesRoot, { recursive: true });
+
+  const targets = collectTargets(lineage);
+  const outcomes = new Array(targets.length);
+  const local = [];
+  const onShare = [];
+  targets.forEach((t, i) => (shareKeyOf(t.absPath) === null ? local : onShare).push(i));
+  const capture = async (i) => {
+    outcomes[i] = await captureOne(targets[i], filesRoot);
+  };
+  // A file on a share is still copied one at a time, beside the local ones.
+  // The share gate would serialise them anyway, but it counts each call's
+  // budget from when it is QUEUED (#69): eight queued together on a slow share
+  // would leave the last waiting behind seven, and time out without being tried.
+  await Promise.all([inLanes(local, LOCAL_COPIES_AT_ONCE, capture), inLanes(onShare, 1, capture)]);
+
+  // Rows in lineage order, as a one-at-a-time capture produced them.
+  const files = [];
+  const errors = [];
+  const skipped = [];
+  for (const outcome of outcomes) {
+    if (outcome.files) files.push(outcome.files);
+    else if (outcome.skipped) skipped.push(outcome.skipped);
+    else errors.push(outcome.errors);
   }
 
   const manifest = {
