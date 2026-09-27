@@ -23,6 +23,29 @@ function levelTitle(level) {
 }
 
 /**
+ * One source reached by several routes, listed once.
+ *
+ * A project under the home folder makes the walk pass through `~/.claude` a
+ * second time, so every file there is sighted twice. Each view used to keep
+ * both sightings and leave the collapsing to its consumers; the CLI collapsed
+ * them and the page did not, so the page showed an agent shadowing itself
+ * (#117), the same bug CLAUDE.md records three times over. Collapsing here
+ * leaves nothing for a consumer to get wrong. The first sighting in the
+ * caller's order is kept, and the others' level titles go in `alsoReachedFrom`,
+ * so the repeat is explained rather than silently dropped.
+ */
+function collapseRoutes(items, keyOf) {
+  const byKey = new Map();
+  for (const item of items) {
+    const key = keyOf(item);
+    const kept = byKey.get(key);
+    if (kept) kept.alsoReachedFrom.push(item.levelTitle);
+    else byKey.set(key, { ...item, alsoReachedFrom: [] });
+  }
+  return [...byKey.values()];
+}
+
+/**
  * Files that are loaded as instructions at session start.
  *
  * Deliberately narrower than category === 'memory': the per-project memory
@@ -249,15 +272,15 @@ async function flattenDefinitions(lineage) {
     group.definitions.sort((a, b) => b.precedence - a.precedence); // strongest first
     // Shadowing means two DIFFERENT files claiming one name. A single file
     // reached by two routes is not a shadow, and reporting it as one told the
-    // user an agent was being overridden by itself.
-    const distinctFiles = new Set(group.definitions.map((d) => samePathKey(d.path)));
+    // user an agent was being overridden by itself. It is kept at its strongest
+    // sighting, which is where the winner has always been taken from.
+    const definitions = collapseRoutes(group.definitions, (d) => samePathKey(d.path));
     return {
       ...group,
-      shadowed: distinctFiles.size > 1,
-      // Kept so the UI can explain a repeated path rather than silently hiding
-      // one of the two sightings.
-      reachedByMultipleRoutes: group.definitions.length > distinctFiles.size,
-      winner: group.definitions[0],
+      definitions,
+      shadowed: definitions.length > 1,
+      reachedByMultipleRoutes: definitions.some((d) => d.alsoReachedFrom.length > 0),
+      winner: definitions[0],
     };
   });
 
@@ -274,7 +297,8 @@ async function flattenDefinitions(lineage) {
     rule:
       'Grouped by declared name (frontmatter name, else the filename or skill folder). ' +
       'The definition closest to the project shadows the ones above it. ' +
-      'Plugin definitions are namespaced as plugin:skill at runtime, so they rarely collide.',
+      'Plugin definitions are namespaced as plugin:skill at runtime, so they rarely collide. ' +
+      'A file reachable by two routes is one definition, listed once.',
     groups: list,
   };
 }
@@ -361,14 +385,15 @@ async function flattenMcp(lineage) {
     // and once in the per-project block. Those are two real definitions of one
     // name and must keep counting as a shadow; only the same file reached twice
     // by the level walk is the duplicate being collapsed here.
-    const distinctSources = new Set(
-      server.definitions.map((d) => JSON.stringify([samePathKey(d.path), d.scope]))
+    const definitions = collapseRoutes(server.definitions, (d) =>
+      JSON.stringify([samePathKey(d.path), d.scope])
     );
     return {
       ...server,
-      shadowed: distinctSources.size > 1,
-      reachedByMultipleRoutes: server.definitions.length > distinctSources.size,
-      winner: server.definitions[0],
+      definitions,
+      shadowed: definitions.length > 1,
+      reachedByMultipleRoutes: definitions.some((d) => d.alsoReachedFrom.length > 0),
+      winner: definitions[0],
     };
   });
   list.sort((a, b) => a.name.localeCompare(b.name));
@@ -380,8 +405,10 @@ async function flattenMcp(lineage) {
       'Collected from every .mcp.json on the chain, plus the global and per-project mcpServers blocks ' +
       'in ~/.claude.json. A server defined at more than one level is flagged; the definition closest ' +
       'to the project is shown as the winner. Servers still awaiting per-project approval are listed ' +
-      'here even though Claude Code will not have loaded them.',
-    sources,
+      'here even though Claude Code will not have loaded them. A file reachable by two routes is ' +
+      'listed once.',
+    // Weakest first, so a file keeps its first sighting, as the chain view does.
+    sources: collapseRoutes(sources, (s) => samePathKey(s.path)),
     servers: list,
   };
 }

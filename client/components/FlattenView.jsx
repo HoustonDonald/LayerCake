@@ -10,13 +10,29 @@ const TABS = [
   { kind: 'mcp', label: 'MCP servers' },
 ];
 
+/** A chain level whose only files are ones an earlier level already showed. */
+function repeatsOnly(section) {
+  return section.empty && section.repeatedPaths?.length > 0;
+}
+
 function SectionHead({ section }) {
   return (
     <div className="flat-section-head">
       <span className="level-index">{String(section.precedence).padStart(2, '0')}</span>
       <span className="flat-section-title">{section.title}</span>
-      {section.empty && <span className="badge">nothing found</span>}
+      {section.empty && !repeatsOnly(section) && <span className="badge">nothing found</span>}
+      {repeatsOnly(section) && <span className="badge">shown above</span>}
     </div>
+  );
+}
+
+/** Names the other levels that reached the same file (flatten's alsoReachedFrom, #117). */
+function AlsoReached({ from }) {
+  if (!from?.length) return null;
+  return (
+    <span className="muted" title="The same file, found again by the directory walk. Claude Code loads it once.">
+      {' '}· also reached through {from.join('; ')}
+    </span>
   );
 }
 
@@ -24,8 +40,20 @@ function MemoryView({ data }) {
   return (
     <>
       {data.sections.map((section) => (
-        <div className={`flat-section${section.empty ? ' empty' : ''}`} key={section.levelId}>
+        <div className={`flat-section${section.empty && !repeatsOnly(section) ? ' empty' : ''}`} key={section.levelId}>
           <SectionHead section={section} />
+          {section.repeatedNote && (
+            <div className="flat-file-body">
+              <div className="notice info">
+                {section.repeatedNote}
+                <ul>
+                  {section.repeatedPaths.map((p) => (
+                    <li key={p}>{p}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
           {section.files.map((file) => (
             <div className="flat-file" key={file.path}>
               <div className="flat-file-head">
@@ -145,7 +173,10 @@ function DefinitionsView({ data }) {
           {group.definitions.map((def, i) => (
             <div className={`def-row${i === 0 ? ' winner' : ''}`} key={def.path}>
               <span className="tag">{i === 0 ? 'effective' : 'shadowed'}</span>
-              <span>{def.path}</span>
+              <span>
+                {def.path}
+                <AlsoReached from={def.alsoReachedFrom} />
+              </span>
             </div>
           ))}
         </div>
@@ -177,6 +208,7 @@ function McpView({ data }) {
               <span>
                 {def.command || def.url || '—'} · {def.path}
                 {def.scope && def.scope !== 'global' ? ` · ${def.scope}` : ''}
+                <AlsoReached from={def.alsoReachedFrom} />
               </span>
             </div>
           ))}
@@ -198,6 +230,7 @@ function McpView({ data }) {
                 {!source.error && !source.jsonError
                   ? ` — ${source.serverNames.length} server(s)`
                   : ''}
+                <AlsoReached from={source.alsoReachedFrom} />
               </span>
             </div>
           ))}

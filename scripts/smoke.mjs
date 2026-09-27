@@ -508,6 +508,26 @@ try {
     JSON.stringify(planted?.winner?.command)
   );
 
+  // Not reporting a self-shadow is not enough: the page drew every sighting in
+  // `definitions` after the first as "shadowed", so the payload itself must
+  // list a file once and name the other route (#117). The config home above is
+  // reached twice, which the precondition check proved.
+  const twice = (list, keyOf) => list.length !== new Set(list.map(keyOf)).size;
+  const repeatedDefs = defs.groups.filter((g) => twice(g.definitions, (d) => samePathKey(d.path)));
+  const homeAgent = defs.groups.find((g) => g.name === 'home-agent');
+  check('a definition reached by two routes is listed once, naming the other route (#117)',
+    repeatedDefs.length === 0 && homeAgent?.definitions.length === 1 && homeAgent.definitions[0].alsoReachedFrom?.length === 1,
+    JSON.stringify({ repeated: repeatedDefs.map((g) => g.name), homeAgent: homeAgent?.definitions }));
+  const repeatedServers = (mcp.servers || []).filter((s) => twice(s.definitions, (d) => `${samePathKey(d.path)}|${d.scope}`));
+  const twoRoutes = (mcp.servers || []).find((s) => s.name === 'smoke-two-routes');
+  check('an MCP server reached by two routes is listed once, naming the other route (#117)',
+    repeatedServers.length === 0 && twoRoutes?.definitions.length === 1 && twoRoutes.definitions[0].alsoReachedFrom?.length === 1,
+    JSON.stringify({ repeated: repeatedServers.map((s) => s.name), twoRoutes: twoRoutes?.definitions }));
+  const homeMcp = (mcp.sources || []).filter((s) => samePathKey(s.path) === samePathKey(path.join(configHome, '.mcp.json')));
+  check('an MCP source file reached by two routes is listed once (#117)',
+    !twice(mcp.sources || [], (s) => samePathKey(s.path)) && homeMcp.length === 1 && homeMcp[0].alsoReachedFrom?.length === 1,
+    JSON.stringify(homeMcp));
+
   // --- write refusals -----------------------------------------------------
   check(
     'write refuses a credential file',

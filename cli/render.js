@@ -26,17 +26,9 @@ import {
   shortenPath,
   termWidth,
 } from './format.js';
-import { samePathKey } from '../server/paths.js';
-
-/**
- * Which distinct source a definition came from, for display only.
- *
- * Path AND scope, matching flattenMcp: one file defines a server in both its
- * global mcpServers block and its per-project block, and those are two real
- * definitions rather than one file seen twice.
- */
-function sourceKey(def) {
-  return `${samePathKey(def.path)}::${def.scope}`;
+/** How many extra routes reached the files behind one name (flatten's alsoReachedFrom). */
+function otherRoutes(definitions) {
+  return definitions.reduce((n, d) => n + (d.alsoReachedFrom?.length || 0), 0);
 }
 
 const LABEL = 15;
@@ -346,23 +338,12 @@ function renderDefinitionsView(view, lineage) {
       current = group.category;
       out(paint.cyan(`${current}s`));
     }
-    // flatten decides WHETHER this is shadowed; group.shadowed is read, never
-    // recomputed. What is left is presentation: flatten deliberately keeps
-    // every sighting so a repeat can be explained, and a list that named the
-    // same file twice, or named the winner again under "shadowed", would be
-    // unreadable. So the display names each distinct file once.
-    const winnerKey = samePathKey(group.winner.path);
-    const byPath = new Map();
-    for (const def of group.definitions) {
-      const key = samePathKey(def.path);
-      if (!byPath.has(key)) byPath.set(key, def);
-    }
-    const others = [...byPath.values()].filter((d) => samePathKey(d.path) !== winnerKey);
-    const routes = group.definitions.length - byPath.size;
+    // flatten lists each distinct file once, winner first, and decides whether
+    // it is shadowed; this only presents that (#117).
+    const others = group.definitions.slice(1);
+    const routes = otherRoutes(group.definitions);
     const flag = group.shadowed ? paint.yellow(`  shadows ${others.length}`) : '';
-    const dup = group.reachedByMultipleRoutes
-      ? paint.dim(`  (also reached by ${plural(routes, 'other route')})`)
-      : '';
+    const dup = routes ? paint.dim(`  (also reached by ${plural(routes, 'other route')})`) : '';
     out(`  ${paint.bold(group.name)}${flag}${dup}`);
     out(paint.dim(`    ${shortenPath(group.winner.path, lineage.home)}`));
     if (group.winner.description) {
@@ -381,45 +362,28 @@ function renderMcpView(view, lineage) {
   out();
 
   out(paint.cyan('Sources'));
-  const seenSources = new Set();
-  const rows = view.sources
-    .filter((s) => {
-      const key = samePathKey(s.path);
-      if (seenSources.has(key)) return false;
-      seenSources.add(key);
-      return true;
-    })
-    .map((s) => [
-      shortenPath(s.path, lineage.home),
-      `${s.serverNames.length} ${s.serverNames.length === 1 ? 'server' : 'servers'}`,
-      s.error ? paint.red(s.error.code) : s.jsonError ? paint.red('parse error') : '',
-    ]);
+  const rows = view.sources.map((s) => [
+    shortenPath(s.path, lineage.home),
+    `${s.serverNames.length} ${s.serverNames.length === 1 ? 'server' : 'servers'}`,
+    s.error ? paint.red(s.error.code) : s.jsonError ? paint.red('parse error') : '',
+  ]);
   if (rows.length === 0) out(paint.dim('  none'));
   for (const line of columns(rows)) out(`  ${line}`);
   out();
 
   out(paint.cyan('Servers'));
   for (const server of view.servers) {
-    // flatten decides whether this is shadowed. As with definitions, the only
-    // thing left is presentation: it keeps every sighting so a repeat can be
-    // explained, and the list names each distinct source once.
+    // As with definitions, flatten lists each distinct source once (path and
+    // scope), winner first; this only presents that.
     const winner = server.winner;
-    const winnerKey = sourceKey(winner);
-    const bySource = new Map();
-    for (const def of server.definitions) {
-      const key = sourceKey(def);
-      if (!bySource.has(key)) bySource.set(key, def);
-    }
-    const others = [...bySource.values()].filter((d) => sourceKey(d) !== winnerKey);
-    const routes = server.definitions.length - bySource.size;
+    const others = server.definitions.slice(1);
+    const routes = otherRoutes(server.definitions);
     const target = winner.command || winner.url || '';
     out(
       `  ${padEnd(paint.bold(server.name), 28)} ${padEnd(winner.transport || paint.dim('unknown'), 10)} ` +
         `${paint.dim(elide(target, Math.max(20, termWidth() - 60)))}` +
         (server.shadowed ? paint.yellow(`  shadows ${others.length}`) : '') +
-        (server.reachedByMultipleRoutes
-          ? paint.dim(`  (also reached by ${plural(routes, 'other route')})`)
-          : '')
+        (routes ? paint.dim(`  (also reached by ${plural(routes, 'other route')})`) : '')
     );
     out(paint.dim(`    ${shortenPath(winner.path, lineage.home)}  (${winner.scope})`));
     for (const def of others) {

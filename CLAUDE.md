@@ -447,7 +447,11 @@ partially. A truncated file restored is silent data loss.
   produced a definition that shadowed itself, an instruction chain that printed the same file twice,
   and an MCP server (`context7`) reported as shadowing itself. All three were the same bug in the
   same file, and fixing two of them did not fix the third. **If you add a view, ask which of the two
-  it needs, and check the others while you are there.**
+  it needs, and check the others while you are there.** The fourth time it was a consumer: flatten
+  kept every sighting for its clients to collapse, the CLI did and the page did not (#117). So the
+  definitions and MCP views now collapse in flatten.js (`collapseRoutes`, the other routes in
+  `alsoReachedFrom`), as the chain view already did, and a client renders what it is given rather
+  than deduping again. The settings view still applies such a file twice (#118).
 
   Note the MCP key is `samePathKey(path)` **plus scope**, not path alone: `~/.claude.json` defines a
   server in both its global block and its per-project block, and that is a genuine shadow. Deduping
