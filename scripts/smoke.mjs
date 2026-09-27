@@ -777,6 +777,42 @@ try {
     for (const p of names) await fs.rm(p, { force: true });
   }
 
+  // #138: snapshots are kept 30 days (owner decision, 2026-09-27), pruned when
+  // the next one is taken. Age is read from the folder name LayerCake gave it.
+  {
+    const idAt = (daysAgo) => new Date(Date.now() - daysAgo * 24 * 3600e3).toISOString().replace(/[:.]/g, '-');
+    const plant = async (name) => {
+      await fs.mkdir(path.join(snaps, name, 'files'), { recursive: true });
+      await fs.writeFile(path.join(snaps, name, 'manifest.json'), JSON.stringify({ version: 1, id: name, label: 'planted', createdAt: new Date().toISOString(), files: [], errors: [], skipped: [], counts: { files: 0 } }));
+    };
+    const expired = idAt(40);
+    const kept = idAt(29);
+    await plant(expired);
+    await plant(kept);
+    await fs.mkdir(path.join(snaps, 'not-a-snapshot'), { recursive: true });
+    // A junction named like an expired snapshot, pointing outside the store:
+    // pruning must neither follow it nor remove it.
+    const outside = path.join(path.dirname(configHome), 'outside-the-store');
+    await fs.mkdir(outside, { recursive: true });
+    await fs.writeFile(path.join(outside, 'precious.txt'), 'keep me\n');
+    const lure = path.join(snaps, idAt(50));
+    await fs.symlink(outside, lure, 'junction');
+
+    const listed = await (await fetch(`${BASE}/api/snapshots`, { headers: H })).json();
+    const taken = await fetch(`${BASE}/api/snapshot`, { method: 'POST', headers: H, body: JSON.stringify({ scanId, label: 'triggers pruning' }) });
+    const exists = async (p) => fs.lstat(p).then(() => true, () => false);
+    check('the snapshot list states the retention period', listed.retentionDays === 30, JSON.stringify(listed.retentionDays));
+    check('taking a snapshot deletes one older than 30 days, and keeps one 29 days old (#138)',
+      taken.status === 200 && !(await exists(path.join(snaps, expired))) && (await exists(path.join(snaps, kept))),
+      JSON.stringify({ status: taken.status, expiredLeft: await exists(path.join(snaps, expired)), keptLeft: await exists(path.join(snaps, kept)) }));
+    check('pruning leaves a folder that is not a snapshot, and a junction, alone, and never follows it',
+      (await exists(path.join(snaps, 'not-a-snapshot'))) && (await exists(lure)) && (await fs.readFile(path.join(outside, 'precious.txt'), 'utf8')) === 'keep me\n');
+    await fs.rm(lure, { force: true, recursive: false }).catch(() => fs.rmdir(lure));
+    await fs.rm(path.join(snaps, 'not-a-snapshot'), { recursive: true, force: true });
+    await fs.rm(path.join(snaps, kept), { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+
   // --- the check that matters most: grep the artifact ---------------------
   // Asserting the manifest omits credentials is not the same as proving no
   // credential BYTES reached the snapshot tree. Search it, with a positive

@@ -42,6 +42,7 @@ import {
 } from './writefile.js';
 import { DEBOUNCE_MS, watchLineage } from './watch.js';
 import {
+  RETENTION_DAYS,
   compareSnapshot,
   createSnapshot,
   listSnapshots,
@@ -446,7 +447,7 @@ export function createApp({ port, staticFiles }) {
 
   app.get('/api/snapshots', async (req, res) => {
     try {
-      return res.json({ root: snapshotRoot(), snapshots: await listSnapshots() });
+      return res.json({ root: snapshotRoot(), retentionDays: RETENTION_DAYS, snapshots: await listSnapshots() });
     } catch (err) {
       return sendError(res, err);
     }

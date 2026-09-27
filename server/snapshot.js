@@ -172,6 +172,53 @@ export async function atomicWrite(absPath, data, { expectSha256 = null } = {}) {
 }
 
 /**
+ * Snapshots are kept this long, then deleted (#138; owner decision
+ * 2026-09-27, "30 days for now"). The same span Claude Code keeps sessions by
+ * default. Served with the snapshot list so the page states it.
+ */
+export const RETENTION_DAYS = 30;
+
+const SNAPSHOT_ID_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z(?:-\d+)?$/;
+
+/** When a snapshot was taken, from the folder name LayerCake gave it, or null for any other name. */
+function snapshotTime(name) {
+  const m = SNAPSHOT_ID_RE.exec(name);
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], +m[7]) : null;
+}
+
+/**
+ * Deletes snapshots older than RETENTION_DAYS. Run after each new snapshot,
+ * so the store is pruned when it is written to, never by a timer or a read.
+ *
+ * Age comes from the folder's name, which LayerCake made, not from the
+ * manifest inside it, which is a plain file anyone can edit (#101). A folder
+ * whose name is not a snapshot id is never touched, and neither is anything
+ * that is not a real folder: a junction planted in the store is skipped, not
+ * followed. A folder that will not delete is left for the next run; pruning
+ * never fails the snapshot that triggered it.
+ */
+async function pruneExpired(keepId) {
+  const store = snapshotRoot();
+  const cutoff = Date.now() - RETENTION_DAYS * 24 * 3600e3;
+  let names;
+  try {
+    names = await fs.readdir(store, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const dirent of names) {
+    if (!dirent.isDirectory() || dirent.name === keepId) continue;
+    const at = snapshotTime(dirent.name);
+    if (at === null || at >= cutoff) continue;
+    try {
+      await fs.rm(path.join(store, dirent.name), { recursive: true, force: true });
+    } catch {
+      /* locked or in use: the next snapshot tries again */
+    }
+  }
+}
+
+/**
  * Makes a new snapshot's folder and returns its id: the time, sortable and
  * readable at a glance in Explorer, plus -1, -2 ... when that millisecond is
  * taken. The folder is created WITHOUT `recursive`, so it fails on one that
@@ -399,6 +446,7 @@ export async function createSnapshot(lineage, { label = '', paths = null } = {})
     skipped,
   };
   await atomicWrite(path.join(root, MANIFEST_NAME), JSON.stringify(manifest, null, 2));
+  await pruneExpired(id);
   return manifest;
 }
 

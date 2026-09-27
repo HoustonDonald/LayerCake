@@ -27,6 +27,7 @@ import {
   compareSnapshot,
   createSnapshot,
   listSnapshots,
+  RETENTION_DAYS,
   readManifest,
 } from '../server/snapshot.js';
 import { err, localTime, out, padEnd, paint, plural, shortenPath } from './format.js';
@@ -254,7 +255,7 @@ async function cmdBackup(args) {
 async function cmdSnapshots(args) {
   const { values } = parse(args);
   if (values.help) return out(COMMAND_HELP.snapshots);
-  renderSnapshotList(await listSnapshots(), snapshotRoot());
+  renderSnapshotList(await listSnapshots(), snapshotRoot(), RETENTION_DAYS);
 }
 
 async function cmdDiff(args) {

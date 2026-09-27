@@ -168,6 +168,12 @@ target gives the same EPERM, so it is checked and fails at once instead of after
 **The snapshot store must never live under `~/.claude`.** That tree is a restore target, and a
 backup the restore can overwrite is not a backup. See `snapshotRoot()`.
 
+**Snapshots are deleted after 30 days, and only by `pruneExpired`** (#138, owner decision
+2026-09-27; `RETENTION_DAYS`, served with the snapshot list). It runs after each new snapshot, reads
+a snapshot's age from its folder name (never from the editable manifest), and touches only real
+folders whose names are snapshot ids: a junction in the store is skipped, not followed. Any other
+code that deletes a snapshot needs the owner, because it removes backups.
+
 **A snapshot manifest is checked, not trusted.** It is a plain file in LayerCake's own folder, and an
 edited `stored` path of `../../../x` once read any file on disk (#101). `storedPathOf` requires the
 copy to sit inside that snapshot's `files/` folder, by its real path as well as lexically, and to be a

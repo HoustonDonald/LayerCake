@@ -26,6 +26,7 @@ function when(iso) {
 export default function SnapshotPanel({ scanId, onRestored }) {
   const [snapshots, setSnapshots] = useState([]);
   const [root, setRoot] = useState('');
+  const [retentionDays, setRetentionDays] = useState(null);
   const [selected, setSelected] = useState(null);
   const [comparison, setComparison] = useState(null);
   const [checked, setChecked] = useState(() => new Set());
@@ -39,6 +40,7 @@ export default function SnapshotPanel({ scanId, onRestored }) {
       const res = await listSnapshots();
       setSnapshots(res.snapshots);
       setRoot(res.root);
+      setRetentionDays(res.retentionDays ?? null);
     } catch (err) {
       setError(err.message);
     }
@@ -154,7 +156,12 @@ export default function SnapshotPanel({ scanId, onRestored }) {
             Take snapshot
           </button>
         </div>
-        {root && <div className="snap-root">Stored in {root}</div>}
+        {root && (
+          <div className="snap-root">
+            Stored in {root}
+            {retentionDays ? ` · kept ${retentionDays} days, then deleted when the next snapshot is taken` : ''}
+          </div>
+        )}
       </div>
 
       {error && <div className="notice err" style={{ whiteSpace: 'pre-line' }}>{error}</div>}

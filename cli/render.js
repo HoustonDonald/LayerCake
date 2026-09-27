@@ -481,8 +481,8 @@ export function renderBackup(manifest, root, home) {
   }
 }
 
-export function renderSnapshotList(snapshots, root) {
-  out(paint.dim(root));
+export function renderSnapshotList(snapshots, root, retentionDays) {
+  out(paint.dim(retentionDays ? `${root}   kept ${retentionDays} days, then deleted when the next snapshot is taken` : root));
   if (snapshots.length === 0) {
     out(paint.dim('No snapshots yet. Create one with: layercake backup'));
     return;

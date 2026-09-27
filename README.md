@@ -333,6 +333,11 @@ that tree is a restore target, and a backup the restore can overwrite is not a b
   files that operation replaces or removes, so it costs a file rather than the whole lineage (about
   100 files, mostly plugins), and opening it shows just those rows. It does not record the rest of
   your configuration as it was at that moment; take a snapshot by hand for that.
+- **Snapshots are kept 30 days** (owner decision, 2026-09-27), then deleted when the next snapshot
+  is taken; nothing prunes on a timer or when you look at the list. That includes one you took by
+  hand. The age is read from the folder's name, the time LayerCake created it, never from the
+  manifest, and a folder in the store that is not a snapshot is left alone. The panel and
+  `layercake snapshots` both state the period.
 - Runtime-state directories and credential files are excluded, as they are from the scan itself.
 - **Files over the 2 MB cap are skipped and recorded, never truncated.** A truncated file restored
   is silent data loss.

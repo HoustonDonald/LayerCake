@@ -388,6 +388,10 @@ Made by the owner on 2026-09-27 ("b"):
     `layercake backup` still copy the whole lineage. Chosen over keeping full copies with content
     stored once. It narrows how decision 3 applies: an automatic snapshot no longer records the rest of
     the configuration as it was at that moment.
+13. **Snapshots are kept 30 days** ("30 days for now", #138), manual ones included, then deleted when
+    the next snapshot is taken.
+14. **Ambient lighting: the ASUS Aura case fans, and LayerCake may make that network call** (the
+    Aura service on 127.0.0.1:27339). A WLED strip was the alternative, deferred.
 
 ---
 
