@@ -62,6 +62,17 @@ function ContextGauge({ health }) {
   );
 }
 
+/**
+ * A tool's name as shown: an MCP tool's own part, since the full
+ * mcp__<server>__<tool> is too long for its column and clipped it reads
+ * mcp__claude_ai_… for every tool of a server; the summary names the server
+ * (#149). Display only: the transcript keeps the raw name, shown on hover.
+ */
+function toolLabel(name) {
+  const m = /^mcp__.+?__(.+)$/.exec(name || '');
+  return m ? m[1] : name;
+}
+
 function secondsAgo(iso) {
   return iso ? Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000)) : null;
 }
@@ -134,8 +145,8 @@ function Wrapped({ detail }) {
         <div className="running-now">
           <span className="turn-label">Running now</span>
           {w.running.map((t) => (
-            <span key={t.id} className="running-tool">
-              {t.name}
+            <span key={t.id} className="running-tool" title={t.name}>
+              {toolLabel(t.name)}
               {t.summary ? ` · ${t.summary}` : ''} <span className="muted">({duration(Date.now() - Date.parse(t.at))})</span>
             </span>
           ))}
@@ -305,7 +316,7 @@ function TurnView({ sessionId, n, lastAt }) {
           <div className="turn-label">{turn.toolCalls.length} tool calls</div>
           {turn.toolCalls.map((tc) => (
             <div key={tc.id || `${tc.name}-${tc.at}`} className={`tool-row${tc.error ? ' error' : ''}`}>
-              <span className="tool-name">{tc.name}</span>
+              <span className="tool-name" title={tc.name}>{toolLabel(tc.name)}</span>
               <span className="tool-summary">{tc.summary}</span>
               <span className="tool-state">{tc.error ? 'failed' : tc.done ? '' : 'running'}</span>
             </div>
@@ -317,7 +328,7 @@ function TurnView({ sessionId, n, lastAt }) {
           <div className="turn-label">Subagents</div>
           {turn.subagents.map((s) => (
             <div key={s.toolUseId} className="tool-row">
-              <span className="tool-name">{s.type}</span>
+              <span className="tool-name" title={s.type}>{s.type}</span>
               <span className="tool-summary">{s.description}</span>
               <span className="tool-state">{s.status}{s.tokens ? ` · ${tokens(s.tokens)}` : ''}</span>
             </div>

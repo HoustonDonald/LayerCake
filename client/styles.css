@@ -1787,10 +1787,16 @@ pre.code {
   color: var(--err);
 }
 
+/* Clipped, never overflowing: a name wider than the column (an MCP tool's
+   has no break opportunity) used to paint over the summary beside it (#149).
+   The full name is in the title. */
 .tool-name {
   width: 110px;
   flex: none;
   font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tool-summary {
