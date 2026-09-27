@@ -280,8 +280,12 @@ offered for that level, and the server builds the path from the choice, so a req
 path:
 
 - **Fixed files that do not exist yet:** `CLAUDE.md` and `.mcp.json` in a directory, and
-  `.claude/CLAUDE.md`, `.claude/settings.json` and `.claude/settings.local.json` in its `.claude`
-  folder. At the user level: `CLAUDE.md` and `settings.json` in the configuration home.
+  `.claude/CLAUDE.md` in its `.claude` folder. At the user level: `CLAUDE.md` and `settings.json` in
+  the configuration home.
+- **Settings files only where Claude Code reads them** (#135): `.claude/settings.json` and
+  `.claude/settings.local.json` in the project directory, never in a parent folder, whose settings
+  Claude Code does not inherit. The configuration home's `settings.local.json` is offered only when
+  the project is the folder above it, the one session that reads it. See the settings view below.
 - **A named agent, command, rule, skill or hook** in the level's `.claude/agents`, `commands`,
   `rules`, `skills` (a folder holding `SKILL.md`) or `hooks` folder. The name is 1 to 64 lowercase
   letters, digits, `-` or `_`, so it is always one plain file name; Windows device names such as

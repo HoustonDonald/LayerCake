@@ -8,7 +8,7 @@
 
 import path from 'node:path';
 
-import { managedCandidates, samePathKey } from './paths.js';
+import { samePathKey, settingsSourceFiles } from './paths.js';
 import { readForDisplay, splitFrontmatter } from './readfile.js';
 
 /** Levels ordered weakest to strongest for settings merging. */
@@ -133,20 +133,7 @@ async function flattenMemory(lineage) {
   };
 }
 
-/**
- * The settings files Claude Code reads for a session started in the project
- * directory, weakest first (#119). There is NO ancestor walk: a parent
- * folder's .claude/settings.json is not inherited, unlike CLAUDE.md. Observed
- * on Claude Code 2.1.283 with a marker hook in every candidate file, and
- * stated in its docs. On Windows settings.local.json sits beside
- * settings.json in the starting folder; on macOS and Linux inside a git
- * repository it moves to the repository root, which is not modelled (#146).
- *
- * The user file and the project file are one file when the project is the
- * folder above the config home (a session started in the home folder); it is
- * read once, and that is also the only case in which the config home's
- * settings.local.json is read.
- */
+/** Claude Code's settings sources, weakest first; which files they are is settingsSourceFiles (#119). */
 const SETTINGS_SOURCES = [
   { source: 'user', label: 'User' },
   { source: 'project', label: 'Project' },
@@ -156,20 +143,10 @@ const SETTINGS_SOURCES = [
 
 function settingsSourcePaths(lineage) {
   const configHome = lineage.levels.find((l) => l.kind === 'user')?.dir || null;
-  const projectClaude = path.join(lineage.projectDir, '.claude');
-  const paths = [
-    ['user', configHome && path.join(configHome, 'settings.json')],
-    ['project', path.join(projectClaude, 'settings.json')],
-    ['local', path.join(projectClaude, 'settings.local.json')],
-    ...managedCandidates()
-      .filter((c) => c.platform === lineage.platform && !c.legacy)
-      .map((c) => ['managed', c.file]),
-  ];
   /** samePathKey -> the sources it is, in application order. */
   const roles = new Map();
-  for (const [source, p] of paths) {
-    if (!p) continue;
-    const key = samePathKey(p);
+  for (const { source, file } of settingsSourceFiles(lineage)) {
+    const key = samePathKey(file);
     roles.set(key, [...(roles.get(key) || []), source]);
   }
   return { roles, configHome };

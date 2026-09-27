@@ -124,6 +124,34 @@ export function managedCandidates() {
 }
 
 /**
+ * The settings files Claude Code reads for a session started in the project
+ * directory, weakest first, as { source, file } (#119). There is NO ancestor
+ * walk: a parent folder's .claude/settings.json is not inherited, unlike
+ * CLAUDE.md. Observed on Claude Code 2.1.283 with a marker hook in every
+ * candidate file, and stated in its docs. On Windows settings.local.json sits
+ * beside settings.json in the starting folder; on macOS and Linux inside a git
+ * repository it moves to the repository root, which is not modelled (#146).
+ *
+ * The user file and the project file are one file when the project is the
+ * folder above the config home (a session started in the home folder), and
+ * that is the only case in which the config home's settings.local.json is
+ * read. The settings view merges these and nothing else, and create offers a
+ * settings file only where it is one of them (#135).
+ */
+export function settingsSourceFiles(lineage) {
+  const configHome = lineage.levels.find((l) => l.kind === 'user')?.dir || null;
+  const projectClaude = path.join(lineage.projectDir, '.claude');
+  return [
+    ...(configHome ? [{ source: 'user', file: path.join(configHome, 'settings.json') }] : []),
+    { source: 'project', file: path.join(projectClaude, 'settings.json') },
+    { source: 'local', file: path.join(projectClaude, 'settings.local.json') },
+    ...managedCandidates()
+      .filter((c) => c.platform === lineage.platform && !c.legacy)
+      .map((c) => ({ source: 'managed', file: c.file })),
+  ];
+}
+
+/**
  * Ancestor chain for a directory, ordered project-first.
  * Terminates at the filesystem root, a UNC share root (\\server\share), or
  * after 64 hops, whichever comes first.

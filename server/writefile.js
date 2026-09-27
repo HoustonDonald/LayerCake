@@ -24,7 +24,7 @@ import {
   createNameProblem,
   createTrees,
 } from './safety.js';
-import { CLAUDE_DIR_FILE_TARGETS, CLAUDE_DIR_TREES, DIR_FILE_TARGETS, PLUGIN_MANIFEST_FILES, samePathKey } from './paths.js';
+import { CLAUDE_DIR_FILE_TARGETS, CLAUDE_DIR_TREES, DIR_FILE_TARGETS, PLUGIN_MANIFEST_FILES, samePathKey, settingsSourceFiles } from './paths.js';
 import { readForDisplay, splitFrontmatter } from './readfile.js';
 import { shareGatedCall } from './sharegate.js';
 
@@ -264,6 +264,10 @@ export function createOptions(lineage) {
     offered.add(key);
     return true;
   };
+  // A settings file is offered only where Claude Code reads it for this
+  // project (#135): a parent folder's .claude/settings.json is never read,
+  // so creating one would make a file that changes nothing.
+  const readSettings = new Set(settingsSourceFiles(lineage).map((s) => samePathKey(s.file)));
   const options = [];
   for (const level of lineage.levels) {
     if (!createLevelAllowed(level.kind) || !level.dir) continue;
@@ -284,6 +288,7 @@ export function createOptions(lineage) {
       if (isConfigHome && f.where === 'claude') continue;
       const absPath = path.join(f.where === 'dir' ? level.dir : claudeDir, f.name);
       if (existing.has(samePathKey(absPath))) continue;
+      if (f.category === 'settings' && !readSettings.has(samePathKey(absPath))) continue;
       if (!offerOnce(absPath)) continue;
       options.push({
         id: `${level.id}:file:${f.where}/${f.name}`,

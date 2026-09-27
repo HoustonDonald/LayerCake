@@ -300,11 +300,32 @@ export async function runCreateChecks({ base, token, check, skip, smokeDir, conf
     unreadLevels.size > 0 && !ghostLin.creatable.some((o) => unreadLevels.has(o.levelId)),
     `${unreadLevels.size} unread levels`);
 
-  // --- #102: each target offered once; the config home by the user table ----
+  // --- #102: each target offered once ---------------------------------------
   const targets = lin.creatable.map((o) => (o.absPath || o.folder).toLowerCase());
-  check('each create target is offered once, and the config home offers no settings.local.json',
-    targets.length === new Set(targets).size && !lin.creatable.some((o) => o.absPath && same(o.absPath, path.join(configHome, 'settings.local.json'))),
+  check('each create target is offered once',
+    targets.length === new Set(targets).size,
     JSON.stringify(targets.filter((t, i) => targets.indexOf(t) !== i)));
+
+  // --- #135: a settings file is offered only where Claude Code reads it -----
+  // The main fixture has a settings.local.json in the config home (the settings
+  // view checks need one), and a file that exists is never offered, so it is
+  // set aside here: with it in place the checks below could not fail.
+  const userLocal = path.join(configHome, 'settings.local.json');
+  await fs.rename(userLocal, `${userLocal}.aside`);
+  try {
+    const fresh = await scan(proj);
+    const settingsOffers = fresh.creatable.filter((o) => o.category === 'settings').map((o) => o.absPath);
+    const readHere = [path.join(configHome, 'settings.json'), path.join(proj, '.claude', 'settings.json'), path.join(proj, '.claude', 'settings.local.json')];
+    check("settings files are offered only where Claude Code reads them: never a parent folder's, never the config home's local file",
+      settingsOffers.length > 0 && settingsOffers.every((p) => readHere.some((r) => same(p, r))),
+      JSON.stringify(settingsOffers));
+    const homeLin = await scan(path.dirname(configHome));
+    check("a session in the folder above the config home is offered the config home's settings.local.json",
+      homeLin.creatable.some((o) => o.absPath && same(o.absPath, userLocal)),
+      JSON.stringify(homeLin.creatable.filter((o) => o.category === 'settings').map((o) => o.absPath)));
+  } finally {
+    await fs.rename(`${userLocal}.aside`, userLocal);
+  }
 
   // --- #102: only a real true acknowledges; ids must be strings -------------
   const hookOpt2 = option(lin, 'proj', ':tree:hooks');
@@ -653,7 +674,11 @@ export async function runCreateChecks({ base, token, check, skip, smokeDir, conf
     const { createOptions } = await import('../server/writefile.js');
     const home = path.join(smokeDir, 'unread-home');
     const dir = path.join(smokeDir, 'unread-dir');
+    // projectDir and platform as every scan result has them: createOptions
+    // asks which settings files Claude Code reads for the project (#135).
     const lineage = {
+      projectDir: dir,
+      platform: process.platform,
       levels: [
         { id: 'u', kind: 'user', dir: home, entries: [], absent: [], errors: [{ path: home, code: 'ETIMEDOUT' }] },
         { id: 'd', kind: 'directory', dir, entries: [], absent: [], errors: [{ path: path.join(dir, '.claude', 'agents'), code: 'EPERM' }] },

@@ -168,7 +168,9 @@ const CREATE_FILES = [
   { where: 'dir', name: '.mcp.json', category: 'mcp', levels: ['directory'] },
   { where: 'claude', name: 'CLAUDE.md', category: 'memory', levels: ['user', 'directory'] },
   { where: 'claude', name: 'settings.json', category: 'settings', levels: ['user', 'directory'] },
-  { where: 'claude', name: 'settings.local.json', category: 'settings', levels: ['directory'] },
+  // At the user level only for a session started in the folder above the
+  // config home, the one place Claude Code reads it (createOptions, #135).
+  { where: 'claude', name: 'settings.local.json', category: 'settings', levels: ['user', 'directory'] },
 ];
 /** Named files in a .claude subtree. A skill is a folder holding SKILL.md. */
 const CREATE_TREES = [
