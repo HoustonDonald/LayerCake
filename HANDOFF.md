@@ -4,9 +4,10 @@ Working state for picking this up in a new session. **Disposable.** Durable rule
 `CLAUDE.md`, user-facing spec in `README.md`. If something here contradicts those, they win and this
 file is stale.
 
-Last verified: **2026-09-26**. Write/snapshot work was done 2026-09-05; file watching 2026-09-15;
+Last verified: **2026-09-27**. Write/snapshot work was done 2026-09-05; file watching 2026-09-15;
 the single executable and the app-window isolation fix 2026-09-25; session history (Phase 1 of the
-session-wrap plan) 2026-09-26 (see those sections below).
+session-wrap plan) 2026-09-26; testing against a copy of a real project, 2026-09-26 to 27 (see
+those sections below).
 
 ---
 
@@ -22,8 +23,65 @@ npm run smoke                       # expect: 0 failed
 node cli/index.js here C:\dev\LayerCake   # expect: ~18 line summary, exit 0
 ```
 
-Both were green on 2026-09-15. Smoke was 285 passed, 0 failed, 2 skipped on 2026-09-26 (Windows),
-and 258/0 under WSL Ubuntu.
+Smoke was 304 passed, 0 failed, 2 skipped on 2026-09-27 (Windows; the 2 skips are the opt-in
+mapped-drive checks and a Linux-only one). The last recorded WSL Ubuntu run was 258/0, before the
+checks added since; it has not been rerun.
+
+### 2026-09-26 to 27: tested against a copy of a real project (beetle-etl)
+
+**Owner directive, standing: make NO writes or modifications to `C:\dev\beetle-etl`; copy it for
+testing.** Four testers worked on copies in the session scratchpad: the read path (scan, views,
+CLI), the write path (HTTP, CLI, headless Edge), the UI and watch bar, and the real transcripts
+(counts only, no content printed). Afterwards, the only changes inside `C:\dev\beetle-etl` since the
+copy was made were a new agent worktree and `Server\logs\combined2.log`, both from the owner's own
+live beetle-etl session and server. The copies are deleted; the evidence folders are kept (below).
+
+Filed #111 to #145. Shipped and closed, each commit message listing its checks and mutants:
+- **2f19fba** (#111 to #116): the transcript reader handles `queued_command` attachments, so
+  background subagents finish, prompts typed while Claude is busy show ("sent while busy"), drift
+  inside attachments is counted, and a failed Agent call ends as failed.
+- **e68f0fb** (#127): a change directly inside `C:\` no longer closes the drive root's watch. Node
+  names a root's children `\name`, which `path.isAbsolute` accepts.
+- **be27bf7** (#117): a file reached by two routes is listed once, in `flatten.js`
+  (`collapseRoutes`), not collapsed separately by each client.
+- **aee2d6f** (#134): CLI restore takes `~/.claude.json` and the plugin manifests only by name; the
+  printed undo names exactly the replaced files and was pasted into PowerShell and Git Bash to prove it.
+- **f318933** (#128): a refused "Notify me" no longer replaces the watch bar.
+
+**Suggested order for what is open** (the issues hold the detail; all reachable in ordinary use
+unless marked):
+1. #137: every save copies the whole lineage one file at a time, 1.4 to 2.6 s. 8 in flight measured
+   about 4x faster. Keep the share gate.
+2. #118, then #119: the settings view applies the config home twice, and the merge model does not
+   match Claude Code 2.1.283 (no ancestor walk, five fixed sources). #135 (create offers ancestor
+   settings files) follows from #119.
+3. #125 (counts include two-route files), #120 (per-project MCP never found on Windows), #121, #122,
+   #123.
+4. Snapshots: #143 (a delete's undo opens with nothing selected; differing rows buried), #132, #139,
+   #141 (delete removes a read-only file), #136 (restore of a recreated file is not undoable;
+   disclosed in the CLI, open in the UI).
+5. #138: store growth. Content-by-hash storage fixes it with no deletion and is a technical call;
+   deleting old snapshots (retention) is the owner's.
+6. UI: #129, #130, #133. #131 (watch fires on read) is observed, not reproduced; confirm first.
+7. #144 (junctioned skill folder): first confirm Claude Code loads skills through a junction.
+8. (b) or small: #140, #142, #145, #124.
+
+Owner questions: #126 (plugin cache files editable?), and retention in #138.
+
+**A process slip, disclosed to the owner:** the first exe check on 2026-09-26 (21:58) did not set
+`LAYERCAKE_BROWSER_PROFILE_DIR`, so its Edge wrote into the real `%LOCALAPPDATA%\LayerCake\browser`
+profile (browsing data for the local page). `exe-lifecycle-3fix.ps1` redirects it and asserts the
+real profile's newest file is unchanged; `exe-lifecycle-111.ps1` does not, so do not reuse it.
+
+Tooling from this round, in the scratchpad named below, none of it in the repository:
+- `smoke-in-copy.mjs`: smoke in a throwaway tree copy, so a rebuild does not swap `public/` under
+  someone using it.
+- `mutate-v.mjs`: now also carries the #111 to #134 mutants.
+- `ui-tool/ui-3fix.mjs` and `ui-3fix-control.mjs` (#117, #128, #134 in the page; the control builds
+  HEAD and a mutant tree and expects each to go red); `ui-tool/ui-queued-112.mjs` and its control.
+- `exe-lifecycle-3fix.ps1`, `undo-paste-134.ps1`, `cli-empty-134.mjs`.
+- `beetle/agent-A` to `agent-D`: the testers' scripts and outputs, cited by #111 to #145.
+- `issues/`: the filing scripts, one per batch, bodies passed by file.
 
 ### 2026-09-26, later: the open-issue sweep
 
@@ -321,6 +379,10 @@ Recorded because the pattern matters more than the individual fixes.
    All three now key on `samePathKey` from `paths.js`. MCP additionally keys on scope, because
    `~/.claude.json` legitimately defines a server in both its global and per-project blocks and that
    is a genuine shadow.
+   - **A fourth, 2026-09-26 (#117):** flatten decided `shadowed` correctly but kept both sightings
+     for its clients to collapse. The CLI did; the page drew the second as "shadowed". Found by two
+     testers on a real project. Now `collapseRoutes` in `flatten.js` lists each file once, so no
+     client can repeat it. The settings view still applies such a file twice (#118).
 3. **Ctrl+C stranded the launcher** at `Terminate batch job (Y/N)?` on a console the user thought
    they had closed. Fixed with `call :run %* < nul` in `layercake.cmd`, scoped so the failure-path
    `pause` still reads the keyboard.
@@ -338,11 +400,14 @@ third survives. The MCP fix was mutation-tested afterwards (revert it and the su
   do not kill it without asking. A 403 in an open tab means the server restarted and the tab holds a
   stale session token; a reload fixes it.
 - Test ports used during development were 5188, 5199 and 5399. All free as of 2026-09-08.
-- `%LOCALAPPDATA%\LayerCake\snapshots` has never been created. All testing redirected
-  `LAYERCAKE_SNAPSHOT_DIR` to scratch paths, and those were cleaned up. **Test snapshots contain
-  real copies of `~/.claude.json`, so always redirect and always clean up.**
-- The built bundle in `public/` was rebuilt on 2026-09-25 by `npm run build:exe`. A change under `client/` makes it
-  stale and `npm start` rebuilds; a change under `server/` alone does not and does not need to.
+- `%LOCALAPPDATA%\LayerCake\snapshots` and `\data` still did not exist on 2026-09-27. All testing
+  redirected them to scratch paths, and those were cleaned up. **Test snapshots contain real copies
+  of `~/.claude.json`, so always redirect and always clean up.** `\browser` exists (the app window's
+  profile, created 2026-09-25); see the process slip above.
+- `C:\lc-verify-r5` (an earlier reviewer's fake home) is gone; the owner removed it.
+- The built bundle in `public/` and `dist\LayerCake.exe` were rebuilt on 2026-09-27. A change under
+  `client/` makes `public/` stale and `npm start` rebuilds; a change under `server/` alone does not
+  and does not need to.
 
 ---
 
@@ -364,6 +429,15 @@ Windows and tooling specifics, on top of what `C:\dev\CLAUDE.md` already documen
   so state never updates and the form submits empty. Type into it instead.
 - **Coordinate clicks in the browser tool were unreliable**; clicking by `ref` from `find` worked
   every time.
+- **A third heredoc mangled a backslash anchor** (2026-09-26, a node heredoc editing smoke). It was
+  caught only because the edit script threw on an anchor count before writing. Same rule: Write or
+  Edit tool.
+- **A non-admin user can create a folder in `C:\` but not a file** (EPERM). A smoke probe at the
+  drive root has to be a folder.
+- **CSS `text-transform: uppercase` changes `innerText`.** A case-sensitive regex on a turn label
+  made a negative check unable to fail; match with `/i` and run the positive control.
+- **`find -not -path '*/node_modules/*'` still descends into node_modules**; it only filters the
+  output, and it timed out over a large project. Use `-prune`.
 
 ---
 
@@ -375,4 +449,6 @@ Windows and tooling specifics, on top of what `C:\dev\CLAUDE.md` already documen
 3. `npm run smoke` before calling any `server/` change done. It cannot see the UI, so a green run is
    necessary and not sufficient. The one bug it missed was found by opening a browser.
 4. Smoke never runs the exe. After touching `server/app.js`, `desktop/` or `client/`, run
-   `npm run build:exe` and launch `dist\LayerCake.exe` with `Start-Process` (as Explorer would).
+   `npm run build:exe` and launch `dist\LayerCake.exe` with `Start-Process` (as Explorer would),
+   with every data folder and `LAYERCAKE_BROWSER_PROFILE_DIR` redirected.
+5. Pick up the suggested order in the 2026-09-26 to 27 section, starting with #137.
