@@ -103,20 +103,19 @@ Filed #111 to #145. Shipped and closed, each commit message listing its checks a
 
 **Suggested order for what is open** (the issues hold the detail; all reachable in ordinary use
 unless marked):
-#137, #118, #119 and #135 are done (section above).
+Done since: #137, #118, #119, #135, #129, #131, #138 (30-day retention), #140, and part of #143
+(sections above).
 1. #125 (counts include two-route files), #120 (per-project MCP never found on Windows), #121, #122,
    #123. For #120, the settings probe's method (marker hooks, stub API, zero usage) can establish
    what Claude Code actually reads before changing the model.
-2. Snapshots: #143 (a delete's undo opens with nothing selected; differing rows buried), #132, #139,
-   #141 (delete removes a read-only file), #136 (restore of a recreated file is not undoable;
-   disclosed in the CLI, open in the UI).
-3. #138: store growth. Content-by-hash storage fixes it with no deletion and is a technical call;
-   deleting old snapshots (retention) is the owner's.
-4. UI: #129, #130, #133. #131 (watch fires on read) is observed, not reproduced; confirm first.
-5. #144 (junctioned skill folder): first confirm Claude Code loads skills through a junction.
-6. (b) or small: #140, #142, #145, #124. Platform or managed-machine only: #146, #147.
+2. Snapshots: #132, #139 (a refused over-cap edit still leaves an empty snapshot), #141 (delete
+   removes a read-only file), #136 (restore of a recreated file is not undoable; disclosed in the CLI,
+   open in the UI), and what is left of #143 (sticky Restore bar, full-width panel).
+3. UI: #130, #133.
+4. #144 (junctioned skill folder): first confirm Claude Code loads skills through a junction.
+5. (b) or small: #142, #145, #124. Platform or managed-machine only: #146, #147.
 
-Owner questions: #126 (plugin cache files editable?), and retention in #138.
+Owner question still open: #126 (plugin cache files editable?).
 
 **A process slip, disclosed to the owner:** the first exe check on 2026-09-26 (21:58) did not set
 `LAYERCAKE_BROWSER_PROFILE_DIR`, so its Edge wrote into the real `%LOCALAPPDATA%\LayerCake\browser`
@@ -516,4 +515,4 @@ Windows and tooling specifics, on top of what `C:\dev\CLAUDE.md` already documen
 4. Smoke never runs the exe. After touching `server/app.js`, `desktop/` or `client/`, run
    `npm run build:exe` and launch `dist\LayerCake.exe` with `Start-Process` (as Explorer would),
    with every data folder and `LAYERCAKE_BROWSER_PROFILE_DIR` redirected.
-5. Pick up the suggested order in the 2026-09-26 to 27 section; #137, #118, #119 and #135 are done.
+5. Pick up the suggested order in the 2026-09-26 to 27 section, starting with #125.
