@@ -61,12 +61,18 @@ export default function FileEditor({ file, scanId, onSaved, onCancel, onDirtyCha
   // What this editor last wrote, and where, so the reload that follows its own
   // save can be told apart from any other change to the file.
   const ownSave = useRef(null);
+  // The mtime this editor's last save returned, used for the next save's
+  // conflict check until App's reload brings a fresh file.mtime. Without it a
+  // reload that failed left the old mtime in place, and the next save was
+  // refused as a conflict with the editor's own write (#72).
+  const savedMtime = useRef(null);
 
   // A different file selected while the editor is open must not inherit the
   // previous file's draft, which would write one file's contents into another.
   useEffect(() => {
     const ours = ownSave.current;
     ownSave.current = null;
+    savedMtime.current = null;
     setDraft(asTextBoxShowsIt(file.content ?? ''));
     setError(null);
     // App re-reads the file after every save so the next conflict check uses
@@ -120,21 +126,22 @@ export default function FileEditor({ file, scanId, onSaved, onCancel, onDirtyCha
     setError(null);
     setResult(null);
     const content = withLineEnding(draft, endings.eol);
+    let res;
     try {
-      const res = await writeFile({
+      res = await writeFile({
         scanId,
         path: file.path,
         content,
         // Sent so the server can refuse if something else changed the file
         // since it was opened here. The common case is the same file open in
         // an editor, not a second person.
-        expectedMtime: file.mtime || null,
+        expectedMtime: savedMtime.current || file.mtime || null,
         acknowledgeExecutable: acknowledge,
       });
       ownSave.current = { path: file.path, content };
+      savedMtime.current = res.mtime || null;
       setResult(res);
       setCommandKeys(null);
-      onSaved?.(res);
     } catch (err) {
       if (err.code === 'EEXECUTABLE' && err.details?.commandKeys?.length) {
         // Not an error to report: a question to ask. The notice below names
@@ -143,6 +150,15 @@ export default function FileEditor({ file, scanId, onSaved, onCancel, onDirtyCha
       } else {
         setError(err.message);
       }
+      setSaving(false);
+      return;
+    }
+    // The save landed; what follows is App re-reading the file. Its failure is
+    // reported as that, never as a failed save.
+    try {
+      await onSaved?.(res);
+    } catch (err) {
+      setError(`Saved, but re-reading the file afterwards failed: ${err.message}`);
     } finally {
       setSaving(false);
     }

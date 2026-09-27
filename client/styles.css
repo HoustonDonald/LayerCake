@@ -832,8 +832,11 @@ pre.code {
   gap: 10px;
 }
 
+/* flex: none, not flex: 1. A flex basis overrides the height the resize handle
+   sets, so dragging it did nothing (#70); with none, the dragged height holds
+   and min-height keeps the box at least 320 px. */
 .editor-area {
-  flex: 1;
+  flex: none;
   min-height: 320px;
   width: 100%;
   padding: 12px 14px;
