@@ -19,13 +19,24 @@ const ICON = path.join(path.dirname(fileURLToPath(import.meta.url)), 'desktop', 
  * client, so both serve it the same way as any other asset, behind the same
  * Host guard. Emitted rather than copied into client/public/, so the .ico
  * stays one file and scripts/make-icon.mjs stays its only writer.
+ *
+ * The dev server (npm run dev:client) builds nothing, so there it is served by
+ * a middleware instead (#94), read on each request so a redrawn icon shows
+ * without a restart. generateBundle runs only in a build and configureServer
+ * only in dev, so each half stays out of the other.
  */
 function favicon() {
   return {
     name: 'layercake-favicon',
-    apply: 'build',
     generateBundle() {
       this.emitFile({ type: 'asset', fileName: 'favicon.ico', source: fs.readFileSync(ICON) });
+    },
+    configureServer(server) {
+      server.middlewares.use('/favicon.ico', (req, res, next) => {
+        if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+        res.setHeader('Content-Type', 'image/x-icon');
+        return res.end(fs.readFileSync(ICON));
+      });
     },
   };
 }

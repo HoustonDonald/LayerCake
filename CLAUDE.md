@@ -80,8 +80,11 @@ test's Edge writes into the real profile, and a real LayerCake window already op
 window and decides when the test's exe stops. A test of an exe built before it existed has to
 redirect `LOCALAPPDATA` for that process instead.
 
-`npm start` builds only when `public/index.html` is older than the newest file under `client/`, so a
-change to `server/` alone does not trigger a rebuild and does not need one.
+`npm start`, `npm run app` and `npm run smoke` build the client only when `public/index.html` is
+older than the newest of `client/`, `vite.config.js` and `desktop/layercake.ico`
+(`scripts/build-if-stale.js`, the one copy of that rule, #94), so a change to `server/` alone does
+not trigger a rebuild and does not need one. A smoke rebuild empties `public/` first, so two smoke
+runs that both find it stale can trip each other.
 
 ## Architecture
 
@@ -111,6 +114,7 @@ server/ingest.js    /ingest/<launch>/<secret>/{statusline,hook} from launched se
 client/             React 18 + Vite, two-pane explorer plus editor, snapshots and watch bar
 cli/                layercake CLI, imports server modules directly
 scripts/launch.js   build, serve, then open an app-mode browser window
+scripts/build-if-stale.js the client build rule, shared by start.js, launch.js and smoke
 desktop/window.js   the app window (browser, profile, isolation flags, profile lock), shared by launch.js and main.js
 desktop/main.js     single-executable entry: embedded client, exits when no browser holds the window's profile
 desktop/inflight.js counts running handlers so the exe's shutdown can wait for them
@@ -409,11 +413,15 @@ partially. A truncated file restored is silent data loss.
   window, and every process ended once that window closed.
 - **A second launch that attaches to a running server lingers for `REATTACH_MS` (5 s)**, invisibly,
   before exiting. That is the cost of the fix above.
-- **A window closed within 5 s of launch reads as a hand-off** (`HANDOFF_MS`). With no browser on
-  the profile, the exe then waits for one to appear, so it stays up, invisible, until the next
-  launch's window closes (measured; before #10 it stayed up for good). That wait is for a Chromium
-  that stops keeping the lockfile, where a hand-off would otherwise shut the server down under a
-  live window.
+- **A browser exit within 5 s of launch is told apart by the lockfile** (#93). The exe looks for
+  `<profile>\lockfile` while its browser starts (`watchForLock`, every 100 ms until the first
+  sighting or `HANDOFF_MS`). Seen, and nothing holds the profile at the exit: the window was closed,
+  and the exe stops. Never seen: this may be a Chromium that does not keep the file, where a hand-off
+  also leaves the profile looking empty, so it keeps the old safe side and waits for a browser to
+  appear, which may be never. Measured with the browser living 3.2 to 3.5 s: the exe exited 0.1 s
+  after it, 2 of 2; with the sighting discarded (a mutant), still running 8 s later, 2 of 2. Before
+  the fix a close 3.7 s after launch left the exe running. Under heavy load Edge can take over 5 s
+  to close, and then the exit is past `HANDOFF_MS` and counts as a close anyway.
 - **With no Edge or Chrome installed, the window falls back to the default browser**, in the user's
   own profile, so the `APP_FLAGS` invariant cannot hold there and the exe never sees the window
   close. Stated in the README rather than refused, because the alternative is no app at all.

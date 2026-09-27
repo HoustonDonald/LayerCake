@@ -1,9 +1,11 @@
 /**
  * End to end smoke test. `npm run smoke`.
  *
- * Self contained: builds nothing, but creates its own fixture tree, starts a
- * server on its own port with its own snapshot store, exercises the real HTTP
- * API, and removes everything it made.
+ * Self contained: rebuilds the client only when public/ is stale (the rule npm
+ * start uses, #94), creates its own fixture tree, starts a server on its own
+ * port with its own snapshot store, exercises the real HTTP API, and removes
+ * everything it made. A rebuild empties public/ first, so two runs that both
+ * find it stale can trip each other; after one has rebuilt, neither rebuilds.
  *
  * Why this exists when the project has no test framework: the write path can
  * fail SILENTLY. A CSRF guard applied one route too widely left every HTTP
@@ -25,9 +27,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { projectSlug } from '../server/paths.js';
+import { buildClientIfStale } from './build-if-stale.js';
 import { makeSessionFixture, runLaunchChecks, runSessionChecks, runSummaryChecks, stopFixtureProcesses } from './smoke-sessions.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+
+// The server below serves public/ as built, so checks of what the client ships
+// (the favicon, the HTML) would otherwise grade whatever build happens to be there.
+await buildClientIfStale();
 
 /** A port nothing is listening on right now, chosen by the OS. */
 function freePort() {
@@ -318,7 +325,7 @@ try {
     icon.status === 200 &&
       iconType.startsWith('image/') &&
       iconBytes.equals(await fs.readFile(path.join(ROOT, 'desktop', 'layercake.ico'))),
-    `got ${icon.status} "${iconType}", ${iconBytes.length} bytes (a public/ built before the icon existed needs npm run build)`
+    `got ${icon.status} "${iconType}", ${iconBytes.length} bytes`
   );
   check('favicon.ico refuses a foreign Host header too', (await getWithHost('/favicon.ico', rebound)).status === 403);
 
