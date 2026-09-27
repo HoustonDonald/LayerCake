@@ -84,6 +84,20 @@ function MemoryView({ data }) {
 
 const MODE_LABEL = { override: 'override', concat: 'combined', replace: 'taken whole' };
 
+/** A dotted key with a line-break opportunity after each dot (#129). */
+function KeyPath({ path }) {
+  return path.split('.').map((part, i) => (
+    <React.Fragment key={i}>
+      {i > 0 && (
+        <>
+          .<wbr />
+        </>
+      )}
+      {part}
+    </React.Fragment>
+  ));
+}
+
 function SettingsView({ data }) {
   return (
     <>
@@ -113,7 +127,9 @@ function SettingsView({ data }) {
               <tbody>
                 {data.provenance.map((row) => (
                   <tr key={row.keyPath}>
-                    <td>{row.keyPath}</td>
+                    <td>
+                      <KeyPath path={row.keyPath} />
+                    </td>
                     <td>{MODE_LABEL[row.mode] || row.mode}</td>
                     <td>
                       {row.sources.map((s) => (

@@ -797,9 +797,11 @@ pre.code {
   margin-top: 3px;
 }
 
+/* Keys wrap, after a dot by preference (KeyPath), mid-segment only when one
+   segment is wider than the column. nowrap here printed long keys over the
+   Mode column (#129). */
 .prov-table td:first-child {
   color: var(--accent);
-  white-space: nowrap;
 }
 
 .spinner {
