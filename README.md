@@ -496,7 +496,7 @@ Where it comes from, and what that means:
 over the session's prompts and visible replies, stripped of Claude Code's own context (no tools,
 MCP servers, CLAUDE.md or plugins) so the call carries little besides the session. It finds Claude
 Code as `claude.exe` on PATH (the native installer) or through the `claude.cmd` an npm install
-creates. An estimate is shown before; the actual usage Claude Code reports is recorded after. Measured: a small session cost
+creates, including yarn classic's, which runs npm's shim in turn. An estimate is shown before; the actual usage Claude Code reports is recorded after. Measured: a small session cost
 $0.004 at list price (1,091 tokens in, 583 out), and summarizing all 42 sessions on this machine once
 was estimated at under a dollar. On a subscription this draws on your plan limits, not a bill. Every
 run is listed in "LayerCake's own Claude usage", kept apart from the sessions it summarizes.

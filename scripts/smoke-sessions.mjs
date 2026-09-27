@@ -965,8 +965,24 @@ export async function runSummaryChecks({ base, token, check, skip, proj, smokeDi
     await fs.writeFile(path.join(native, 'claude.exe'), '');
     const preferred = await resolveClaudeCommand({ PATH: [native, prefix, nodeDir].join(path.delimiter) });
     check('claude.exe on PATH is used by name, before any npm shim', JSON.stringify(preferred) === '["claude"]', JSON.stringify(preferred));
+
+    // #89: yarn classic's global bin holds a shim that runs npm's shim in its
+    // own global node_modules. Followed one level to the same script.
+    const yarn = path.join(smokeDir, 'yarn');
+    const yarnBin = path.join(yarn, 'bin');
+    const yarnGlobalBin = path.join(yarn, 'Data', 'global', 'node_modules', '.bin');
+    const yarnPkg = path.join(yarn, 'Data', 'global', 'node_modules', '@anthropic-ai', 'claude-code');
+    await fs.mkdir(yarnBin, { recursive: true });
+    await fs.mkdir(yarnGlobalBin, { recursive: true });
+    await fs.mkdir(yarnPkg, { recursive: true });
+    await fs.writeFile(path.join(yarnPkg, 'cli.js'), 'process.stdout.write(JSON.stringify({ shim: "yarn" }));\n');
+    await fs.writeFile(path.join(yarnBin, 'claude.cmd'), '@"%~dp0\\..\\Data\\global\\node_modules\\.bin\\claude.cmd"   %*\r\n');
+    await fs.writeFile(path.join(yarnGlobalBin, 'claude.cmd'), NPM_SHIM.replace('%dp0%\\node_modules\\@anthropic-ai', '%dp0%\\..\\@anthropic-ai'));
+    const viaYarn = await resolveClaudeCommand({ PATH: [yarnBin, nodeDir].join(path.delimiter) });
+    check('a yarn-classic claude.cmd, which runs another shim, resolves to node plus the same script',
+      viaYarn.length === 2 && path.resolve(viaYarn[1]) === path.join(yarnPkg, 'cli.js'), JSON.stringify(viaYarn));
   } else {
-    skip('an npm claude.cmd shim resolves to node plus its script (2 checks)', 'claude.cmd shims are a Windows form');
+    skip('an npm or yarn claude.cmd shim resolves to node plus its script (3 checks)', 'claude.cmd shims are a Windows form');
   }
 
   // A claude that exits without reading a >64 KB digest used to kill the server.

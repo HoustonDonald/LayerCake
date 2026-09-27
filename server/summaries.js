@@ -228,6 +228,26 @@ function runClaude(input) {
  * synthetic npm prefix. Falls back to plain 'claude', whose ENOENT is then
  * reported with a message naming both forms.
  */
+/**
+ * The script a claude.cmd shim runs, or null. npm's cmd-shim names it relative
+ * to %dp0%. A yarn-classic global shim instead runs ANOTHER shim
+ * (..\Data\global\node_modules\.bin\claude.cmd), which names it; that one is followed,
+ * once, rather than falling back to plain 'claude' (#89).
+ */
+async function scriptOfShim(shim, exists, hops = 1) {
+  const { content } = await readForDisplay(shim);
+  const dir = path.dirname(shim);
+  const rel = /"%(?:~dp0|dp0%)\\?([^"%]+?\.[cm]?js)"/i.exec(content || '')?.[1];
+  if (rel) {
+    const script = path.resolve(dir, rel);
+    return (await exists(script)) ? script : null;
+  }
+  const inner = /"%(?:~dp0|dp0%)\\?([^"%]+?\.cmd)"/i.exec(content || '')?.[1];
+  if (!inner || hops < 1) return null;
+  const next = path.resolve(dir, inner);
+  return (await exists(next)) ? scriptOfShim(next, exists, hops - 1) : null;
+}
+
 export async function resolveClaudeCommand(env = process.env) {
   if (process.platform !== 'win32') return ['claude'];
   const exists = (p) => withTimeout(fs.access(p), DIR_TIMEOUT_MS, p).then(() => true, () => false);
@@ -238,11 +258,8 @@ export async function resolveClaudeCommand(env = process.env) {
   for (const d of dirs) {
     const shim = path.join(d, 'claude.cmd');
     if (!(await exists(shim))) continue;
-    const { content } = await readForDisplay(shim);
-    const rel = /"%(?:~dp0|dp0%)\\?([^"%]+?\.[cm]?js)"/i.exec(content || '')?.[1];
-    if (!rel) continue;
-    const script = path.resolve(d, rel);
-    if (!(await exists(script))) continue;
+    const script = await scriptOfShim(shim, exists);
+    if (!script) continue;
     for (const nodeDir of [d, ...dirs]) {
       const node = path.join(nodeDir, 'node.exe');
       if (await exists(node)) return [node, script];
