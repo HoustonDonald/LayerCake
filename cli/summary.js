@@ -9,6 +9,7 @@
  */
 
 import { flatten } from '../server/flatten.js';
+import { samePathKey } from '../server/paths.js';
 
 /** Categories that flatten('definitions') groups and shadows by declared name. */
 const DEFINITION_CATEGORIES = ['agent', 'skill', 'command'];
@@ -24,14 +25,15 @@ const DEFINITION_CATEGORIES = ['agent', 'skill', 'command'];
  */
 const COUNTED_CATEGORIES = ['hook', 'rule'];
 
+/** Distinct files: one the directory walk reaches a second time is one (#125). */
 function countEntries(lineage, category) {
-  let n = 0;
+  const seen = new Set();
   for (const level of lineage.levels) {
     for (const entry of level.entries) {
-      if (entry.type === 'file' && entry.category === category) n += 1;
+      if (entry.type === 'file' && entry.category === category) seen.add(samePathKey(entry.absPath));
     }
   }
-  return n;
+  return seen.size;
 }
 
 /** Highlights pulled from the computed settings merge, present keys only. */
@@ -152,5 +154,6 @@ export async function buildSummary(lineage) {
     errorCount: lineage.summary.errorCount,
     redactedCount: lineage.summary.redactedCount,
     fileCount: lineage.summary.fileCount,
+    repeatedFileCount: lineage.summary.repeatedFileCount,
   };
 }

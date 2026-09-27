@@ -632,10 +632,15 @@ export async function resolveLineage(projectDir) {
     level.note = level.note ? `${level.note} ${said}` : said;
   }
 
-  const fileCount = levels.reduce(
-    (n, l) => n + l.entries.filter((e) => e.type === 'file').length,
-    0
-  );
+  // The walk re-finds the user level's files when it passes through the folder
+  // holding them: home, for ~/CLAUDE.md and a default ~/.claude, or wherever
+  // CLAUDE_CONFIG_DIR points. The levels show both sightings; a count of files
+  // is a count of distinct files, and says how many were seen twice (#125).
+  // Redactions and errors are counted the same way, since the walk re-finds
+  // those too. A record with no path counts on its own rather than throwing.
+  const distinct = (paths) => new Set(paths.map((p) => (typeof p === 'string' ? samePathKey(p) : Symbol()))).size;
+  const filePaths = levels.flatMap((l) => l.entries.filter((e) => e.type === 'file').map((e) => e.absPath));
+  const fileCount = distinct(filePaths);
 
   return {
     projectDir: resolved,
@@ -647,8 +652,9 @@ export async function resolveLineage(projectDir) {
     summary: {
       levelCount: levels.length,
       fileCount,
-      errorCount: levels.reduce((n, l) => n + l.errors.length, 0),
-      redactedCount: levels.reduce((n, l) => n + l.redacted.length, 0),
+      repeatedFileCount: filePaths.length - fileCount,
+      errorCount: distinct(levels.flatMap((l) => l.errors.map((e) => e.path))),
+      redactedCount: distinct(levels.flatMap((l) => l.redacted.map((r) => r.absPath))),
     },
   };
 }

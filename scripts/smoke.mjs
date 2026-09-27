@@ -546,6 +546,14 @@ try {
     /configuration home/.test(homeWalkLevel?.note || '') &&
       lineage.levels.filter((l) => /configuration home, so its files/.test(l.note || '')).length === 1,
     JSON.stringify(homeWalkLevel?.note));
+  // #125: the file count is of distinct files, with the repeats counted apart,
+  // so the two add up to what the levels list. The three files above are among
+  // the repeats, so a count of sightings cannot pass.
+  const sightings = lineage.levels.reduce((n, l) => n + l.entries.filter((e) => e.type === 'file').length, 0);
+  check('the file count counts a file reached by two routes once, and says how many (#125)',
+    lineage.summary.repeatedFileCount >= 3 &&
+      lineage.summary.fileCount + lineage.summary.repeatedFileCount === sightings,
+    JSON.stringify([lineage.summary, sightings]));
   const defs = await (
     await fetch(`${BASE}/api/flatten?scanId=${scanId}&kind=definitions`, { headers: H })
   ).json();
@@ -716,6 +724,11 @@ try {
     'snapshot deduplicates a file reached by two routes',
     snap.files.length === new Set(snap.files.map((f) => f.absPath.toLowerCase())).size
   );
+  // The snapshot stores each distinct file once, by its own dedupe, so it is a
+  // second opinion on the scan's file count (#125).
+  check('the scan counts the files a full snapshot holds',
+    snap.counts.files + snap.counts.skipped + snap.counts.errors === lineage.summary.fileCount,
+    JSON.stringify([snap.counts, lineage.summary.fileCount]));
 
   const list = await (await fetch(`${BASE}/api/snapshots`, { headers: H })).json();
   check('snapshot list includes the undo snapshot', list.snapshots.some((s) => s.id === saved.undoSnapshotId));

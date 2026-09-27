@@ -228,6 +228,11 @@ export default function LineageTree({ lineage, selectedPath, onSelect, overlay, 
       <div className="summary-bar">
         <span>{lineage.summary.levelCount} levels</span>
         <span>{lineage.summary.fileCount} files</span>
+        {lineage.summary.repeatedFileCount > 0 && (
+          <span title="Found at the user level and again by the directory walk, which passes through the folder holding them. Each is counted once.">
+            {lineage.summary.repeatedFileCount} reached twice
+          </span>
+        )}
         {lineage.summary.errorCount > 0 && (
           <span style={{ color: 'var(--err)' }}>{lineage.summary.errorCount} errors</span>
         )}

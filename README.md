@@ -148,6 +148,13 @@ Every directory from the filesystem root down to the project directory. For each
 
 The walk terminates at a drive root, a UNC share root (`\\server\share`), or 64 hops.
 
+When the project sits under your home directory, the walk passes through home and finds
+`~\CLAUDE.md` and `~\.claude` again, so their files appear at both the user level and the home
+directory's level. Both sightings are shown, and when that `.claude` is the configuration home the
+level says why. Counts are of distinct files: the summary bar, `layercake tree` and
+`layercake here` count such a file once and say how many were reached twice, and redactions, errors
+and the CLI's hook and rule counts are counted the same way.
+
 ### Never touched
 
 ```

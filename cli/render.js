@@ -76,6 +76,14 @@ function continued(value) {
   out(`${' '.repeat(LABEL)}${value}`);
 }
 
+/**
+ * The file count is of distinct files; this says how many of them the directory
+ * walk reached a second time, so the levels' own lists add up (#125).
+ */
+function reachedTwice(n) {
+  return n ? ` (${n} reached twice)` : '';
+}
+
 /* ------------------------------------------------------------------ here -- */
 
 export function renderHere(summary) {
@@ -86,7 +94,8 @@ export function renderHere(summary) {
   out(
     paint.dim(
       `${summary.platform}   home ${home}   scanned ${localTime(summary.scannedAt)}   ` +
-        `${plural(summary.fileCount, 'config file')} across ${plural(summary.levels.total, 'level')}`
+        `${plural(summary.fileCount, 'config file')}${reachedTwice(summary.repeatedFileCount)} ` +
+        `across ${plural(summary.levels.total, 'level')}`
     )
   );
   out();
@@ -178,7 +187,8 @@ export function renderTree(lineage, { all }) {
   out(paint.bold(lineage.projectDir));
   out(
     paint.dim(
-      `${plural(lineage.summary.levelCount, 'level')}, ${plural(lineage.summary.fileCount, 'file')}, ` +
+      `${plural(lineage.summary.levelCount, 'level')}, ` +
+        `${plural(lineage.summary.fileCount, 'file')}${reachedTwice(lineage.summary.repeatedFileCount)}, ` +
         `${plural(lineage.summary.errorCount, 'error')}, ${lineage.summary.redactedCount} redacted   ` +
         `${lineage.platform}   scanned ${localTime(lineage.scannedAt)}`
     )
