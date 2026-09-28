@@ -110,12 +110,23 @@ async function assertStillHeld(absPath, expectSha256) {
  * does: a create that silently won a race with an editor would destroy a file
  * no snapshot holds, because it was not there when the scan ran.
  *
- * The content goes to a temp file first and is published with a hard link,
- * which fails with EEXIST instead of replacing, so the file appears whole or
- * not at all. A volume without hard links (FAT, some shares) gets an exclusive
- * create instead: still never a replacement, but a crash mid-write could leave
- * a partial new file there. Missing folders are made first, which is how a
- * level's .claude/agents/ comes to exist.
+ * The content goes to a temp file first. An exclusive create then claims the
+ * name, failing with EEXIST on a file that exists, and the temp file is renamed
+ * over that empty placeholder at once. So the file is empty for the instant of
+ * the rename and then whole, never partly written; a crash between the two
+ * leaves the empty placeholder and an orphaned temp file.
+ *
+ * It used to publish with a hard link, which needs no placeholder. On Windows
+ * that left the new file unreplaceable for seconds: removing the temp name
+ * while another program (antivirus, most likely) still had it open kept the
+ * file's second link pending, and a save or restore over the new file failed
+ * with EPERM after the whole 5 s retry (#150); the blocks measured cleared 28
+ * to 60 s after they began. A restore over a file a restore had just created,
+ * run side by side under load: 14 of 1,200 failed with the link, 0 of 1,200
+ * with the placeholder. A save moments after a create is ordinary use.
+ *
+ * Missing folders are made first, which is how a level's .claude/agents/ comes
+ * to exist.
  */
 export async function createExclusive(absPath, data) {
   const dir = path.dirname(absPath);
@@ -123,11 +134,21 @@ export async function createExclusive(absPath, data) {
   const temp = path.join(dir, `${TEMP_PREFIX}${crypto.randomBytes(6).toString('hex')}`);
   try {
     await fs.writeFile(temp, data);
+    await (await fs.open(absPath, 'wx')).close();
     try {
-      await fs.link(temp, absPath);
+      // Replaces only the placeholder made on the line above. A program
+      // writing to the new name within that instant would be replaced: the
+      // same few-millisecond window every replace here has (#110).
+      await renameRetrying(temp, absPath);
     } catch (err) {
-      if (err.code === 'EEXIST') throw err;
-      await fs.writeFile(absPath, data, { flag: 'wx' });
+      // Leave no empty file behind a failed create, and never remove one
+      // that someone has written to since.
+      try {
+        if ((await fs.stat(absPath)).size === 0) await fs.unlink(absPath);
+      } catch {
+        /* the placeholder stays; the create still reports its failure */
+      }
+      throw err;
     }
   } finally {
     try {

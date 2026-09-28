@@ -227,11 +227,11 @@ export async function runCreateChecks({ base, token, check, skip, smokeDir, conf
   const variant = process.platform === 'win32' ? agentPath.toUpperCase() : agentPath;
   const mixedRes = await post('/api/restore', { scanId: lin.scanId, id: del.json?.undoSnapshotId, paths: [variant, notHeld] });
   const noneRes = await post('/api/restore', { scanId: lin.scanId, id: del.json?.undoSnapshotId, paths: [notHeld] });
-  // Matched means restored or failed for another reason: this checks the
-  // matching, not the write (which once failed under four parallel runs, #150).
-  const variantRow = [...(mixedRes.json?.restored || []).map((p) => ({ absPath: p })), ...(mixedRes.json?.failed || [])].find((r) => same(r.absPath, variant));
+  // Restored, not merely matched. This file was just put back by a restore
+  // that created it, and a restore over such a file used to fail with EPERM
+  // under load, because the create published with a hard link (#150).
   check('a restore matches paths as the fence does, and fails one the snapshot does not hold (#142)',
-    mixedRes.status === 200 && Boolean(variantRow) && variantRow.code !== 'ENOTINSNAPSHOT' &&
+    mixedRes.status === 200 && (mixedRes.json?.restored || []).some((p) => same(p, variant)) &&
       mixedRes.json?.failed?.some((f) => same(f.absPath, notHeld) && f.code === 'ENOTINSNAPSHOT') &&
       noneRes.status === 400 && noneRes.json?.details?.failed?.[0]?.code === 'ENOTINSNAPSHOT',
     JSON.stringify({ mixed: mixedRes.json, none: noneRes.json }));

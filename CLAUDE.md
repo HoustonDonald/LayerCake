@@ -164,10 +164,13 @@ the Windows lock retry, not once before it: a write landing while the file was l
 deleted unseen (#100). A window of a few milliseconds between that check and the rename or unlink
 remains; closing it would need OS-level locking (#110). The snapshot's own copy is retried on a
 lock like the rename, so another program's brief exclusive lock delays a save rather than failing
-it (#107). A create is the one write with no snapshot, by design: it
-publishes with a hard link (`createExclusive`), which refuses an existing file, so it never replaces
-bytes and has nothing to back up; its undo is a delete. Anything that could replace a file stays on
-`atomicWrite` behind a snapshot.
+it (#107). A create is the one write with no snapshot, by design: `createExclusive` claims the
+name with an exclusive create, which refuses an existing file, then renames its temp file over that
+empty placeholder, so it never replaces bytes and has nothing to back up; its undo is a delete. It
+must not publish with a hard link: on Windows, removing the temp name while another program (most
+likely antivirus; not identified) still held it left the new file unreplaceable for up to a minute,
+so a save moments after a create failed (#150).
+Anything that could replace a file stays on `atomicWrite` behind a snapshot.
 Writes land via temp file plus rename in the same directory, so a crash leaves the old file or the
 new one, never a half-written config that breaks every future session. On Windows the rename is
 retried for up to 5 s on EPERM/EACCES/EBUSY, because a rename over a file another process has open

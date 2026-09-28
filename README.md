@@ -430,9 +430,9 @@ path:
   acknowledgement as editing one. It does nothing until a `hooks` entry in `settings.json` names it.
 
 A new file starts from a short template and opens in the editor. **A create never replaces a file**:
-it is published with a hard link, which refuses an existing name (on a volume without hard links,
-an exclusive create does the same, without the atomic publish). So it needs no snapshot, and its
-undo is a delete. Managed policy, plugins and Claude Code's own project memory are not offered.
+it claims the name with an exclusive create, which refuses an existing one, and then moves the new
+content onto that empty placeholder, so the file is never seen half written. So it needs no
+snapshot, and its undo is a delete. Managed policy, plugins and Claude Code's own project memory are not offered.
 
 **Delete** is in the file viewer and asks first, in the page. It takes a snapshot, and deletes only
 if that snapshot holds the file: a file over the 2 MB cap, which snapshots skip, is refused, since
