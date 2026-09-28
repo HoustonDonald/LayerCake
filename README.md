@@ -176,6 +176,12 @@ Every directory from the filesystem root down to the project directory. For each
 
 The walk terminates at a drive root, a UNC share root (`\\server\share`), or 64 hops.
 
+A folder inside those trees that is a link (a junction needs no admin rights, so people link shared
+skills in this way) is walked like any folder, because Claude Code 2.1.283 was measured to load
+skills and agents through one (#144). Every file behind it names the link and its target, in the
+file viewer, since an edit or delete there lands in the target. A link to a network share is listed
+under "other" and not walked, so a share that stops answering cannot stall a scan.
+
 When the project sits under your home directory, the walk passes through home and finds
 `~\CLAUDE.md` and `~\.claude` again, so their files appear at both the user level and the home
 directory's level. Both sightings are shown, and when that `.claude` is the configuration home the

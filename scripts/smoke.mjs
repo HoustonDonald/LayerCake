@@ -85,6 +85,8 @@ function skip(name, reason) {
 let smokeDir = null;
 /** Set when the drive root could not be written and the fixture went to %TEMP% (#78). */
 let fixtureFellBack = false;
+/** True when the fixture could make a directory link to a share (#144); else the error code. */
+let shareLinkMade = false;
 
 async function makeFixture() {
   // Under the drive root, not in %TEMP%, which is inside the user profile: the
@@ -257,6 +259,16 @@ async function makeFixture() {
   await fs.writeFile(path.join(parent, 'AGENTS.md'), '# parent agents\n');
   await fs.mkdir(path.join(smokeDir, 'agents-only'), { recursive: true });
   await fs.writeFile(path.join(smokeDir, 'agents-only', 'AGENTS.md'), '# lone agents\n');
+  // #144: a skill folder that is a junction, which Claude Code loads through
+  // (measured); and, where the OS lets this user make one, a link to a share,
+  // which must be listed and never walked. The share does not exist: reading
+  // the link must not touch it.
+  const sharedSkill = path.join(smokeDir, 'shared-skills', 'linked-skill');
+  await fs.mkdir(sharedSkill, { recursive: true });
+  await fs.writeFile(path.join(sharedSkill, 'SKILL.md'), '---\nname: linked-skill\n---\nShared.\n');
+  await fs.symlink(sharedSkill, path.join(proj, '.claude', 'skills', 'linked-skill'), 'junction');
+  const shareTarget = process.platform === 'win32' ? '\\\\localhost\\lc-no-such-share\\skills' : '//localhost/lc-no-such-share/skills';
+  shareLinkMade = await fs.symlink(shareTarget, path.join(proj, '.claude', 'skills', 'share-skill'), 'dir').then(() => true, (e) => e.code);
   const repoMemory = path.join(configHome, 'projects', projectSlug(gitRepo), 'memory');
   await fs.mkdir(repoMemory, { recursive: true });
   await fs.writeFile(path.join(repoMemory, 'MEMORY.md'), '# memory of the repository root\n');
@@ -508,6 +520,22 @@ try {
   // note, and is no entry: the page draws entries as files to open.
   const trashDir = path.join(proj, '.claude', 'skills', '.trash');
   const projOther = lineage.levels.flatMap((l) => l.other || []);
+  // #144: the junctioned skill is listed, as a skill, saying which link it is
+  // reached through; the link to a share is listed and not walked.
+  const linkedManifest = all.find((e) => samePathKey(e.absPath) === samePathKey(path.join(proj, '.claude', 'skills', 'linked-skill', 'SKILL.md')));
+  check('a skill folder linked in with a junction is scanned, naming the link (#144)',
+    linkedManifest?.category === 'skill' && linkedManifest.isSkillManifest === true && /Reached through the link .*linked-skill/.test(linkedManifest.note || ''),
+    JSON.stringify(linkedManifest && { category: linkedManifest.category, note: linkedManifest.note }));
+  if (process.platform !== 'win32') {
+    skip('a link to a network share is listed, not walked (#144, #74)', 'UNC paths are a Windows form');
+  } else if (shareLinkMade === true) {
+    const shareLink = lineage.levels.flatMap((l) => l.other || []).find((o) => samePathKey(o.absPath) === samePathKey(path.join(proj, '.claude', 'skills', 'share-skill')));
+    check('a link to a network share is listed, not walked (#144, #74)',
+      /network share: listed, not scanned/.test(shareLink?.note || '') && !all.some((e) => e.absPath.includes('share-skill')),
+      JSON.stringify(shareLink));
+  } else {
+    skip('a link to a network share is listed, not walked (#144, #74)', `this user cannot make a directory link (${shareLinkMade})`);
+  }
   check('a runtime folder such as skills/.trash is listed as not read, never as an entry to open (#130)',
     !all.some((e) => samePathKey(e.absPath) === samePathKey(trashDir)) &&
       projOther.some((o) => samePathKey(o.absPath) === samePathKey(trashDir) && o.type === 'dir' && /Runtime state/.test(o.note || '')),

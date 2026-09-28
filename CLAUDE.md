@@ -440,7 +440,9 @@ partially. A truncated file restored is silent data loss.
   3.2 s, not 21.3 s as before #66; the prompt returns when Windows gives up.
 - **Paths are fenced lexically; junctions and symlinks are followed.** If `.claude/agents` (or
   `.claude` itself) is a junction, a create or save lands in its target, the way Claude Code reads
-  it (#102). Whoever can plant a junction in a config folder can already write there.
+  it (#102). Whoever can plant a junction in a config folder can already write there. A link inside
+  a tree (a skill folder that is a junction) is walked too, since Claude Code loads through it
+  (measured, #144), and each file behind it names the link and says edits land in the target.
 - **Case twins in a case-sensitive folder cannot be edited or deleted.** With `a.md` and `A.md` in a
   folder WSL or `fsutil` made case-sensitive, a snapshot keeps one of them (paths are folded on
   Windows), so a save or delete of either is refused rather than risk the other (#110).
@@ -472,7 +474,10 @@ partially. A truncated file restored is silent data loss.
 - **A local folder that is a symbolic link to a share is watched natively.** Network detection is
   per drive letter (#57), so `C:\proj\.claude\skills` linked to `\\server\skills` keeps the blocking
   risk polling exists to avoid (reasoned, not measured). A native `realpath` per watched folder would
-  catch it, at one call per folder per stream.
+  catch it, at one call per folder per stream. A link INSIDE a tree whose target is a UNC path is
+  listed and not walked (#144; its target read with `readlink`, which never touches the share), so
+  this limit is now only a tree's own root being such a link. That branch is reasoned: this user
+  cannot make a directory symlink on Windows without Developer Mode, and Linux has no UNC.
 - **The app window's profile is still signed in to the Windows Microsoft account.** The isolation
   flags stop sync and extensions; no flag found stops Edge attaching the account identity.
 - **The exe follows the browser profile, through Chromium's `lockfile`** (#10). It stops when its

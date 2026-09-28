@@ -13,7 +13,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { projectSlug } from '../server/paths.js';
+import { TEMP_PREFIX, projectSlug } from '../server/paths.js';
 
 const exists = (p) => fs.access(p).then(() => true, () => false);
 
@@ -196,7 +196,9 @@ export async function runCreateChecks({ base, token, check, skip, smokeDir, conf
     check('a read-only file is refused by delete, save and restore, readably, and stays (#141)',
       roDel.status === 409 && roDel.json?.code === 'EREADONLY' && roWrite.status === 409 && roWrite.json?.code === 'EREADONLY' &&
         foldersAfterRo === foldersBeforeRo && roRestore.json?.failed?.[0]?.code === 'EREADONLY' &&
-        !/tmp/i.test(JSON.stringify([roDel.json, roWrite.json, roRestore.json?.failed])) &&
+        // No answer names LayerCake's temp file, as the raw EPERM did. Not
+        // "tmp": on Linux the fixture itself sits under /tmp.
+        !JSON.stringify([roDel.json, roWrite.json, roRestore.json?.failed]).includes(TEMP_PREFIX) &&
         (await fs.readFile(ro, 'utf8')) === '# kept as it is\n',
       JSON.stringify({ del: roDel.json, write: roWrite.json, restore: roRestore.json?.failed, folders: [foldersBeforeRo, foldersAfterRo] }));
   } finally {

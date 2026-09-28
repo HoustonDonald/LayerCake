@@ -191,10 +191,31 @@ async function probeClaudeDirFile(claudeDir, target, level) {
 }
 
 /**
- * Depth-limited directory walk. Symlinks are stat'ed, not followed as trees:
- * a cycle would otherwise walk forever.
+ * Where a link points, from the link itself: readlink reads the local reparse
+ * point and never touches the target, so a link to a dead share costs no
+ * stranded call. Windows reports a junction's target as \\?\C:\... or
+ * \\?\UNC\server\share\...; both are put back into ordinary form.
  */
-async function walkTree(root, { maxDepth, exts, category, level, depth = 0, seen = new Set() }) {
+async function linkTarget(abs) {
+  try {
+    const raw = String(await timedFsCall(abs, () => fs.readlink(abs)));
+    const plain = raw.replace(/^\\\\\?\\UNC\\/i, '\\\\').replace(/^\\\\\?\\/, '');
+    return path.resolve(path.dirname(abs), plain);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Depth-limited directory walk. A link to a folder (a junction needs no admin
+ * rights) is walked like a folder, since Claude Code loads what is behind it:
+ * measured on 2.1.283, a skill folder that is a junction, a user skills/ that
+ * is one, and an agent in a junctioned folder all loaded (#144). The depth
+ * limit bounds a link that points back up the tree. A link to a network share
+ * is listed and not walked: the gate keys calls by their path, and through a
+ * local link a share would be reached ungated (#74).
+ */
+async function walkTree(root, { maxDepth, exts, category, level, depth = 0, seen = new Set(), linked = null }) {
   let dirents;
   try {
     dirents = await timedFsCall(root, () => fs.readdir(root, { withFileTypes: true }));
@@ -216,7 +237,30 @@ async function walkTree(root, { maxDepth, exts, category, level, depth = 0, seen
       level.redacted.push({ absPath: abs, reason: 'Credential file, never read' });
       continue;
     }
-    if (dirent.isDirectory()) {
+    // A link to a folder is a folder here (#144); a link to a file falls
+    // through to the file rules below, as before.
+    let isDir = dirent.isDirectory();
+    let link = linked;
+    if (dirent.isSymbolicLink()) {
+      const target = await linkTarget(abs);
+      if (target && isUncPath(target)) {
+        level.other.push({
+          id: nextId('o'),
+          name: level.dir ? path.relative(level.dir, abs) : abs,
+          absPath: abs,
+          type: 'link',
+          size: null,
+          note: `A link to ${target}, a network share: listed, not scanned, so a share that stops answering cannot stall LayerCake (#74).`,
+        });
+        continue;
+      }
+      const { st } = await statOf(abs);
+      if (st && st.isDirectory()) {
+        isDir = true;
+        link = { link: abs, target: target || 'an unknown target' };
+      }
+    }
+    if (isDir) {
       // hooks/ takes files of any extension, so a hook's own logs/ or cache/
       // would read as hooks; there the .claude root's runtime names are skipped
       // too. In the other trees such a name is a skill or a command (#98, #104).
@@ -236,7 +280,7 @@ async function walkTree(root, { maxDepth, exts, category, level, depth = 0, seen
         continue;
       }
       if (depth + 1 <= maxDepth) {
-        await walkTree(abs, { maxDepth, exts, category, level, depth: depth + 1, seen });
+        await walkTree(abs, { maxDepth, exts, category, level, depth: depth + 1, seen, linked: link });
       }
       continue;
     }
@@ -247,7 +291,16 @@ async function walkTree(root, { maxDepth, exts, category, level, depth = 0, seen
     if (!treeTakesFile(exts, dirent.name)) continue;
     const { st, error } = await statOf(abs);
     level.entries.push({
-      ...makeEntry({ absPath: abs, category, level, st, error }),
+      ...makeEntry({
+        absPath: abs,
+        category,
+        level,
+        st,
+        error,
+        // Said on every file behind a link: it is Claude Code's too, and an
+        // edit or delete here lands in the link's target, which may be shared.
+        note: link ? `Reached through the link ${link.link}, which points to ${link.target}. Edits and deletes land there.` : null,
+      }),
       isSkillManifest: dirent.name.toUpperCase() === 'SKILL.MD',
     });
   }

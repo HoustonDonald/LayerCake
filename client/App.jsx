@@ -214,7 +214,9 @@ export default function App() {
       // category comes from the scan entry, not the file read: the editor
       // needs it to know whether this is executable content, and the server
       // makes the same distinction from the same source.
-      setFile({ ...result, category: entry.category });
+      // The entry's note too: why a file is not read, or the link it is
+      // reached through (#144), said where the file is opened.
+      setFile({ ...result, category: entry.category, note: entry.note || null });
       if (edit && !result.error) setEditing(true);
     } catch (err) {
       setFile({ path: entry.absPath, kind: 'text', error: { code: 'EREQ', message: err.message } });

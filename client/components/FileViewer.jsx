@@ -164,6 +164,7 @@ function LoadedFile({ file, onEdit, onDelete, editableCategories }) {
         </div>
       </div>
       <div className="viewer-body">
+        {file.note && <div className="notice info">{file.note}</div>}
         {confirming && <DeleteConfirm file={file} onDelete={onDelete} onCancel={() => setConfirming(false)} />}
         <FileBody file={file} />
       </div>
