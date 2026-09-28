@@ -31,8 +31,27 @@ at `/tmp/layercake-linux-smoke`, lockfile unchanged so `rsync` the tree over it 
 `node scripts/smoke.mjs`): 341 passed, 0 failed, 17 skipped on 2026-09-28 with 42df32a.
 Smoke writes and deletes a throwaway `HKCU\Software\LayerCakeSmoke-*` key on Windows (#147).
 
-`dist\LayerCake.exe` was rebuilt from 8dfb36f at 16:57 on 2026-09-28 and launch-checked; it is
+`dist\LayerCake.exe` was rebuilt from e439593 at 17:39 on 2026-09-28 and launch-checked; it is
 current. Older "not rebuilt" notes below are history.
+
+### 2026-09-28, night: the (b) queue (#76, #54, #64; #95 part 1 left open)
+
+Each commit message lists its measurements, checks and mutants:
+- **02b40cb** (#76): a watched folder renamed or moved is closed, not followed. Its own watch
+  reports nothing and names its children under the old path (measured); now each event waits for
+  a path-and-identity check, and a watched parent's rename runs it at once (31 of 78 watched
+  folders here have no watched parent).
+- **e94a162** (#54): Review changes stops after 0.5 s (jsdiff's own `timeout`) and says the two
+  are too different; a 5,000-line full replacement froze the page 3 s in headless Edge.
+- **e439593** (#64): a `CLAUDE_CONFIG_DIR` in the default home's settings env moves the home, and
+  LayerCake follows it (measured on 2.1.284 with a zero-usage probe: everything moves but
+  `.claude.json`). Managed settings doing the same is #158, filed, not modelled.
+- **#95 part 1** left open with the analysis on the issue: the suggested lockfile signal cannot
+  tell a hand-off from a quick close; fixing it needs the exe relaunch-timing harness.
+
+Scratch tools of this round: `watch-rename-76.mjs`, `parents-76.mjs`, `mutate-76.mjs`,
+`diff-54.mjs`, `ui-54.mjs` (headless Edge, using the 82a4caf9 session's `edge.mjs`),
+`control-54.cjs`, `cfgdir-probe-64.mjs` (the zero-usage home probe), `mutate-64.mjs`.
 
 ### 2026-09-28, late evening: a plain-Windows minimum (#11, #157)
 
@@ -67,7 +86,8 @@ holds the detail. Work top down:
    case, a work machine off VPN for the timeout case (plan on the issue). The owner chose to skip
    it for now (2026-09-28 evening).
 4. ~~**#79 with #95 part 2**~~: done, 2026-09-28 evening, with #156 found on the way.
-5. **#76**, then **#54**, then **#64**, then **#95 part 1**: (b), cheap.
+5. ~~**#76**, **#54**, **#64**~~: done 2026-09-28 night. **#95 part 1**: left open, not cheap
+   after all (analysis on the issue).
 6. **#146** (macOS/Linux, not required), **#74** (needs Developer Mode to test).
 7. Verification only: ~~**#11**~~ (done 2026-09-28 evening: the work machines have no Git Bash,
    so it rose, and it checks out under PowerShell), **#89** (stays low: the work machines use the
