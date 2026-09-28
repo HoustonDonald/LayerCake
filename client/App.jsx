@@ -3,6 +3,17 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { createFile, deleteFile, getManifest, getSession, listSessions, readFile, scan } from './api.js';
 import useWatch from './useWatch.js';
 import { pathKey } from './sessionFormat.js';
+
+/**
+ * A snapshot id (its UTC creation time, 2026-09-28T00-32-29-981Z) as local
+ * time, the way the snapshot list shows it; the id itself if it is not one.
+ */
+function snapshotTime(id) {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/.exec(String(id));
+  if (!m) return String(id);
+  const t = new Date(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`);
+  return Number.isNaN(t.getTime()) ? String(id) : t.toLocaleString();
+}
 import LineageTree from './components/LineageTree.jsx';
 import FileViewer from './components/FileViewer.jsx';
 import FlattenView from './components/FlattenView.jsx';
@@ -244,6 +255,10 @@ export default function App() {
   const onRestored = useCallback(
     async (res) => {
       if (res?.restored?.length) suppressWatch(res.restored);
+      // A "Deleted ... restore it from Snapshots" banner is done once that
+      // file is back; it used to outlive the restore (#133).
+      const back = new Set((res?.restored || []).map(pathKey));
+      setFlash((f) => (f?.deleted && back.has(pathKey(f.deleted)) ? null : f));
       // A file that was gone from disk is back (#92), and the lineage does not
       // list it yet: rescan, so it can be opened again.
       const known = new Set((lineage?.levels || []).flatMap((l) => l.entries).map((e) => pathKey(e.absPath)));
@@ -286,9 +301,13 @@ export default function App() {
       suppressWatch([res.absPath]);
       clearWatch();
       await runScan(lineage.projectDir);
+      // Local time first, as the snapshot list shows it; the id, which is UTC,
+      // stays for `layercake restore <id>` (#133). The banner remembers the
+      // file, so restoring it clears the banner (onRestored).
       setFlash({
-        text: `Deleted ${res.absPath}. Snapshot ${res.undoSnapshotId} holds it; restore it from Snapshots.`,
+        text: `Deleted ${res.absPath}. The snapshot taken ${snapshotTime(res.undoSnapshotId)} (${res.undoSnapshotId}) holds it; restore it from Snapshots.`,
         sub: res.notice,
+        deleted: res.absPath,
       });
     },
     [lineage, suppressWatch, clearWatch, runScan]

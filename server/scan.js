@@ -222,17 +222,17 @@ async function walkTree(root, { maxDepth, exts, category, level, depth = 0, seen
       // too. In the other trees such a name is a skill or a command (#98, #104).
       // The rule is shared with the restore fence (#105).
       if (treeSkipsDir(category, dirent.name)) {
-        const { st } = await statOf(abs);
-        level.entries.push(
-          makeEntry({
-            absPath: abs,
-            category: 'other',
-            level,
-            st,
-            error: null,
-            note: 'Runtime state, not scanned',
-          })
-        );
+        // Listed with the other things the scan does not read, never as an
+        // entry: the page draws entries as files to open, and opening a
+        // folder was refused as "not part of this scan result" (#130).
+        level.other.push({
+          id: nextId('o'),
+          name: level.dir ? path.relative(level.dir, abs) : abs,
+          absPath: abs,
+          type: 'dir',
+          size: null,
+          note: 'Runtime state, not scanned',
+        });
         continue;
       }
       if (depth + 1 <= maxDepth) {
@@ -323,6 +323,10 @@ async function scanManaged() {
         absPath: candidate.file,
         name: path.basename(candidate.file),
         category: 'settings',
+        // Another OS's location is listed so the level says where managed
+        // settings live there, but the watcher does not try to watch it: on
+        // Windows /Library/... is C:\Library\..., which read as a gap (#133).
+        platform: candidate.platform,
         note: candidate.legacy ? `${candidate.platform} legacy location, which Claude Code no longer reads` : `${candidate.platform} location`,
       });
     }

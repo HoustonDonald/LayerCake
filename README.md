@@ -198,6 +198,7 @@ recursed into, because they are large and hold no config. Inside `hooks/`, which
 extension, the same names are skipped, so a hook's own `logs/` or `cache/` is not read as hooks.
 Inside the other trees a folder with one of those names is a skill or a command, and is walked;
 there only `.trash` (where Claude Code moves removed skills), `node_modules` and `.git` are skipped.
+A skipped folder is listed under "other" with a note, never as a file to open (#130).
 
 ---
 

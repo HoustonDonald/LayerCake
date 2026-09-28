@@ -240,6 +240,8 @@ export function watchTargets(lineage) {
       for (const folder of treeFoldersAbove(entry.absPath)) consider(folder);
     }
     for (const missing of level.absent) {
+      // Another OS's managed location, listed for reference (#133).
+      if (missing.platform && missing.platform !== process.platform) continue;
       // A subtree that exists but holds no config yet is where its first
       // file will land, so it is watched itself, not only through .claude.
       if (missing.dirExists) consider(missing.absPath);

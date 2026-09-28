@@ -103,6 +103,33 @@ export default function WatchBanner({ changes, ready, error, editorDirty, onResc
     </span>
   );
 
+  // Rescan and Dismiss, wherever changes are pending. The idle bar needs them
+  // too: with only muted changes it used to keep their chips with no way to
+  // clear them short of a rescan from elsewhere (#133).
+  const actions = confirming ? (
+    <>
+      <span className="watch-confirm">Re-scanning discards your unsaved edit.</span>
+      <button className="btn btn-small btn-primary" onClick={onRescan}>
+        Discard and rescan
+      </button>
+      <button className="btn btn-small" onClick={() => setConfirming(false)}>
+        Keep editing
+      </button>
+    </>
+  ) : (
+    <>
+      <button
+        className="btn btn-small btn-primary"
+        onClick={() => (editorDirty ? setConfirming(true) : onRescan())}
+      >
+        Rescan
+      </button>
+      <button className="btn btn-small" onClick={onDismiss}>
+        Dismiss
+      </button>
+    </>
+  );
+
   if (!lit) {
     return (
       <div className="watch-banner watch-banner-idle">
@@ -123,6 +150,7 @@ export default function WatchBanner({ changes, ready, error, editorDirty, onResc
         </span>
         {files}
         {mutedList}
+        {changes.length > 0 && actions}
         {notifySupported && (
           <button
             className="btn btn-small"
@@ -153,30 +181,7 @@ export default function WatchBanner({ changes, ready, error, editorDirty, onResc
       <span className="watch-text">{summary}</span>
       {files}
       {mutedList}
-
-      {confirming ? (
-        <>
-          <span className="watch-confirm">Re-scanning discards your unsaved edit.</span>
-          <button className="btn btn-small btn-primary" onClick={onRescan}>
-            Discard and rescan
-          </button>
-          <button className="btn btn-small" onClick={() => setConfirming(false)}>
-            Keep editing
-          </button>
-        </>
-      ) : (
-        <>
-          <button
-            className="btn btn-small btn-primary"
-            onClick={() => (editorDirty ? setConfirming(true) : onRescan())}
-          >
-            Rescan
-          </button>
-          <button className="btn btn-small" onClick={onDismiss}>
-            Dismiss
-          </button>
-        </>
-      )}
+      {actions}
     </div>
   );
 }

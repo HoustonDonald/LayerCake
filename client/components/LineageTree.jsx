@@ -124,7 +124,7 @@ function OtherList({ items }) {
   return (
     <div className="other-list">
       <button className="absent-toggle" onClick={() => setOpen((v) => !v)}>
-        {open ? '▾' : '▸'} {items.length} other entries in .claude/ (listed, not parsed)
+        {open ? '▾' : '▸'} {items.length} other entries (listed, not read)
       </button>
       {open &&
         items.map((item) => (

@@ -504,6 +504,14 @@ try {
   check('scan found the project hook', hook?.category === 'hook');
   check('scan lists a live skill', all.some((e) => e.category === 'skill' && e.absPath.includes('live-skill')));
   check('scan does not list a trashed skill as config', !all.some((e) => e.category === 'skill' && e.absPath.includes('.trash')));
+  // #130: the trash folder is listed among the things not read, with its
+  // note, and is no entry: the page draws entries as files to open.
+  const trashDir = path.join(proj, '.claude', 'skills', '.trash');
+  const projOther = lineage.levels.flatMap((l) => l.other || []);
+  check('a runtime folder such as skills/.trash is listed as not read, never as an entry to open (#130)',
+    !all.some((e) => samePathKey(e.absPath) === samePathKey(trashDir)) &&
+      projOther.some((o) => samePathKey(o.absPath) === samePathKey(trashDir) && o.type === 'dir' && /Runtime state/.test(o.note || '')),
+    JSON.stringify(projOther.map((o) => o.name)));
   check(
     'scan excluded the credential file',
     !all.some((e) => e.name === '.credentials.json') &&
@@ -1083,6 +1091,14 @@ try {
   const watch = openWatch(scanId, H);
   const ready = await watch.waitFor('ready');
   check('watch stream opens and reports readiness', Boolean(ready));
+  // #133: another OS's managed folder is listed by the scan for reference but
+  // is no gap here: on Windows /Library/... is C:\Library\..., never there.
+  const otherOs = process.platform === 'win32' ? /Library[\\/]Application Support|[\\/]etc[\\/]claude-code/ : /ProgramData|Program Files/;
+  const gapPaths = [...(ready?.data?.skipped || []), ...(ready?.data?.errors || [])].map((g) => g.absPath || g.path || '');
+  check("the watch's gaps hold no other OS's managed folder (#133)",
+    !gapPaths.some((p) => otherOs.test(p)) &&
+      lineage.levels.find((l) => l.kind === 'managed')?.absent.some((a) => a.platform && a.platform !== process.platform),
+    JSON.stringify(gapPaths));
   check(
     'watch reports at least one watched directory',
     (ready?.data?.watchedCount || 0) > 0,
