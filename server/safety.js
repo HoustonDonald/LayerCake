@@ -13,7 +13,7 @@
 
 import path from 'node:path';
 
-import { TEMP_PREFIX } from './paths.js';
+import { TEMP_PREFIX, pluginCacheDir, samePathKey } from './paths.js';
 
 /**
  * Never read, never listed, never acknowledged beyond a redaction marker.
@@ -295,6 +295,24 @@ export function isEditableCategory(category) {
   return EDITABLE_CATEGORIES.has(String(category));
 }
 
+/**
+ * Read only wherever it sits, whatever its category (#126; owner decision,
+ * 2026-09-28): the plugin cache. Claude Code replaces a plugin's version
+ * folder when the plugin updates, so an edit, delete, create or restore there
+ * would be undone without warning. Decided by path, not by the level that
+ * listed the file, so a second route to the same file cannot make it editable.
+ * Lexical, like every fence here: a junction into the cache is followed.
+ */
+const PLUGIN_CACHE_READ_ONLY =
+  'Plugin cache: Claude Code keeps its own copy of each installed plugin here and replaces it when the plugin updates, ' +
+  'so a change made here would be lost without warning. Read only in LayerCake; change the plugin at its source.';
+
+/** The reason `absPath` is read only, or null when the ordinary rules apply. */
+export function readOnlyReason(absPath) {
+  const rel = path.relative(samePathKey(pluginCacheDir()), samePathKey(absPath));
+  return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? PLUGIN_CACHE_READ_ONLY : null;
+}
+
 export function isExecutableCategory(category) {
   return EXECUTABLE_CATEGORIES.has(String(category));
 }
@@ -310,6 +328,8 @@ export function isExecutableCategory(category) {
 export function writePolicy() {
   return {
     editableCategories: [...EDITABLE_CATEGORIES].sort(),
+    // Whatever the category (#126): no edit, delete, create or restore inside it.
+    readOnly: [{ dir: pluginCacheDir(), reason: PLUGIN_CACHE_READ_ONLY }],
     requiresAcknowledgement: [...EXECUTABLE_CATEGORIES].sort(),
     // Content-dependent: an edit to one of these categories that adds or
     // changes one of these keys needs the same acknowledgement (#19).

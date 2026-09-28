@@ -206,6 +206,7 @@ export function createApp({ port, staticFiles }) {
         snapshotRootError: rootState(snapshotRoot).error,
         rules: [
           'Only files discovered by the current scan can be written or deleted.',
+          'Nothing inside the plugin cache is edited, deleted, created or restored: Claude Code replaces it when a plugin updates.',
           'New files are created only at a user or directory level, at places the scan offers, from a template, and never over an existing file.',
           'A delete takes a snapshot first and is refused unless that snapshot holds the file.',
           'A file gone from disk can be restored from a snapshot only where the current scan would list it, and is created, never written over.',
@@ -476,7 +477,10 @@ export function createApp({ port, staticFiles }) {
       if (scan) {
         for (const row of result.rows) {
           const inScan = scan.allowed.has(allowKey(row.absPath));
-          if (!inScan && !(row.status === 'missing' && restorableWhenAbsent(scan.lineage, row.absPath))) {
+          if (row.readOnly) {
+            row.restorable = false;
+            row.notRestorable = row.readOnly;
+          } else if (!inScan && !(row.status === 'missing' && restorableWhenAbsent(scan.lineage, row.absPath))) {
             row.restorable = false;
             row.notRestorable = NOT_RESTORABLE;
           } else if (row.status !== 'missing' && row.currentSize > MAX_FILE_BYTES) {

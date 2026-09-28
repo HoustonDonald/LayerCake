@@ -14,6 +14,17 @@ function snapshotTime(id) {
   const t = new Date(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`);
   return Number.isNaN(t.getTime()) ? String(id) : t.toLocaleString();
 }
+
+/**
+ * A file read, plus what its scan entry says about it. The category comes from
+ * the entry, not the read: the editor needs it to know whether this is
+ * executable content, and the server makes the same distinction from the same
+ * source. The note (why a file is not read, or the link it is reached through,
+ * #144) and why it is read only (#126) are said where the file is opened.
+ */
+function withEntry(result, entry) {
+  return { ...result, category: entry?.category, note: entry?.note || null, readOnly: entry?.readOnly || null };
+}
 import LineageTree from './components/LineageTree.jsx';
 import FileViewer from './components/FileViewer.jsx';
 import FlattenView from './components/FlattenView.jsx';
@@ -211,12 +222,7 @@ export default function App() {
     setFileLoading(true);
     try {
       const result = await readFile(scanId, entry.absPath);
-      // category comes from the scan entry, not the file read: the editor
-      // needs it to know whether this is executable content, and the server
-      // makes the same distinction from the same source.
-      // The entry's note too: why a file is not read, or the link it is
-      // reached through (#144), said where the file is opened.
-      setFile({ ...result, category: entry.category, note: entry.note || null });
+      setFile(withEntry(result, entry));
       if (edit && !result.error) setEditing(true);
     } catch (err) {
       setFile({ path: entry.absPath, kind: 'text', error: { code: 'EREQ', message: err.message } });
@@ -242,7 +248,7 @@ export default function App() {
       .flatMap((l) => l.entries)
       .find((e) => e.absPath === selected);
     const result = await readFile(lineage.scanId, selected);
-    setFile({ ...result, category: entry?.category });
+    setFile(withEntry(result, entry));
   }, [lineage, selected]);
 
   // LayerCake's own writes are filesystem changes like any other, so they would
@@ -418,6 +424,15 @@ export default function App() {
         <div className="panes single">
           <SessionsView key={lineage?.projectDir || 'none'} projectDir={lineage?.projectDir || null} scanId={lineage?.scanId || null} />
         </div>
+      ) : mode === 'snapshots' && lineage ? (
+        // Full width, as Sessions is (#143; owner decision 2026-09-28): the
+        // tree is not used while comparing, and beside it every path wrapped
+        // at 1000 px. Explorer brings it back.
+        <div className="panes single">
+          <div className="pane-right">
+            <SnapshotPanel scanId={lineage.scanId} onRestored={onRestored} />
+          </div>
+        </div>
       ) : (
       <div className="panes">
         <div className="pane-left">
@@ -438,9 +453,7 @@ export default function App() {
         </div>
 
         <div className="pane-right">
-          {mode === 'snapshots' && lineage ? (
-            <SnapshotPanel scanId={lineage.scanId} onRestored={onRestored} />
-          ) : mode === 'flat' && lineage ? (
+          {mode === 'flat' && lineage ? (
             <FlattenView scanId={lineage.scanId} />
           ) : editing && file && !file.error ? (
             <div className="editor-view">

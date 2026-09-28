@@ -57,6 +57,11 @@ export const TEMP_PREFIX = '.layercake-tmp-';
 /** Files probed directly in <config home>/plugins. */
 export const PLUGIN_MANIFEST_FILES = ['installed_plugins.json', 'known_marketplaces.json', 'blocklist.json'];
 
+/** <config home>/plugins/cache: Claude Code's copy of each installed plugin version. */
+export function pluginCacheDir() {
+  return path.join(claudeHome(), 'plugins', 'cache');
+}
+
 export function homeDir() {
   return os.homedir();
 }

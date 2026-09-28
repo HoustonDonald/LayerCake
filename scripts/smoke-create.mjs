@@ -270,20 +270,91 @@ export async function runCreateChecks({ base, token, check, skip, smokeDir, conf
   check('a user-level file is deleted the same way', userDel.status === 200 && !(await exists(userAgent)), `${userDel.status}`);
 
   // --- #97: every file delete accepts can come back, not only .claude ones --
-  // A project-memory note and a plugin file, both in the fixture's config
-  // home; each used to delete fine and then be refused by restore.
-  const note = path.join(configHome, 'projects', projectSlug(proj), 'memory', 'smoke-note.md');
-  const plug = path.join(configHome, 'plugins', 'cache', 'smoke-mkt', 'smoke-plugin', '1.0.0', 'agents', 'plug-agent.md');
-  for (const [label, file, body] of [['a project-memory note', note, '# note\n'], ['a plugin file', plug, '---\nname: plug-agent\n---\n']]) {
-    await fs.mkdir(path.dirname(file), { recursive: true });
-    await fs.writeFile(file, body);
+  // A project-memory note, in the fixture's config home, used to delete fine
+  // and then be refused by restore. A plugin file was the other such case until
+  // the plugin cache became read only (#126, below).
+  {
+    const note = path.join(configHome, 'projects', projectSlug(proj), 'memory', 'smoke-note.md');
+    await fs.mkdir(path.dirname(note), { recursive: true });
+    await fs.writeFile(note, '# note\n');
     lin = await scan(proj);
-    const d = await post('/api/delete', { scanId: lin.scanId, path: file, expectedMtime: entriesOf(lin).find((e) => same(e.absPath, file))?.mtime });
+    const d = await post('/api/delete', { scanId: lin.scanId, path: note, expectedMtime: entriesOf(lin).find((e) => same(e.absPath, note))?.mtime });
     lin = await scan(proj);
-    const r = await post('/api/restore', { scanId: lin.scanId, id: d.json?.undoSnapshotId, paths: [file] });
-    check(`${label} that was deleted can be restored`,
-      d.status === 200 && r.status === 200 && r.json?.restored?.length === 1 && (await fs.readFile(file, 'utf8').catch(() => '')) === body,
+    const r = await post('/api/restore', { scanId: lin.scanId, id: d.json?.undoSnapshotId, paths: [note] });
+    check('a project-memory note that was deleted can be restored',
+      d.status === 200 && r.status === 200 && r.json?.restored?.length === 1 && (await fs.readFile(note, 'utf8').catch(() => '')) === '# note\n',
       `${d.status} ${r.status} ${JSON.stringify(r.json?.failed || r.json)}`);
+  }
+
+  // --- #126: the plugin cache is read only (owner decision, 2026-09-28) -----
+  // Claude Code replaces a plugin's version folder when the plugin updates, so
+  // no verb may change a file there. Every check reads the bytes on disk.
+  {
+    const version = path.join(configHome, 'plugins', 'cache', 'smoke-mkt', 'smoke-plugin', '1.0.0');
+    const plug = path.join(version, 'agents', 'plug-agent.md');
+    const gone = path.join(version, 'agents', 'gone-agent.md');
+    const body = '---\nname: plug-agent\n---\n';
+    await fs.mkdir(path.dirname(plug), { recursive: true });
+    await fs.writeFile(plug, body);
+    await fs.writeFile(gone, '---\nname: gone-agent\n---\n');
+    const bytes = () => fs.readFile(plug, 'utf8').catch(() => null);
+
+    lin = await scan(proj);
+    const entry = entriesOf(lin).find((e) => same(e.absPath, plug));
+    const w = await post('/api/write', { scanId: lin.scanId, path: plug, content: `${body}edited\n` });
+    const d = await post('/api/delete', { scanId: lin.scanId, path: plug, expectedMtime: entry?.mtime });
+    check('a plugin cache file is listed read only with the reason, and edit and delete are refused (#126)',
+      entry?.category === 'agent' && /^Plugin cache/.test(entry?.readOnly || '') &&
+        w.status === 403 && w.json?.code === 'ENOTEDITABLE' && d.status === 403 && d.json?.code === 'ENOTEDITABLE' &&
+        (await bytes()) === body,
+      `${JSON.stringify(entry?.readOnly)} write ${w.status} ${w.json?.code} delete ${d.status} ${d.json?.code}`);
+
+    // A snapshot taken by hand holds both (taking one only reads). Then, outside
+    // LayerCake, one changes and the other goes, as a plugin update would.
+    const snap = await post('/api/snapshot', { scanId: lin.scanId, label: 'plugin cache, #126' });
+    const updated = `${body}changed by a plugin update\n`;
+    await fs.writeFile(plug, updated);
+    await fs.rm(gone);
+    lin = await scan(proj);
+    const cmp = await get(`/api/snapshot/${encodeURIComponent(snap.json?.id)}/compare?scanId=${encodeURIComponent(lin.scanId)}`);
+    const rows = cmp.status === 200 ? JSON.parse(cmp.text).rows : [];
+    const rowOf = (p) => rows.find((x) => same(x.absPath, p));
+    const r = await post('/api/restore', { scanId: lin.scanId, id: snap.json?.id, paths: [plug, gone] });
+    check('a plugin cache file is never restored, changed or gone, and compare says why (#126)',
+      rowOf(plug)?.status === 'changed' && rowOf(plug)?.restorable === false && /^Plugin cache/.test(rowOf(plug)?.notRestorable || '') &&
+        rowOf(gone)?.status === 'missing' && rowOf(gone)?.restorable === false &&
+        r.status === 403 && r.json?.code === 'ENOTEDITABLE' && (await bytes()) === updated && !(await exists(gone)),
+      `compare ${cmp.status} ${JSON.stringify([rowOf(plug)?.restorable, rowOf(gone)?.restorable])} restore ${r.status} ${r.json?.code}`);
+
+    // The CLI restore leaves them out and says so; asked for one by name, it
+    // refuses with exit 1. Neither writes.
+    const { spawnSync } = await import('node:child_process');
+    const repoRoot = path.dirname(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')));
+    const cli = (...args) =>
+      spawnSync(process.execPath, [path.join(repoRoot, 'cli', 'index.js'), 'restore', snap.json?.id, proj, ...args], {
+        encoding: 'utf8',
+        env: { ...process.env, LAYERCAKE_SNAPSHOT_DIR: snaps, CLAUDE_CONFIG_DIR: configHome },
+      });
+    const all = cli('--yes');
+    const named = cli('--only', 'plug-agent.md', '--yes');
+    check('the CLI restore leaves plugin cache files out and says so, and refuses one asked for by name (#126)',
+      all.status === 0 && /Left out: 2 plugin cache files that differ\. Plugin cache/.test(all.stdout) &&
+        named.status === 1 && /Left out: 1 plugin cache file that differs/.test(named.stdout) &&
+        (await bytes()) === updated && !(await exists(gone)),
+      `all exit ${all.status}, named exit ${named.status}: ${(all.stdout + all.stderr).replace(/\s+/g, ' ').slice(0, 200)}`);
+
+    // A project scanned from inside the cache is offered nothing there, while
+    // its parent folders, outside the cache, still are.
+    // Where a created file would land, tested here by prefix rather than by the
+    // server's own rule, so the check does not inherit a mistake in it.
+    const cacheKey = path.resolve(configHome, 'plugins', 'cache').toLowerCase() + path.sep;
+    const inCacheDir = (o) => path.resolve(o.absPath || path.join(o.folder, 'x')).toLowerCase().startsWith(cacheKey);
+    const inCache = await scan(version);
+    const offeredIn = inCache.creatable.filter(inCacheDir);
+    const offeredOut = inCache.creatable.filter((o) => !inCacheDir(o));
+    check('nothing inside the plugin cache is offered for create (#126)',
+      offeredIn.length === 0 && offeredOut.length > 0 && inCache.levels.some((l) => l.kind === 'directory' && same(l.dir, version)),
+      JSON.stringify({ inCache: offeredIn.map((o) => o.label), outside: offeredOut.length }));
   }
 
   // ~/CLAUDE.md, end to end in the server's own home (#78): outside the config
@@ -608,7 +679,8 @@ export async function runCreateChecks({ base, token, check, skip, smokeDir, conf
   const donor = fenceManifest.files.find((x) => same(x.absPath, path.join(proj, 'CLAUDE.md')));
   const outsidePath = path.join(smokeDir, 'outside', 'startup', 'evil.cmd');
   const unlisted = [
-    // A cached version installed_plugins.json does not name: the scan does not walk it (#122).
+    // A cached version installed_plugins.json does not name: the scan does not
+    // walk it (#122), and the whole cache is read only now anyway (#126).
     path.join(configHome, 'plugins', 'cache', 'smoke-mkt', 'on-plugin', '1.0.0', 'agents', 'planted.md'),
     path.join(configHome, 'plugins', 'marketplaces', 'smoke-mkt', 'evil.sh'),
     path.join(configHome, 'projects', projectSlug(proj), 'memory', 'notes.txt'),

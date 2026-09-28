@@ -211,10 +211,18 @@ Three routes extend it without breaking it (#15, #92):
   It may put back a file the current scan did not find only when it is in the snapshot and
   `restorableWhenAbsent` says the current scan would list it there: a probed FILE it recorded
   absent (never a folder record), a manifest shape under a `.claude` folder or the config home,
-  project memory as the scan walks it, or the plugins folder's own layout. The tree rules are the
+  project memory as the scan walks it, or the plugins folder's own manifests (never its cache,
+  #126). The tree rules are the
   scan's own (`treeSkipsDir`, `treeTakesFile` in safety.js), so the two cannot drift apart. That
   covers everything delete allows, so a delete is always undoable (#97). It is then created, never written over, because the restore's own snapshot comes from the scan and cannot hold
   a file that appeared since.
+
+**The plugin cache is read only** (#126, owner decision 2026-09-28). Claude Code replaces a
+plugin's version folder when it updates, so nothing under `<config home>/plugins/cache` is edited,
+deleted, created or restored. `readOnlyReason` in safety.js decides by PATH, whatever the category
+or the level that listed the file; the write paths (`assertWritable`, `createOptions`,
+`restoreSnapshotFiles`) ask it themselves. The `readOnly` field on scan entries and compare rows is
+for the page and the CLI to show, never what a write trusts.
 
 **Watch events carry paths and verbs, never content.** `/api/watch` streams from whole directories,
 so it necessarily sees files no scan entry covers. The moment a body rides along in that payload it

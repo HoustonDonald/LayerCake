@@ -117,12 +117,17 @@ Code also honours.
 ~\.claude\plugins\blocklist.json
 ~\.claude\plugins\cache\<marketplace>\<plugin>\<version>\{agents,skills,commands,hooks,rules,memory}
 ~\.claude\plugins\cache\<marketplace>\<plugin>\<version>\.claude-plugin\plugin.json
-~\.claude\plugins\cache\<marketplace>\<plugin>\<version>\.mcp.json     read only
+~\.claude\plugins\cache\<marketplace>\<plugin>\<version>\.mcp.json
 ```
 
-A plugin's `.mcp.json` is listed and read, never edited: it can keep its servers at the top level
-rather than under `mcpServers`, where the executable acknowledgement would not see a command being
-added.
+**Everything in `cache\` is read only in LayerCake** (#126, owner decision 2026-09-28): it can be
+opened, never edited, deleted, created in or restored. It is Claude Code's own copy of each
+installed plugin, and Claude Code replaces a plugin's version folder when the plugin updates, so a
+change made there would be lost without warning. Change a plugin at its source. The rule goes by
+path (`readOnlyReason` in `safety.js`), whatever the file's category or the level that listed it,
+and `/api/manifest` serves it as `write.readOnly`. A plugin's `.mcp.json` was already not editable
+for a second reason: it can keep its servers at the top level rather than under `mcpServers`, where
+the executable acknowledgement would not see a command being added.
 
 Only the versions `installed_plugins.json` names are scanned; any other cached version (usually one
 Claude Code marked `.orphaned_at` after an update) is listed under "other" as not read. If
@@ -393,12 +398,17 @@ The editable categories are served by `GET /api/manifest` (`write.editableCatego
 the same set the guards consult, and the UI reads them from there, so there is no second copy here
 to drift. `other` is never among them: it is the bucket for files the scan lists but does not
 understand, and editing an unclassified file is how you corrupt something structured. Delete follows
-the same set.
+the same set. On top of the categories, a file in the plugin cache is read only whatever its
+category (`write.readOnly`; see [02 Plugins](#02-plugins)): the viewer says "read only" and why.
 
 ## Snapshots
 
 A snapshot is a mirrored directory tree plus a `manifest.json`, not an archive format. If this tool
 is broken or gone, recovery is File Explorer and copy/paste.
+
+The **Snapshots** tab takes the full window, as **Sessions** does (#143, owner decision
+2026-09-28): the lineage tree is not used while comparing, and beside it every path wrapped at
+1000 px. **Explorer** brings the tree back.
 
 ```
 %LOCALAPPDATA%\LayerCake\snapshots\<id>\manifest.json
@@ -432,7 +442,9 @@ that tree is a restore target, and a backup the restore can overwrite is not a b
   The CLI leaves them out the same way unless `--only` names one by its full path or file name
   (`--only .claude.json`); the list is `write.restoreOnlyByName` in `/api/manifest`, and the page and the
   CLI both read it from the comparison rows. A row the current scan cannot restore is disabled, and
-  says why.
+  says why. A plugin cache file is never restored, since the cache is read only (#126): its row is
+  disabled with that reason, and the CLI leaves such files out, counts them, and exits 1 if `--only`
+  asked for nothing else.
 - **A restore takes its own snapshot first**, so it is itself undoable: the CLI prints the undo
   command with an `--only` for each file it replaced. A file the restore recreated is the exception,
   since that snapshot was taken while it was missing and a restore never deletes; the page and the
@@ -444,8 +456,8 @@ that tree is a restore target, and a backup the restore can overwrite is not a b
   attribute, so a file a restore recreates is writable.
 - **A file gone from disk can be restored**, including after a rescan that no longer lists it,
   wherever the current scan would list it: a file it probes by name (`~/CLAUDE.md`, a directory's
-  `CLAUDE.md`, a settings file), a file in a `.claude` folder's trees, or a file in the
-  project-memory or plugins folders. So anything **Delete** removed can come back. It is created
+  `CLAUDE.md`, a settings file), a file in a `.claude` folder's trees, a file in the project-memory
+  folder, or one of the plugins folder's own manifests. So anything **Delete** removed can come back. It is created
   rather than written over: if something has appeared at that path since the
   scan, the restore of that file fails and says so, because the restore's own snapshot could not
   hold the newcomer. Missing folders, such as a removed skill's, are made again.

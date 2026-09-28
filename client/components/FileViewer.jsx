@@ -133,11 +133,13 @@ function LoadedFile({ file, onEdit, onDelete, editableCategories }) {
   // The editable set comes from /api/manifest, which derives it from the guards
   // the server actually consults. Keeping a copy here would drift, and a stale
   // copy would either hide a legitimate Edit button or offer one that 403s.
+  // A read-only file (the plugin cache, #126) carries the server's reason from
+  // its scan entry, whatever its category.
   const editable =
-    onEdit && (editableCategories || []).includes(file.category) && !file.truncated;
+    onEdit && (editableCategories || []).includes(file.category) && !file.readOnly && !file.truncated;
   // Delete follows the same policy as edit. A truncated (oversized) file is
   // left to the server, which refuses it because no snapshot can hold it.
-  const deletable = onDelete && (editableCategories || []).includes(file.category) && !file.error;
+  const deletable = onDelete && (editableCategories || []).includes(file.category) && !file.readOnly && !file.error;
 
   return (
     <>
@@ -153,7 +155,7 @@ function LoadedFile({ file, onEdit, onDelete, editableCategories }) {
             </button>
           ) : (
             <span style={{ color: 'var(--text-faint)' }}>
-              {file.truncated ? 'too large to edit' : 'not editable'}
+              {file.readOnly ? 'read only' : file.truncated ? 'too large to edit' : 'not editable'}
             </span>
           )}
           {deletable && !confirming && (
@@ -165,6 +167,7 @@ function LoadedFile({ file, onEdit, onDelete, editableCategories }) {
       </div>
       <div className="viewer-body">
         {file.note && <div className="notice info">{file.note}</div>}
+        {file.readOnly && <div className="notice info">{file.readOnly}</div>}
         {confirming && <DeleteConfirm file={file} onDelete={onDelete} onCancel={() => setConfirming(false)} />}
         <FileBody file={file} />
       </div>

@@ -28,6 +28,7 @@ import {
   homeDir,
   isUncPath,
   managedCandidates,
+  pluginCacheDir,
   projectMemoryDir,
   projectSlug,
   samePathKey,
@@ -39,6 +40,7 @@ import {
   treeTakesFile,
   isSecret,
   isSensitive,
+  readOnlyReason,
 } from './safety.js';
 // Call the filesystem through timedFsCall, never a bare withTimeout: besides the
 // timeout, it sends a network share one call at a time and none while an
@@ -345,6 +347,11 @@ function finalizeLevel(level) {
   level.entries.sort(
     (a, b) => a.category.localeCompare(b.category) || a.relPath.localeCompare(b.relPath)
   );
+  // For the page to show; the write paths ask readOnlyReason again (#126).
+  for (const entry of level.entries) {
+    const readOnly = readOnlyReason(entry.absPath);
+    if (readOnly) entry.readOnly = readOnly;
+  }
   return level;
 }
 
@@ -488,7 +495,7 @@ async function scanPlugins() {
     level.note += ` installed_plugins.json could not be read (${installsError.message}), so every cached version is scanned and none is marked loaded or not.`;
   }
 
-  const cacheDir = path.join(pluginsDir, 'cache');
+  const cacheDir = pluginCacheDir();
   const { st, error } = await statOf(cacheDir);
   if (!st) {
     if (error && error.code !== 'ENOENT') level.errors.push({ path: cacheDir, ...describeError(error) });

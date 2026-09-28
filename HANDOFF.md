@@ -23,11 +23,30 @@ npm run smoke                       # expect: 0 failed
 node cli/index.js here C:\dev\LayerCake   # expect: ~18 line summary, exit 0
 ```
 
-Smoke was 352 passed, 0 failed, 3 skipped on 2026-09-28 after 4588b0f (Windows; the skips are the
+Smoke was 356 passed, 0 failed, 3 skipped on 2026-09-28 with the #126/#143 commit (Windows; the skips are the
 opt-in mapped-drive checks, a Linux-only one, and #144's link-to-a-share check, which needs a
 directory symlink this user cannot make without Developer Mode). WSL Ubuntu (Node 22.22.1, copy at
 `/tmp/layercake-linux-smoke`, lockfile unchanged so `rsync` the tree over it and run
 `node scripts/smoke.mjs`): 317 passed, 0 failed, 15 skipped on 2026-09-28 after 2c7a1f0.
+
+### 2026-09-28, morning: the two open owner decisions (#143, #126)
+
+Asked in the terminal; the owner took both recommendations (decisions 15 and 16 below). One commit,
+its message listing the checks and mutants:
+- **#143:** Snapshots takes the full window, as Sessions does (`App.jsx`). At 1000 px the panel went
+  from 580 px to the whole window, and a project path from 15 lines to 1 (headless Edge, with HEAD's
+  client as the control that fails). A very long path, such as a plugin cache file's, still wraps.
+- **#126:** the plugin cache is read only, by path (`readOnlyReason` in safety.js): no edit, delete,
+  create or restore under `<config home>/plugins/cache`. Restore and create were not in the question;
+  they follow from "read only" because each writes the file, and are labelled as that inference in
+  the commit. The CLI restore leaves such files out and counts them. The plugins folder's own
+  manifests are unaffected. `pluginShape`'s cache branch in writefile.js was deleted as unreachable.
+- **#152**, found on the way and fixed in the same commit: a save dropped the viewed file's note.
+
+Not rebuilt: `dist\LayerCake.exe` (the owner's copy was running). This build was built and
+launch-checked in a tree copy on port 5231 (`exe-lifecycle-126.ps1`). Run `npm run build:exe` once
+it is closed. Tooling in this session's scratchpad (`d003ca25-...`): `mutate-126.mjs` (the 125
+engine and mutants, plus 13 for #126), `ui-126-143.mjs`, `exe-lifecycle-126.ps1`.
 
 ### 2026-09-28, night: snapshots, UI polish, junctions, write-path edges, the CLI's width
 
@@ -51,9 +70,9 @@ Shipped and closed, each commit message listing its checks and mutants:
   the settings dump is cut only on a terminal). **4588b0f** (#151): `layercake session` too.
 
 Filed and open: #150 (a restore failed once under four parallel smoke runs; not reproduced).
-Owner decisions open: **#143** (full-width Snapshots panel; recommended yes) and #126 (plugin cache
-files editable?). Owner-facing, not an issue: `context7` sits only in `~/.claude/.mcp.json`, which no
-session reads (told on Telegram and in the terminal).
+Owner decisions #143 and #126 were settled the next morning (section above). Owner-facing, not an
+issue: `context7` sits only in `~/.claude/.mcp.json`, which no session reads (told on Telegram and in
+the terminal).
 
 Everything else open is (b), platform-only, or a question: `gh issue list`.
 
@@ -174,8 +193,6 @@ unless marked):
 All done (2026-09-27 and 28, sections above): #137, #118, #119, #135, #129, #131, #138, #140,
 #125, #120 to #124, #130, #132, #133, #136, #139, #141, #142, #144, #145, #149, #151; #143 all but
 the full-width question. Still open from this list: platform or managed-machine only, #146, #147.
-
-Owner questions still open: #143 (full-width Snapshots panel) and #126 (plugin cache files editable?).
 
 **A process slip, disclosed to the owner:** the first exe check on 2026-09-26 (21:58) did not set
 `LAYERCAKE_BROWSER_PROFILE_DIR`, so its Edge wrote into the real `%LOCALAPPDATA%\LayerCake\browser`
@@ -454,6 +471,12 @@ Made by the owner on 2026-09-27 ("b"):
     never changed. Findings and what to try first are in #148 (closed, not planned). The no-outbound
     invariant stands: no lighting code was written.
 
+Made by the owner on 2026-09-28, asked in the terminal, each the recommended option:
+
+15. **Snapshots takes the full window (#143)**, as Sessions does; Explorer brings the tree back.
+16. **Plugin cache files are read only in LayerCake (#126)**: viewable, never edited or deleted,
+    each saying why. Restore and create were extended to match, as the assistant's inference.
+
 ---
 
 ## Open work lives in GitHub issues
@@ -575,5 +598,5 @@ Windows and tooling specifics, on top of what `C:\dev\CLAUDE.md` already documen
 4. Smoke never runs the exe. After touching `server/app.js`, `desktop/` or `client/`, run
    `npm run build:exe` and launch `dist\LayerCake.exe` with `Start-Process` (as Explorer would),
    with every data folder and `LAYERCAKE_BROWSER_PROFILE_DIR` redirected.
-5. The suggested order in the 2026-09-26 to 27 section is done. Ask the owner about #143 and #126,
-   then take what `gh issue list` shows by reachability: (a) first; (b) only if it is cheap.
+5. The suggested order in the 2026-09-26 to 27 section is done, and so are #143 and #126. Take what
+   `gh issue list` shows by reachability: (a) first; (b) only if it is cheap.

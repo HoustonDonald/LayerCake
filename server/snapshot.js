@@ -17,7 +17,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { TEMP_PREFIX, samePathKey, snapshotRoot } from './paths.js';
-import { FILE_TIMEOUT_MS, MAX_FILE_BYTES, describeError, isSecret, isSensitive, rewrittenByClaudeCode } from './safety.js';
+import { FILE_TIMEOUT_MS, MAX_FILE_BYTES, describeError, isSecret, isSensitive, readOnlyReason, rewrittenByClaudeCode } from './safety.js';
 import { shareGatedCall, shareKeyOf } from './sharegate.js';
 
 /** Manifest schema version. Bumped when the on-disk shape changes. */
@@ -570,17 +570,19 @@ async function presentOnDisk(p) {
  * Compares a snapshot against what is on disk right now.
  * Status is per file: `same`, `changed`, `missing` (gone from disk), or `error`.
  * `rewrittenByClaudeCode` marks a row no restore selects unless it is named
- * (#134); computed here rather than stored, so older snapshots carry it too.
+ * (#134), and `readOnly` one no restore takes at all (#126); both computed
+ * here rather than stored, so older snapshots carry them too.
  */
 export async function compareSnapshot(id) {
   const manifest = await readManifest(id);
   const rows = [];
   for (const entry of manifest.files) {
     const byClaude = rewrittenByClaudeCode(entry.category);
+    const readOnly = readOnlyReason(entry.absPath) || undefined;
     try {
       const { size } = await shareGatedCall(entry.absPath, () => fs.stat(entry.absPath));
       const current = await shareGatedCall(entry.absPath, () => sha256(entry.absPath), entry.absPath, FILE_TIMEOUT_MS);
-      rows.push({ ...entry, status: current === entry.sha256 ? 'same' : 'changed', currentSha256: current, currentSize: size, rewrittenByClaudeCode: byClaude });
+      rows.push({ ...entry, status: current === entry.sha256 ? 'same' : 'changed', currentSha256: current, currentSize: size, rewrittenByClaudeCode: byClaude, readOnly });
     } catch (err) {
       const described = describeError(err);
       rows.push({
@@ -588,6 +590,7 @@ export async function compareSnapshot(id) {
         status: described.code === 'ENOENT' ? 'missing' : 'error',
         error: described,
         rewrittenByClaudeCode: byClaude,
+        readOnly,
       });
     }
   }

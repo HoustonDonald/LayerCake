@@ -19,6 +19,7 @@ import {
   treeSkipsDir,
   treeTakesFile,
   isSecret,
+  readOnlyReason,
   commandKeysChanged,
   createFiles,
   createLevelAllowed,
@@ -85,6 +86,9 @@ export function assertWritable(entry, { acknowledgeExecutable = false, content =
       'ENOTEDITABLE'
     );
   }
+  // From the path, not the entry's readOnly field: the rule is safety.js's (#126).
+  const readOnly = readOnlyReason(entry.absPath);
+  if (readOnly) throw refuse(readOnly, 'ENOTEDITABLE');
   if (isExecutableCategory(entry.category) && !acknowledgeExecutable) {
     throw refuse(
       'This file is executed by Claude Code, not just read. Re-send with acknowledgeExecutable to confirm.',
@@ -294,7 +298,9 @@ function claudeDirOf(level) {
  *   folder chain or hung for the share's timeout (#99);
  * - a target a weaker level already offered. When the configuration home is
  *   also a directory's .claude (~/.claude, walked through the home folder),
- *   the user level offers it, by the user level's table (#102).
+ *   the user level offers it, by the user level's table (#102);
+ * - anything inside the plugin cache, which is read only (#126): reachable
+ *   only by scanning a project inside it.
  */
 export function createOptions(lineage) {
   const existing = new Set(
@@ -330,7 +336,7 @@ export function createOptions(lineage) {
       if (!f.levels.includes(level.kind)) continue;
       if (isConfigHome && f.where === 'claude') continue;
       const absPath = path.join(f.where === 'dir' ? level.dir : claudeDir, f.name);
-      if (existing.has(samePathKey(absPath))) continue;
+      if (existing.has(samePathKey(absPath)) || readOnlyReason(absPath)) continue;
       if (f.category === 'settings' && !readSettings.has(samePathKey(absPath))) continue;
       if (!offerOnce(absPath)) continue;
       options.push({
@@ -345,7 +351,7 @@ export function createOptions(lineage) {
     }
     for (const t of createTrees()) {
       const folder = path.join(claudeDir, t.tree);
-      if (isConfigHome || treeUnread(folder) || !offerOnce(folder)) continue;
+      if (isConfigHome || treeUnread(folder) || readOnlyReason(folder) || !offerOnce(folder)) continue;
       options.push({
         id: `${level.id}:tree:${t.tree}`,
         levelId: level.id,
@@ -521,22 +527,13 @@ function treeShape(tree, rest) {
   return treeTakesFile(tree.exts, rest[rest.length - 1]);
 }
 
-/** The plugins folder's shapes: its manifest files, and a cached plugin version's trees and plugin.json. */
+/**
+ * The plugins folder's own manifest files. Nothing in its cache: that is read
+ * only (#126), so a restore never recreates a file there either.
+ */
 function pluginShape(level, absPath) {
   const parts = segmentsUnder(level.dir, absPath);
-  if (!parts) return false;
-  if (parts.length === 1) return PLUGIN_MANIFEST_FILES.some((n) => sameName(n, parts[0]));
-  // cache/<marketplace>/<plugin>/<version>/...
-  if (!sameName(parts[0], 'cache') || parts.length < 5) return false;
-  // Only in a version installed_plugins.json names: the scan walks no other
-  // (#122), so a file restored elsewhere would be one it never lists.
-  const versionDir = path.join(level.dir, ...parts.slice(0, 4));
-  if (level.installs && !level.installs.some((i) => samePathKey(i.installPath) === samePathKey(versionDir))) return false;
-  const rest = parts.slice(4);
-  if (rest.length === 1) return sameName(rest[0], '.mcp.json');
-  if (rest.length === 2 && sameName(rest[0], '.claude-plugin') && sameName(rest[1], 'plugin.json')) return true;
-  const tree = CLAUDE_DIR_TREES.find((t) => sameName(t.name, rest[0]));
-  return Boolean(tree) && treeShape(tree, rest.slice(1));
+  return parts?.length === 1 && PLUGIN_MANIFEST_FILES.some((n) => sameName(n, parts[0]));
 }
 
 /** Project memory as scanProjectMemory walks it: .md files, two folders deep. */
@@ -552,10 +549,12 @@ const MEMORY_TREE = { category: 'memory', maxDepth: 2, exts: ['.md'] };
  *   config file, managed files, a directory's fixed targets.
  * - A directory's own config files, and the manifest shapes under its .claude
  *   folder; the same under the configuration home at the user level.
- * - Anywhere in the project-memory and plugins folders, whose files the scan
- *   walks without a fixed shape, outside the folders a walk skips.
+ * - Anywhere in the project-memory folder, whose files the scan walks without
+ *   a fixed shape, outside the folders a walk skips; the plugins folder's own
+ *   manifest files.
  *
- * Never a secret. It used to allow only the first two, while delete allowed
+ * Never a secret. The plugin cache is read only (#126), and both callers
+ * refuse it before asking this. It used to allow only the first two, while delete allowed
  * every editable file, so a deleted ~/CLAUDE.md or memory note could not come
  * back (#97).
  */
@@ -589,8 +588,9 @@ export const NOT_RESTORABLE =
  * The one way to restore (#105): the fence applies to every caller, the HTTP
  * route and the CLI alike. The CLI used to call restoreFiles directly, with no
  * fence at all. A path the lineage lists is restored in place; a path it
- * would list but that is gone from disk is created (#92); anything else is
- * reported in `failed`, and a batch with nothing restorable is refused.
+ * would list but that is gone from disk is created (#92); a plugin cache
+ * file (#126) and anything else is reported in `failed`, and a batch with
+ * nothing restorable is refused.
  */
 export async function restoreSnapshotFiles({ id, paths, lineage }) {
   const listed = new Set(
@@ -600,14 +600,18 @@ export async function restoreSnapshotFiles({ id, paths, lineage }) {
   const absentPaths = [];
   const refused = [];
   for (const p of paths) {
-    if (listed.has(samePathKey(p))) accepted.push(p);
+    const readOnly = readOnlyReason(p);
+    if (readOnly) refused.push({ absPath: p, code: 'ENOTEDITABLE', message: readOnly });
+    else if (listed.has(samePathKey(p))) accepted.push(p);
     else if (restorableWhenAbsent(lineage, p)) {
       accepted.push(p);
       absentPaths.push(p);
     } else refused.push({ absPath: p, code: 'ENOTINSCAN', message: NOT_RESTORABLE });
   }
   if (!accepted.length) {
-    const err = refuse(NOT_RESTORABLE, 'ENOTINSCAN', 403);
+    // A batch refused for one reason says that reason, not the generic one.
+    const one = refused.every((r) => r.code === refused[0]?.code) ? refused[0] : null;
+    const err = one ? refuse(one.message, one.code, 403) : refuse(NOT_RESTORABLE, 'ENOTINSCAN', 403);
     err.details = { refused };
     throw err;
   }

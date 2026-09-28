@@ -487,6 +487,10 @@ try {
     manifest.write?.editableCategories?.includes('memory') &&
       manifest.write.requiresAcknowledgement.includes('hook')
   );
+  check('manifest states the read-only plugin cache, where it is and why (#126)',
+    manifest.write?.readOnly?.length === 1 && manifest.write.readOnly[0].dir === path.join(configHome, 'plugins', 'cache') &&
+      /^Plugin cache/.test(manifest.write.readOnly[0].reason),
+    JSON.stringify(manifest.write?.readOnly));
   check(
     'manifest neverRead is derived from the secret list',
     manifest.neverRead.includes('.credentials.json') && manifest.neverRead.includes('.env')

@@ -312,15 +312,15 @@ async function cmdRestore(args) {
 
   const { rows } = await compareSnapshot(id);
   const needles = (values.only || []).map((n) => n.toLowerCase());
-  const selected = rows.filter((r) => takenBy(r, needles));
+  const matches = (r) => needles.length === 0 || needles.some((n) => r.absPath.toLowerCase().includes(n));
+  // Plugin cache files are read only (#126): never taken, even by name, and
+  // counted below so leaving them out is not silent.
+  const readOnly = rows.filter((r) => r.readOnly && r.status !== 'same' && matches(r));
+  const selected = rows.filter((r) => !r.readOnly && takenBy(r, needles));
   // Differing files left out only because Claude Code rewrites them. Named, so
   // leaving them out is never silent.
   const heldBack = rows.filter(
-    (r) =>
-      r.rewrittenByClaudeCode &&
-      r.status !== 'same' &&
-      !selected.includes(r) &&
-      (needles.length === 0 || needles.some((n) => r.absPath.toLowerCase().includes(n)))
+    (r) => r.rewrittenByClaudeCode && !r.readOnly && r.status !== 'same' && !selected.includes(r) && matches(r)
   );
 
   // Only a needle that matches nothing at all is a mistake. With no --only, an
@@ -346,8 +346,17 @@ async function cmdRestore(args) {
     for (const row of heldBack) out(paint.dim(`  ${row.absPath}   (to restore it: --only ${path.basename(row.absPath)})`));
     out();
   }
+  if (readOnly.length) {
+    out(paint.yellow(`Left out: ${plural(readOnly.length, 'plugin cache file')} that differ${readOnly.length === 1 ? 's' : ''}. ${readOnly[0].readOnly}`));
+    out();
+  }
 
   if (toWrite.length === 0) {
+    // Asked by name for read-only files and nothing else: that is a refusal.
+    if (needles.length && readOnly.length && !selected.length) {
+      process.exitCode = 1;
+      return;
+    }
     out(paint.green(`Nothing to do: ${plural(selected.length, 'selected file')} already identical to the snapshot.`));
     return;
   }
