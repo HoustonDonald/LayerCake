@@ -43,13 +43,17 @@ holds the detail. Work top down:
 1. ~~**#147**~~: done, 2026-09-28 afternoon (section below).
 2. ~~**#150**~~: done, 2026-09-28 evening (section below).
 3. **#75**: a dead mapped drive, (a) at work. Needs the owner: a local share for the fast-failure
-   case, a work machine off VPN for the timeout case (plan on the issue).
+   case, a work machine off VPN for the timeout case (plan on the issue). The owner chose to skip
+   it for now (2026-09-28 evening).
 4. ~~**#79 with #95 part 2**~~: done, 2026-09-28 evening, with #156 found on the way.
 5. **#76**, then **#54**, then **#64**, then **#95 part 1**: (b), cheap.
 6. **#146** (macOS/Linux, not required), **#74** (needs Developer Mode to test).
-7. Verification only: **#11** (rises if a work machine lacks Git Bash), **#89**.
+7. Verification only: ~~**#11**~~ (done 2026-09-28 evening: the work machines have no Git Bash,
+   so it rose, and it checks out under PowerShell), **#89** (stays low: the work machines use the
+   native installer).
 
-The owner chose to keep documented (b) limits open (#74, #54, #89, #11).
+The owner chose to keep documented (b) limits open (#74, #54, #89, #11). #11 has since been
+verified rather than kept as a limit, and closed with the residual stated.
 
 ### 2026-09-28, evening: #150 found and fixed; smoke robustness (#79, #95 part 2, #156)
 

@@ -762,8 +762,10 @@ Things to know:
 - One terminal can carry several sessions: `/clear` starts a new one and `/resume` switches to
   another. LayerCake keeps each session's figures separately, so an old session never shows the
   new one's context, and once a session has ended its last status line is no longer shown as exact.
-- The status line runs through Git Bash when installed, as Claude Code does it; `curl.exe` ships
-  with Windows 10 and later.
+- The status line runs through Git Bash when installed, and through PowerShell on a machine
+  without it, as Claude Code does it; `curl.exe` ships with Windows 10 and later. Both were
+  checked (#11): through Claude Code's own PowerShell runner with PowerShell 7, and with Claude
+  Code's exact PowerShell arguments under Windows PowerShell 5.1.
 - The window placement is approximate: Windows Terminal sizes in character cells, not pixels.
 - A project whose path contains `;` is refused. Windows Terminal reads `;` as "start another
   command", even inside quotes, so a folder named to exploit that could run a program of its

@@ -557,8 +557,10 @@ partially. A truncated file restored is silent data loss.
   most likely stopped while idle.
 - **Closing LayerCake under a launched session makes its hooks fail**, visibly: a "hook error" notice
   per event in that terminal. Claude does not see non-blocking hook errors, so it costs no tokens.
-- **The launched status line assumes Git Bash** (Claude Code's own choice when installed). Under the
-  PowerShell fallback, whether `curl.exe` receives the status JSON on stdin is untested.
+- **The launched status line under PowerShell** (Claude Code's choice where Git Bash is absent, as on
+  the owner's work machines) was checked through Claude Code 2.1.284's own runner with PowerShell 7,
+  and by replaying its exact arguments under Windows PowerShell 5.1 (#11). Claude Code choosing 5.1
+  by itself was not produced: with PowerShell 7 installed it finds it by install path, PATH aside.
 - **The context window is inferred from the model id** (`contextWindow` in `health.js`, rule shipped
   with the payload): `[1m]` or a documented native-1M family is 1M, else 200K. A new model family
   needs adding there.
