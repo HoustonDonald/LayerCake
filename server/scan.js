@@ -516,16 +516,26 @@ async function scanPlugins() {
   return finalizeLevel(level);
 }
 
-/** ~/.claude/projects/<slug>/memory for the selected project. */
-async function scanProjectMemory(projectDir) {
-  const memDir = projectMemoryDir(projectDir);
+/**
+ * ~/.claude/projects/<slug>/memory for the selected project, keyed by its git
+ * root when it has one (#123): measured on 2.1.283, a session in a subfolder
+ * or a worktree loaded the repository root's MEMORY.md and not its own.
+ * autoMemoryDirectory, which moves it, is not modelled.
+ */
+async function scanProjectMemory(projectDir, gitRoot) {
+  const keyDir = gitRoot?.dir || projectDir;
+  const memDir = projectMemoryDir(keyDir);
   const level = newLevel({
     kind: 'project-memory',
     label: 'Project memory (home-stored)',
     dir: memDir,
     note:
       'File-based memory for this project, stored under home and keyed by the mangled path ' +
-      `"${projectSlug(projectDir)}". Injected as context, not a settings-precedence level.`,
+      `"${projectSlug(keyDir)}"` +
+      (samePathKey(keyDir) === samePathKey(projectDir)
+        ? ''
+        : `, the git repository's root${gitRoot.via === 'worktree' ? ' (the main repository, as this is a worktree)' : ''}, which is where Claude Code keeps it for any folder inside`) +
+      '. Injected as context, not a settings-precedence level.',
   });
 
   const { st, error } = await statOf(memDir);
@@ -671,6 +681,38 @@ async function findGitRoot(chain) {
 }
 
 /**
+ * AGENTS.md is read only when the project's folders hold no CLAUDE.md, and
+ * then from every folder of the walk (#123). Measured on 2.1.283 from the
+ * request a stub API received: a lone AGENTS.md loaded, an ancestor's too; a
+ * CLAUDE.md, .claude/CLAUDE.md or CLAUDE.local.md in the folder or in an
+ * ancestor stopped every one; a CLAUDE.md in the configuration home did not.
+ * .claude/CLAUDE.local.md is counted as well, which is reasoned.
+ */
+function markAgentsMd(walkLevels) {
+  // The walk passes the configuration home too when the project is under it
+  // (~/.claude as a folder's .claude): its CLAUDE.md is the user's, not the
+  // project's, and was measured not to count.
+  const home = samePathKey(claudeHome());
+  const isClaudeMd = (level, e) =>
+    e.type === 'file' &&
+    ['claude.md', 'claude.local.md'].includes(e.name.toLowerCase()) &&
+    samePathKey(path.dirname(e.absPath)) !== home &&
+    [level.dir, path.join(level.dir, '.claude')].some((d) => samePathKey(path.dirname(e.absPath)) === samePathKey(d));
+  const level = walkLevels.find((l) => l.entries.some((e) => isClaudeMd(l, e)));
+  if (!level) return;
+  const claudeMd = level.entries.find((e) => isClaudeMd(level, e));
+  for (const l of walkLevels) {
+    for (const e of l.entries) {
+      if (e.type !== 'file' || e.name.toLowerCase() !== 'agents.md') continue;
+      e.inactive = true;
+      e.note =
+        'Not read by Claude Code: it reads AGENTS.md only when the project\'s folders hold no CLAUDE.md, ' +
+        `.claude/CLAUDE.md or CLAUDE.local.md, and ${claudeMd.absPath} is one (#123).`;
+    }
+  }
+}
+
+/**
  * Full lineage for a project directory, ordered weakest precedence first.
  */
 export async function resolveLineage(projectDir) {
@@ -687,12 +729,16 @@ export async function resolveLineage(projectDir) {
     const label = isProject ? 'Project directory' : isRoot ? 'Filesystem root' : 'Ancestor directory';
     walkLevels.push(await scanDirectory(dir, label));
   }
+  markAgentsMd(walkLevels);
 
+  // Before project memory, which is keyed by it (#123), as the MCP view's
+  // per-project block (#120) and local plugin installs (#122) are.
+  const gitRoot = await findGitRoot(chain);
   const levels = [
     await scanManaged(),
     await scanUser(),
     await scanPlugins(),
-    await scanProjectMemory(resolved),
+    await scanProjectMemory(resolved, gitRoot),
     ...walkLevels,
   ];
 
@@ -730,7 +776,7 @@ export async function resolveLineage(projectDir) {
     scannedAt: new Date().toISOString(),
     levels,
     networkDrives: onNetwork,
-    gitRoot: await findGitRoot(chain),
+    gitRoot,
     summary: {
       levelCount: levels.length,
       fileCount,

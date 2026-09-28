@@ -87,9 +87,15 @@ export async function buildSummary(lineage) {
   // read straight from the payload: the CLI no longer dedupes.
   const instructions = [];
   let instructionsRepeated = 0;
+  let instructionsConditional = 0;
   for (const section of memory.sections) {
     instructionsRepeated += section.repeatedPaths ? section.repeatedPaths.length : 0;
     for (const file of section.files) {
+      // A rule that loads only on a matching read is not in the session-start set (#123).
+      if (file.conditional) {
+        instructionsConditional += 1;
+        continue;
+      }
       instructions.push({
         path: file.path,
         precedence: section.precedence,
@@ -133,6 +139,7 @@ export async function buildSummary(lineage) {
     scannedAt: lineage.scannedAt,
     instructions,
     instructionsRepeated,
+    instructionsConditional,
     definitions: defs,
     counted,
     mcp: {

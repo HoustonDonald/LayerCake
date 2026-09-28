@@ -55,11 +55,13 @@ function MemoryView({ data }) {
             </div>
           )}
           {section.files.map((file) => (
-            <div className="flat-file" key={file.path}>
+            <div className={`flat-file${file.conditional ? ' not-read' : ''}`} key={file.path}>
               <div className="flat-file-head">
                 {file.path}
                 {file.truncated ? '  (truncated)' : ''}
+                {file.conditional && <> <span className="badge partial">conditional rule</span></>}
               </div>
+              {file.conditional && <div className="notice info">{file.conditional}</div>}
               <div className="flat-file-body">
                 {file.error ? (
                   <div className="notice err">

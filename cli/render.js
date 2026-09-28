@@ -118,6 +118,11 @@ export function renderHere(summary) {
       )
     );
   }
+  if (summary.instructionsConditional) {
+    continued(
+      paint.dim(`   ${plural(summary.instructionsConditional, 'rule')} loaded only when a matching file is read`)
+    );
+  }
 
   const defRows = summary.definitions.map((d) => [
     `${d.category}s`,
@@ -300,6 +305,7 @@ function renderMemoryView(view, lineage) {
     }
     for (const file of section.files) {
       out(paint.dim(`# ${shortenPath(file.path, lineage.home)}${file.truncated ? '  (truncated at the read cap)' : ''}`));
+      if (file.conditional) out(paint.yellow(`  ${file.conditional}`));
       if (file.error) {
         out(paint.red(`  ${file.error.code}: ${file.error.message}`));
         continue;

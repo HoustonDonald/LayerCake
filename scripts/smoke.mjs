@@ -244,6 +244,22 @@ async function makeFixture() {
   };
   // Only Windows spells a path with backslashes; elsewhere this key is the forward one.
   if (process.platform === 'win32') projects[gitRepo] = localServer('local-backslash');
+  // Instructions (#123), each a case measured on Claude Code 2.1.283: rules in
+  // the config home and in proj, one conditional on paths; an AGENTS.md in
+  // parent, which proj's CLAUDE.md stops; a lone AGENTS.md in a folder whose
+  // walk holds no project CLAUDE.md (the config home's does not count); and
+  // a MEMORY.md under mcp-git's slug, which a scan of its subfolder must find.
+  await fs.mkdir(path.join(configHome, 'rules'), { recursive: true });
+  await fs.writeFile(path.join(configHome, 'rules', 'user-rule.md'), '# user rule\n');
+  await fs.mkdir(path.join(proj, '.claude', 'rules'), { recursive: true });
+  await fs.writeFile(path.join(proj, '.claude', 'rules', 'plain.md'), '# plain rule\n');
+  await fs.writeFile(path.join(proj, '.claude', 'rules', 'cond.md'), '---\npaths:\n  - "src/**/*.ts"\n---\n# conditional rule\n');
+  await fs.writeFile(path.join(parent, 'AGENTS.md'), '# parent agents\n');
+  await fs.mkdir(path.join(smokeDir, 'agents-only'), { recursive: true });
+  await fs.writeFile(path.join(smokeDir, 'agents-only', 'AGENTS.md'), '# lone agents\n');
+  const repoMemory = path.join(configHome, 'projects', projectSlug(gitRepo), 'memory');
+  await fs.mkdir(repoMemory, { recursive: true });
+  await fs.writeFile(path.join(repoMemory, 'MEMORY.md'), '# memory of the repository root\n');
   await fs.writeFile(path.join(configHome, '.claude.json'), JSON.stringify({ projects }, null, 2));
   await fs.writeFile(path.join(configHome, 'agents', 'home-agent.md'), '---\nname: home-agent\n---\n');
   // One MCP server in one file, which the walk reaches twice: the file is
@@ -635,6 +651,23 @@ try {
   ).json();
   const chain = mem.sections.flatMap((s) => s.files.map((f) => f.path.toLowerCase()));
   check('the instruction chain lists each file once', chain.length === new Set(chain).size);
+  // #123: rules load with the chain, after their level's CLAUDE.md; one with
+  // paths frontmatter is marked; parent's AGENTS.md is stopped by proj's CLAUDE.md.
+  const memFiles = mem.sections.flatMap((s) => s.files);
+  const memFile = (p) => memFiles.find((f) => samePathKey(f.path) === samePathKey(p));
+  const projSection = mem.sections.find((s) => s.files.some((f) => samePathKey(f.path) === samePathKey(path.join(proj, 'CLAUDE.md'))));
+  const projOrder = (projSection?.files || []).map((f) => path.basename(f.path).toLowerCase());
+  check('rules are in the instruction chain, after their level\'s CLAUDE.md, a conditional one marked (#123)',
+    Boolean(memFile(path.join(configHome, 'rules', 'user-rule.md'))?.rule) && !memFile(path.join(configHome, 'rules', 'user-rule.md')).conditional &&
+      Boolean(memFile(path.join(proj, '.claude', 'rules', 'plain.md'))) &&
+      /src\/\*\*\/\*\.ts/.test(memFile(path.join(proj, '.claude', 'rules', 'cond.md'))?.conditional || '') &&
+      projOrder.indexOf('claude.md') < projOrder.indexOf('plain.md'),
+    JSON.stringify(projOrder));
+  const parentAgents = lineage.levels.flatMap((l) => l.entries).find((e) => samePathKey(e.absPath) === samePathKey(path.join(path.dirname(proj), 'AGENTS.md')));
+  check('an AGENTS.md is not read where the project\'s folders hold a CLAUDE.md, and says why (#123)',
+    parentAgents?.inactive === true && /only when the project's folders hold no CLAUDE\.md/.test(parentAgents.note || '') &&
+      !memFile(path.join(path.dirname(proj), 'AGENTS.md')) && /AGENTS\.md file\(s\) are left out/.test(mem.rule),
+    JSON.stringify({ entry: parentAgents && { inactive: parentAgents.inactive, note: parentAgents.note } }));
 
   // Same class of bug lived in flattenMcp and was fixed later than the other
   // two, so it gets its own assertion rather than being assumed covered.
@@ -1708,6 +1741,20 @@ try {
   check('a worktree gets the main repository\'s local MCP servers (#120)',
     JSON.stringify(inWorktree.names) === JSON.stringify(['local-git-root']) && inWorktree.s.gitRoot?.via === 'worktree',
     JSON.stringify({ names: inWorktree.names, gitRoot: inWorktree.s.gitRoot }));
+  // #123: project memory is keyed by the git root, so the subfolder's scan
+  // finds the repository's MEMORY.md, in the chain as well as the tree.
+  const subMemLevel = inSub.s.levels.find((l) => l.kind === 'project-memory');
+  const subChain = await (await fetch(`${BASE}/api/flatten?scanId=${inSub.s.scanId}&kind=claude-md`, { headers: H })).json();
+  check("a subfolder's project memory is its git root's (#123)",
+    samePathKey(subMemLevel?.dir || '') === samePathKey(path.join(configHome, 'projects', projectSlug(path.join(smokeRoot, 'mcp-git')), 'memory')) &&
+      subChain.sections.some((s) => s.files.some((f) => /memory of the repository root/.test(f.content || ''))),
+    JSON.stringify({ dir: subMemLevel?.dir, note: subMemLevel?.note }));
+  // A lone AGENTS.md loads: the only CLAUDE.md on its walk is the config home's.
+  const agentsOnly = await (await fetch(`${BASE}/api/scan`, { method: 'POST', headers: H, body: JSON.stringify({ dir: path.join(smokeRoot, 'agents-only') }) })).json();
+  const loneChain = await (await fetch(`${BASE}/api/flatten?scanId=${agentsOnly.scanId}&kind=claude-md`, { headers: H })).json();
+  check('a lone AGENTS.md is read, the config home\'s CLAUDE.md not counting against it (#123)',
+    loneChain.sections.some((s) => s.files.some((f) => samePathKey(f.path) === samePathKey(path.join(smokeRoot, 'agents-only', 'AGENTS.md')))),
+    JSON.stringify(loneChain.sections.flatMap((s) => s.files.map((f) => f.path))));
   const inPlain = await mcpFor(path.join(smokeRoot, 'mcp-plain'));
   check('a folder in no git repository gets the servers keyed by itself (#120)',
     JSON.stringify(inPlain.names) === JSON.stringify(['local-plain']) && inPlain.s.gitRoot === null,

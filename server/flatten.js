@@ -61,7 +61,7 @@ const INSTRUCTION_BASENAMES = new Set([
   'memory.md',
 ]);
 
-/** CLAUDE.md / CLAUDE.local.md / AGENTS.md / MEMORY.md, in precedence order. */
+/** CLAUDE.md / CLAUDE.local.md / AGENTS.md / MEMORY.md and rules, in precedence order. */
 async function flattenMemory(lineage) {
   const sections = [];
   // One physical file can be reported at two levels when the project sits under
@@ -71,13 +71,21 @@ async function flattenMemory(lineage) {
   // repetition is explained rather than silently dropped.
   const emitted = new Set();
   for (const level of lineage.levels) {
-    const allMemoryFiles = level.entries.filter(
+    const instructionFiles = level.entries.filter(
       (e) =>
         e.category === 'memory' &&
         e.type === 'file' &&
         !e.inactive &&
         INSTRUCTION_BASENAMES.has(e.name.toLowerCase())
     );
+    // Rules load too (#123): measured on 2.1.283, .claude/rules/**/*.md from
+    // the configuration home and every folder of the walk, after that level's
+    // CLAUDE.md. A plugin's rules were not measured and are left out.
+    const rules =
+      level.kind === 'user' || level.kind === 'directory'
+        ? level.entries.filter((e) => e.category === 'rule' && e.type === 'file' && !e.inactive)
+        : [];
+    const allMemoryFiles = [...instructionFiles, ...rules];
     const repeated = allMemoryFiles.filter((e) => emitted.has(samePathKey(e.absPath)));
     const memoryFiles = allMemoryFiles.filter((e) => !emitted.has(samePathKey(e.absPath)));
     for (const e of memoryFiles) emitted.add(samePathKey(e.absPath));
@@ -100,9 +108,15 @@ async function flattenMemory(lineage) {
     const files = [];
     for (const entry of memoryFiles) {
       const read = await readForDisplay(entry.absPath);
+      // A rule with paths in its frontmatter did not load at session start
+      // (measured): it is read when Claude reads a matching file.
+      const paths = entry.category === 'rule' ? read.frontmatter?.paths : null;
+      const globs = Array.isArray(paths) ? paths.map(String) : typeof paths === 'string' && paths.trim() ? [paths] : [];
       files.push({
         path: entry.absPath,
         name: entry.name,
+        rule: entry.category === 'rule',
+        conditional: globs.length ? `Loaded only when Claude reads a file matching ${globs.join(', ')}, not at session start.` : null,
         note: entry.note,
         error: read.error,
         truncated: read.truncated || false,
@@ -121,15 +135,24 @@ async function flattenMemory(lineage) {
       repeatedPaths: repeated.map((e) => e.absPath),
     });
   }
+  const agentsNotRead = lineage.levels
+    .flatMap((l) => l.entries)
+    .filter((e) => e.inactive && e.name.toLowerCase() === 'agents.md').length;
   return {
     kind: 'claude-md',
     heading: 'Effective instruction set',
     rule:
-      'CLAUDE.md, CLAUDE.local.md, AGENTS.md and MEMORY.md only, read top to bottom. Later sections ' +
-      'are closer to the project and, where instructions conflict, the project-level text is what ' +
-      'Claude Code treats as more specific. Individual files in the per-project memory directory are ' +
-      'recalled on demand rather than loaded every session, so they are excluded here; browse them in ' +
-      'the Explorer pane. A file reachable by two routes is shown once, where it is first loaded.',
+      'CLAUDE.md, CLAUDE.local.md, AGENTS.md, MEMORY.md and .claude/rules, read top to bottom, each ' +
+      'level\'s rules after its CLAUDE.md. Later sections are closer to the project and, where ' +
+      'instructions conflict, the project-level text is what Claude Code treats as more specific. ' +
+      'A rule with paths in its frontmatter loads only when Claude reads a matching file, and is marked. ' +
+      'AGENTS.md is read only when the project\'s folders hold no CLAUDE.md, .claude/CLAUDE.md or ' +
+      'CLAUDE.local.md' +
+      (agentsNotRead ? `; here they do, so ${agentsNotRead} AGENTS.md file(s) are left out` : '') +
+      '. MEMORY.md comes from the project memory of the git repository\'s root when there is one. ' +
+      'Individual files in the per-project memory directory are recalled on demand rather than loaded ' +
+      'every session, so they are excluded here; browse them in the Explorer pane. A file reachable by ' +
+      'two routes is shown once, where it is first loaded.',
     sections,
   };
 }

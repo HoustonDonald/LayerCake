@@ -143,9 +143,12 @@ level note names those plugins. The definitions and MCP views leave such files o
 ~\.claude\projects\<mangled-path>\memory\**\*.md
 ```
 
-The slug is the absolute path with `\`, `/` and `:` replaced by `-`, so `C:\dev\LayerCake` becomes
-`C--dev-LayerCake`. This is context injection rather than a settings-precedence level, and the UI
-says so.
+The slug is the absolute path with every character that is not an ASCII letter or digit replaced
+by `-`, so `C:\dev\LayerCake` becomes `C--dev-LayerCake`. It is taken from the project's git root
+when there is one (the main repository's for a worktree), not from the folder scanned: measured on
+Claude Code 2.1.283 (#123), a session in a subfolder or a worktree loaded the repository root's
+`MEMORY.md` and not its own. `autoMemoryDirectory`, which moves it, is not modelled. This is context
+injection rather than a settings-precedence level, and the UI says so.
 
 ### 04+ The directory walk
 
@@ -204,7 +207,7 @@ Four chains, each stating its own merge rule in the UI rather than leaving it im
 
 | View | What it shows |
 |---|---|
-| **CLAUDE.md chain** | `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `MEMORY.md` concatenated top to bottom with per-level headers. Individual per-project memory files are excluded: they are recalled on demand, not loaded every session, and sweeping in 60+ of them would bury the actual instruction set. |
+| **CLAUDE.md chain** | `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `MEMORY.md` and `.claude\rules`, concatenated top to bottom with per-level headers, each level's rules after its `CLAUDE.md`. A rule with `paths` in its frontmatter is marked conditional. `AGENTS.md` is left out, and marked in the Explorer, where the project's folders hold a `CLAUDE.md`. Individual per-project memory files are excluded: they are recalled on demand, not loaded every session, and sweeping in 60+ of them would bury the actual instruction set. |
 | **settings.json chain** | Every settings file in precedence order, plus a computed effective merge and a table naming the level that won each key. |
 | **Agents & skills** | Definitions grouped by declared name (frontmatter `name`, else filename or skill folder; a plugin's as `plugin:name`), showing which level's version shadows the others. Plugins that do not load here are left out and counted. |
 | **MCP servers** | The `.mcp.json` in the project folder and every folder above it, plus the global and per-project `mcpServers` blocks in `~/.claude.json` (the per-project key is described below), with shadowed definitions flagged. A `.mcp.json` inside a `.claude` folder is listed as not read, naming the servers it defines, which are not loaded. |
@@ -250,6 +253,18 @@ The same method placed a `.mcp.json` in every plausible folder (#121). Claude Co
 one in the project folder and in every folder above it, past the git root too, each as project
 scope awaiting approval, and none inside a `.claude` folder, the configuration home's included. So
 a server defined only in `~\.claude\.mcp.json` is not loaded; the MCP view says so.
+
+The CLAUDE.md chain follows what Claude Code 2.1.283 was measured to load (#123), from the request
+body a stub API received, with an `InstructionsLoaded` marker hook agreeing:
+
+- `.claude\rules\**\*.md` load at session start from the configuration home and from every folder
+  of the walk, each level's after its `CLAUDE.md`. A rule with `paths` in its frontmatter did not
+  load at session start; it is read when Claude reads a matching file.
+- `AGENTS.md` loads only when the project's folders (the folder and its ancestors) hold no
+  `CLAUDE.md`, `.claude\CLAUDE.md` or `CLAUDE.local.md`; then it loads from every one of them. A
+  `CLAUDE.md` in the configuration home does not count. `.claude\AGENTS.md` never loaded, and is not
+  scanned.
+- A plugin's rules were not measured and are left out of the chain.
 
 ---
 
