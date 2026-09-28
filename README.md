@@ -420,8 +420,8 @@ that tree is a restore target, and a backup the restore can overwrite is not a b
   says why.
 - **A restore takes its own snapshot first**, so it is itself undoable: the CLI prints the undo
   command with an `--only` for each file it replaced. A file the restore recreated is the exception,
-  since that snapshot was taken while it was missing and a restore never deletes; the CLI names such
-  files as not covered. It does not replace a
+  since that snapshot was taken while it was missing and a restore never deletes; the page and the
+  CLI name such files as not covered by the undo (the restore's answer lists them as `created`). It does not replace a
   file that snapshot could not hold (over the 2 MB cap), nor one marked read-only: that row fails
   and says so. A row that fails does not stop the others. A snapshot does not record the read-only
   attribute, so a file a restore recreates is writable.

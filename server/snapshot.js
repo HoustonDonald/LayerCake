@@ -621,6 +621,9 @@ export async function restoreFiles(id, absPaths, lineage, { absentPaths = [] } =
   const held = new Map(undo.files.map((f) => [samePathKey(f.absPath), f]));
 
   const restored = [];
+  // Restored by creating them: the undo snapshot was taken while they were
+  // missing and a restore never deletes, so undoing this leaves them (#136).
+  const created = [];
   const failed = [];
   for (const entry of chosen) {
     try {
@@ -630,6 +633,7 @@ export async function restoreFiles(id, absPaths, lineage, { absentPaths = [] } =
         // Nothing there to lose: created, and never over a file that has
         // appeared since, which no snapshot holds.
         await createExclusive(entry.absPath, data);
+        created.push(entry.absPath);
       } else if (!held.has(key)) {
         // There, but the undo snapshot could not hold it (over the 2 MB cap,
         // or unreadable): replacing it would leave no copy anywhere (#96).
@@ -661,5 +665,5 @@ export async function restoreFiles(id, absPaths, lineage, { absentPaths = [] } =
       failed.push({ absPath: entry.absPath, ...described });
     }
   }
-  return { restored, failed, undoSnapshotId: undo.id };
+  return { restored, created, failed, undoSnapshotId: undo.id };
 }

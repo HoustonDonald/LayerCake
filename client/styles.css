@@ -1130,12 +1130,19 @@ pre.code {
   font-weight: 600;
 }
 
+/* Stays in view at the bottom of the file list: in a full snapshot of a real
+   lineage the Restore button sat about 11,000 px down (#143). */
 .snap-footer {
   display: flex;
   align-items: center;
   gap: 10px;
   margin-top: 14px;
   flex-wrap: wrap;
+  position: sticky;
+  bottom: 0;
+  padding: 10px 0;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
 }
 
 /* ---------- watch banner ---------- */

@@ -214,6 +214,9 @@ export async function runCreateChecks({ base, token, check, skip, smokeDir, conf
   check('a deleted file comes back from its undo snapshot, byte for byte, after a rescan',
     back.status === 200 && back.json?.restored?.length === 1 && (await fs.readFile(agentPath).catch(() => Buffer.alloc(0))).equals(before),
     `${back.status} ${JSON.stringify(back.json)}`);
+  // #136: the answer names it as recreated, which its undo cannot remove.
+  check('a restore names the files it recreated (#136)',
+    back.json?.created?.length === 1 && same(back.json.created[0], agentPath), JSON.stringify(back.json?.created));
 
   // A gone file that reappears after the scan is never written over: the
   // restore's own snapshot came from the scan and cannot hold it.

@@ -78,27 +78,43 @@ export default function SnapshotPanel({ scanId, onRestored }) {
     setError(null);
     setBusy(true);
     try {
-      const cmp = await compareSnapshot(id, scanId);
-      setComparison(cmp);
-      // Preselect only what actually differs and can be put back, a file gone
-      // from disk included: the undo of a delete is that one row, and it used
-      // to open as "Restore 0 selected" (#143). Restoring an identical file is
-      // a write with no effect, and it would pad the confirmation with noise. A file Claude Code rewrites as it runs
-      // (~/.claude.json, the plugin manifests) is never preselected: it always
-      // differs, and rolling it back rolls back Claude Code's own state (#96,
-      // #109). The server marks those rows, for this page and the CLI (#134).
-      setChecked(
-        new Set(
-          cmp.rows
-            .filter((r) => (r.status === 'changed' || r.status === 'missing') && r.restorable !== false && !r.rewrittenByClaudeCode)
-            .map((r) => r.absPath)
-        )
-      );
+      await compare(id);
     } catch (err) {
       setError(err.message);
     } finally {
       setBusy(false);
     }
+  }
+
+  // A restore of a file gone from disk rescans (App's onRestored), which
+  // brings a new scanId. Compare again against it, keeping what the restore
+  // said: against the old scan, where the file was absent, its row read
+  // "unchanged · cannot restore here" with the box disabled (#132).
+  useEffect(() => {
+    if (!selected) return;
+    compare(selected).catch((err) => setError(err.message));
+    // Only a new scan should trigger this; `selected` is read as it stands.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scanId]);
+
+  /** Compares `id` against disk under the current scan and preselects what differs. */
+  async function compare(id) {
+    const cmp = await compareSnapshot(id, scanId);
+    setComparison(cmp);
+    // Preselect only what actually differs and can be put back, a file gone
+    // from disk included: the undo of a delete is that one row, and it used
+    // to open as "Restore 0 selected" (#143). Restoring an identical file is
+    // a write with no effect, and it would pad the confirmation with noise. A file Claude Code rewrites as it runs
+    // (~/.claude.json, the plugin manifests) is never preselected: it always
+    // differs, and rolling it back rolls back Claude Code's own state (#96,
+    // #109). The server marks those rows, for this page and the CLI (#134).
+    setChecked(
+      new Set(
+        cmp.rows
+          .filter((r) => (r.status === 'changed' || r.status === 'missing') && r.restorable !== false && !r.rewrittenByClaudeCode)
+          .map((r) => r.absPath)
+      )
+    );
   }
 
   function toggle(absPath) {
@@ -120,8 +136,16 @@ export default function SnapshotPanel({ scanId, onRestored }) {
       // them before it meant the page never showed what a restore did, and
       // since #97 a refused row arrives here, in `failed` (#103).
       await open(selected);
+      // A file this restore created was missing when the undo snapshot was
+      // taken, and a restore never deletes, so undoing it leaves that file (#136).
+      const created = res.created || [];
       setOutcome(
         `Restored ${res.restored.length} file${res.restored.length === 1 ? '' : 's'}. Undo snapshot: ${res.undoSnapshotId}` +
+          (created.length
+            ? `. ${created.length === res.restored.length ? (created.length === 1 ? 'It was' : 'All were') : `${created.length} of them were`} ` +
+              `gone from disk and recreated: undoing this restore will not remove ${created.length === 1 ? 'it' : 'them'} (delete by hand to undo): ` +
+              created.join(', ')
+            : '') +
           (res.failed.length ? `. ${res.failed.length} not restored, listed below.` : '')
       );
       if (res.failed.length) {
@@ -240,7 +264,8 @@ export default function SnapshotPanel({ scanId, onRestored }) {
                   Restore {checked.size} selected
                 </button>
                 <span className="editor-hint">
-                  The files it replaces are snapshotted first, so a restore is itself undoable.
+                  The files it replaces are snapshotted first, so undoing a restore puts them back. A file it
+                  recreates is not removed by that undo.
                 </span>
               </div>
             </>
