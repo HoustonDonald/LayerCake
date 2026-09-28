@@ -10,7 +10,7 @@ The smoke test also passes on Linux (Ubuntu under WSL2, Node 22). There, the che
 Windows-only form (UNC paths, drive letters, the libuv watch storm, PowerShell process start times,
 `claude.cmd` shims, Windows project paths) print `SKIP` with their reason and a count, never a quiet
 pass, and the summary line counts the skipped groups. macOS is untested. "Start Claude here" is Windows-only: it
-opens Windows Terminal, and its status line uses Windows's `curl.exe`.
+opens Windows Terminal (or a console window without it), and its status line uses Windows's `curl.exe`.
 
 ```
 npm install
@@ -18,6 +18,23 @@ npm run app        # build if stale, serve, and open a chromeless app window
 npm start          # same without the window: http://127.0.0.1:5178
 npm run build:exe  # one-file Windows app, no Node needed to run it: dist\LayerCake.exe
 ```
+
+## Requirements
+
+LayerCake needs little beyond Windows, and works without the usual developer extras. The minimum
+was checked on a plain Windows 11 in Windows Sandbox, which has no Git Bash, no PowerShell 7 and no
+Windows Terminal: the exe opened its window and scanned, and "Start Claude here" opened Claude
+Code.
+
+| | Needed? | Without it |
+|---|---|---|
+| Windows 10 or 11 | Yes | The smoke test also passes on Linux; macOS is untested. |
+| Claude Code | For the Sessions tab and "Start Claude here" | The lineage, editing and snapshots need only the files. |
+| Edge or Chrome | Recommended | The window opens in the default browser, without the isolation flags (see "Single executable"). |
+| Windows Terminal | Recommended | "Start Claude here" opens a console window: no tab name, no placement beside LayerCake. |
+| PowerShell 7 | No | LayerCake uses the Windows PowerShell 5.1 every Windows has. Claude Code uses 7 when installed, else 5.1, and the launched status line works under both (#11). |
+| Git Bash | No | Claude Code runs the launched status line through PowerShell instead (#11). |
+| Node.js | For the CLI and for running from source | The exe needs nothing installed. |
 
 Open the app, type a project directory, press Scan.
 
@@ -713,6 +730,13 @@ wt -w LayerCake --pos <right half> new-tab --title "Claude: <project>" -d <proje
    claude --session-id <new id> --settings <per-session settings file>
 ```
 
+Where Windows Terminal is not installed (stock Windows 10, or removed from a managed machine), the
+same `claude` command opens in a console window of its own instead, with no tab name and no
+placement, and the page says so (#157). Windows PowerShell 5.1 starts it with `Start-Process`, from
+a script passed encoded so that no command line parses the folder or file names; that also works
+where PowerShell runs in Constrained Language Mode. Verified in Windows Sandbox, which has no
+Windows Terminal.
+
 The settings file applies to that one session only (Claude Code documents `--settings` as a level
 that "lasts one session and doesn't write to any file"); your own settings are never touched. It
 adds two things:
@@ -764,8 +788,9 @@ Things to know:
   new one's context, and once a session has ended its last status line is no longer shown as exact.
 - The status line runs through Git Bash when installed, and through PowerShell on a machine
   without it, as Claude Code does it; `curl.exe` ships with Windows 10 and later. Both were
-  checked (#11): through Claude Code's own PowerShell runner with PowerShell 7, and with Claude
-  Code's exact PowerShell arguments under Windows PowerShell 5.1.
+  checked (#11): through Claude Code's own PowerShell runner with PowerShell 7 here, and in
+  Windows Sandbox (no Git Bash, no PowerShell 7), where Claude Code chose Windows PowerShell 5.1
+  itself and the command delivered its JSON intact.
 - The window placement is approximate: Windows Terminal sizes in character cells, not pixels.
 - A project whose path contains `;` is refused. Windows Terminal reads `;` as "start another
   command", even inside quotes, so a folder named to exploit that could run a program of its

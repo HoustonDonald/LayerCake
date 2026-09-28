@@ -16,6 +16,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { claudeDataDir } from './paths.js';
+import { WINDOWS_POWERSHELL } from './powershell.js';
 import { readForDisplay } from './readfile.js';
 import { DIR_TIMEOUT_MS, withTimeout } from './safety.js';
 import { TranscriptReader } from './transcript.js';
@@ -133,11 +134,10 @@ const TICKS_FORM_MIN = 300_000_000_000_000_000n;
 const SAME_START_TICKS = 10_000n; // 1 ms in 100 ns units
 
 function queryStartTimes(pids) {
-  const ps = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   const ids = pids.filter((p) => Number.isInteger(p) && p > 0).join(',');
   const script = `Get-Process -Id ${ids} -ErrorAction SilentlyContinue | ForEach-Object { try { '{0} {1} {2}' -f $_.Id, $_.StartTime.ToFileTimeUtc(), $_.StartTime.Ticks } catch {} }`;
   return new Promise((resolve) => {
-    execFile(ps, ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: START_QUERY_TIMEOUT_MS, windowsHide: true }, (_err, stdout) => {
+    execFile(WINDOWS_POWERSHELL, ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: START_QUERY_TIMEOUT_MS, windowsHide: true }, (_err, stdout) => {
       const out = new Map();
       for (const line of String(stdout || '').split(/\r?\n/)) {
         const m = /^(\d+) (\d+) (\d+)$/.exec(line.trim());

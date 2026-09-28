@@ -16,6 +16,7 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 
+import { consoleStart } from '../server/launch.js';
 import { projectSlug } from '../server/paths.js';
 
 export const SENTINELS = {
@@ -612,6 +613,28 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
     argv.includes('claude') && /^[0-9a-f-]{36}$/.test(at('--session-id')) && at('--settings') === l.settingsPath);
   check('the settings file is kept in LayerCake data, not in ~/.claude', l?.settingsPath?.startsWith(path.join(appData, 'launches')));
   check('placement puts the terminal on the right half of the screen', at('--pos') === '1280,0');
+  // #157: where wt.exe is missing, the same program and arguments start in a
+  // console window, in the same folder.
+  const plan = l?.console;
+  const program = argv.slice(argv.indexOf('-d') + 2);
+  check('without Windows Terminal, the same program starts in a console window in the same folder (#157)',
+    plan?.file === program[0] && JSON.stringify(plan?.args) === JSON.stringify(program.slice(1)) && plan?.dir === proj,
+    JSON.stringify({ plan: plan && { file: plan.file, args: plan.args, dir: plan.dir }, program }));
+  // Its quoting, read back with rules written here rather than the producer's:
+  // a PowerShell single-quoted literal un-doubles each quote character, and a
+  // Windows command line splits on unquoted spaces. The expected values are
+  // written out by hand, the working directory with its brackets escaped.
+  const literal = (script, name) => {
+    const m = new RegExp(`-${name} '((?:[^'\u2018-\u201B]|(['\u2018-\u201B])\\2)*)'`).exec(script || '');
+    return m ? m[1].replace(/(['\u2018-\u201B])\1/g, '$1') : null;
+  };
+  const winArgv = (line) => [...String(line).matchAll(/"((?:[^"\\]|\\+(?!"))*)(\\*)"|[^\s"]+/g)].map((m) => (m[1] !== undefined ? m[1] + m[2].slice(m[2].length / 2) : m[0]));
+  const tricky = consoleStart('C:\\p [x] O\u2019Brien & 100%\\it\'s', ['C:\\Program Files\\n\\node.exe', 'C:\\a b\\cli.js', '--session-id', 'u-1', '--settings', 'C:\\x y\\l.json']);
+  check('the console start quotes every value for PowerShell and for Windows (#157)',
+    literal(tricky.script, 'FilePath') === 'C:\\Program Files\\n\\node.exe' &&
+      JSON.stringify(winArgv(literal(tricky.script, 'ArgumentList'))) === JSON.stringify(['C:\\a b\\cli.js', '--session-id', 'u-1', '--settings', 'C:\\x y\\l.json']) &&
+      literal(tricky.script, 'WorkingDirectory') === 'C:\\p `[x`] O\u2019Brien & 100%\\it\'s',
+    tricky.script);
 
   const settings = JSON.parse(await fs.readFile(l.settingsPath, 'utf8'));
   const hookUrl = settings.hooks?.Notification?.[0]?.hooks?.[0]?.url || '';

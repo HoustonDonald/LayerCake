@@ -122,7 +122,8 @@ server/health.js    session health state + reasons, rules shipped in the payload
 server/summaries.js free summary cards; the opt-in AI summary via stripped-down claude -p
 server/appdata.js   LayerCake's own data (cards, AI summaries, usage ledger), via atomicWrite
 server/session-routes.js /api/sessions, /api/session/:id[/turn/:n|/stream|/summarize], /api/history, /api/usage
-server/launch.js    "Start Claude here": wt.exe + claude --session-id --settings <file>; fixed argv
+server/launch.js    "Start Claude here": wt.exe + claude --session-id --settings <file>; fixed argv; console window without wt
+server/powershell.js Windows PowerShell 5.1's path and the quoting for starting it; no imports, nothing at load
 server/ingest.js    /ingest/<launch>/<secret>/{statusline,hook} from launched sessions; state per session
 client/             React 18 + Vite, two-pane explorer plus editor, snapshots and watch bar
 cli/                layercake CLI, imports server modules directly
@@ -319,10 +320,19 @@ the request; screen numbers are validated; the settings go in a file because Win
 splits its arguments on `;`, even inside a quoted argument. For the same reason a project path
 containing `;` is refused before anything is written (#20): the directory reaches `wt` as `-d` and
 inside `--title`, and a folder's name is chosen by whoever made it. Any new argument to `wt` that
-carries outside text needs the same check. Claude's own edits in a launched session bypass LayerCake's
-snapshot-first rule, since they are Claude Code's writes, not LayerCake's.
+carries outside text needs the same check. Where `wt.exe` is not found, the same program and
+arguments start in a console window instead (#157, `consoleStart`): Windows PowerShell 5.1 runs
+`Start-Process` from `-EncodedCommand`, so no command line parses the values, each value is a
+single-quoted literal (`psQuote`), the working directory's wildcard characters are escaped, and
+the argument string follows the Windows rules (`winArgQuote`, which refuses a `"` rather than
+escape one). Not `cmd /c start` (it re-parses `&`, `%`, `^`), not a detached spawn (a console
+program gets no console), not `conhost.exe` (lost a program path with a space), and not .NET's
+`Process.Start` (refused under Constrained Language Mode). Claude's own edits in a launched session
+bypass LayerCake's snapshot-first rule, since they are Claude Code's writes, not LayerCake's.
 
-**The processes LayerCake starts are few and fixed.** `launch.js` (wt.exe), `summaries.js`
+**The processes LayerCake starts are few and fixed.** `launch.js` (wt.exe, or where it is missing
+Windows PowerShell 5.1 from its absolute System32 path running one encoded `Start-Process`, hidden,
+a 60 s timeout, #157), `summaries.js`
 (`claude -p`), `desktop/window.js` (the app window: Edge or Chrome with `APP_FLAGS`, falling back to
 `cmd /c start`, `open` or `xdg-open` with the URL alone), and `sessions.js`, which asks PowerShell
 for process start times so a reused PID cannot pass for a running session (#1). The last runs one
@@ -557,10 +567,12 @@ partially. A truncated file restored is silent data loss.
   most likely stopped while idle.
 - **Closing LayerCake under a launched session makes its hooks fail**, visibly: a "hook error" notice
   per event in that terminal. Claude does not see non-blocking hook errors, so it costs no tokens.
-- **The launched status line under PowerShell** (Claude Code's choice where Git Bash is absent, as on
-  the owner's work machines) was checked through Claude Code 2.1.284's own runner with PowerShell 7,
-  and by replaying its exact arguments under Windows PowerShell 5.1 (#11). Claude Code choosing 5.1
-  by itself was not produced: with PowerShell 7 installed it finds it by install path, PATH aside.
+- **Plain Windows is checked in Windows Sandbox** (enabled on this machine; no Git Bash, no
+  PowerShell 7, no Windows Terminal; README "Requirements"). There Claude Code 2.1.284 ran the
+  launched status line's command under Windows PowerShell 5.1, its own choice (#11), and the console
+  fallback opened it (#157). Map only scratch folders in, never a config or credential. A Claude Code
+  that was never signed in exits at once without a network, even started directly, so a test of a
+  launch needs the Sandbox's networking on.
 - **The context window is inferred from the model id** (`contextWindow` in `health.js`, rule shipped
   with the payload): `[1m]` or a documented native-1M family is 1M, else 200K. A new model family
   needs adding there.

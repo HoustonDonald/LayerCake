@@ -29,6 +29,10 @@
 
 import { getAsset, isSea } from 'node:sea';
 
+// The one server module imported statically: it imports nothing of the
+// server's and does nothing at load, so it cannot throw before the handler.
+import { psQuote } from '../server/powershell.js';
+
 import { trackInflight } from './inflight.js';
 import { HOST, openWindow, probe, profileInUse, profileLock, showError } from './window.js';
 
@@ -96,17 +100,6 @@ function embeddedClient() {
   const files = new Map();
   for (const key of __LAYERCAKE_ASSETS__) files.set(key, Buffer.from(getAsset(key)));
   return files;
-}
-
-/**
- * The exe's path as a PowerShell single-quoted literal. PowerShell treats the
- * typographic quotes U+2018 to U+201B as single quotes too, so a path such as
- * C:\Users\Sean O'Brien needs every one of them escaped, and the escape is the
- * same character doubled: replacing a curly one with an ASCII pair would change
- * the path. Checked with PowerShell's own parser for ', U+2018 and U+2019.
- */
-function psQuote(text) {
-  return `'${text.replace(/['\u2018\u2019\u201A\u201B]/g, (q) => q + q)}'`;
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

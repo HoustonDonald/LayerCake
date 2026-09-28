@@ -335,14 +335,17 @@ export default function SessionsView({ projectDir, scanId }) {
             Start Claude here
           </button>
           <span className="muted">
-            Opens Claude Code in Windows Terminal beside this window, wired to report exact context, cost, limits and when
-            it waits for you. Adds nothing to Claude&apos;s context.
+            Opens Claude Code in Windows Terminal beside this window (in a console window where Windows Terminal is not
+            installed), wired to report exact context, cost, limits and when it waits for you. Adds nothing to Claude&apos;s
+            context.
           </span>
         </div>
         {launch && (
           <div className="launch-note">
-            Claude Code is starting in Windows Terminal (tab &quot;Claude: {projectDir?.split(/[\\/]/).pop()}&quot;). It shows up here
-            once it writes its first record, usually after your first prompt.
+            {launch.terminal === 'console'
+              ? 'Claude Code is starting in a console window, because Windows Terminal is not installed here.'
+              : `Claude Code is starting in Windows Terminal (tab "Claude: ${projectDir?.split(/[\\/]/).pop()}").`}{' '}
+            It shows up here once it writes its first record, usually after your first prompt.
           </div>
         )}
         {launchNote && <div className="launch-note">{launchNote}</div>}

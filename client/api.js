@@ -233,8 +233,9 @@ export function getUsage() {
 }
 
 /**
- * Starts Claude Code in Windows Terminal in the scanned directory. The screen
- * size lets the server put the terminal on the right half.
+ * Starts Claude Code in Windows Terminal in the scanned directory, or in a
+ * console window where it is not installed (the answer's `terminal` says
+ * which). The screen size lets the server put the terminal on the right half.
  */
 export function launchClaude(scanId) {
   const screen = { width: window.screen.availWidth, height: window.screen.availHeight };

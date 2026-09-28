@@ -1,6 +1,7 @@
 /**
  * "Start Claude here": opens a Windows Terminal tab running Claude Code in a
- * scanned project, wired for that one session to report to LayerCake.
+ * scanned project, wired for that one session to report to LayerCake. Where
+ * Windows Terminal is not installed, a console window instead (consoleStart).
  *
  *   wt -w LayerCake [--pos x,y --size cols,rows] new-tab --title "Claude: <project>"
  *      --suppressApplicationTitle -d <project> claude --session-id <uuid> --settings <file>
@@ -20,12 +21,13 @@
  * path containing ";" is refused for the same reason (refuseTerminalSeparator).
  */
 
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import path from 'node:path';
 
 import { writeLaunch } from './appdata.js';
 import { STATUS_REFRESH_S, registerLaunch } from './ingest.js';
+import { WINDOWS_POWERSHELL, encodeCommand, psQuote, psWildcardEscape, winArgQuote } from './powershell.js';
 import { resolveClaudeCommand } from './summaries.js';
 
 /** Documented hook events worth showing (docs: hooks, as of Claude Code 2.1.283). */
@@ -111,6 +113,69 @@ function refuseTerminalSeparator(value, what = 'the project path') {
   throw err;
 }
 
+/**
+ * Where Windows Terminal is not installed (stock Windows 10, or removed from a
+ * managed machine), Claude Code opens in a console window of its own instead:
+ * the same program and arguments, with no tab name and no placement.
+ *
+ * Node cannot open one itself. A detached console program gets no console at
+ * all (it never ran, measured), and one that is not detached is ended when
+ * LayerCake exits. conhost.exe <program> lost programs whose path has a space.
+ * So Windows PowerShell 5.1, hidden, runs Start-Process, a cmdlet, so it also
+ * works where PowerShell is held to Constrained Language Mode (measured; a
+ * .NET Process.Start is refused there). The script goes as -EncodedCommand, so
+ * no command line parses it; each value is a single-quoted literal; the
+ * working directory's wildcard characters are escaped; the argument string
+ * follows the Windows rules. Measured with folder and file names holding
+ * & % ; ^ ' ’ [ ] ` $ and non-ASCII: arguments and working directory arrived
+ * intact, in a visible console.
+ */
+export function consoleStart(dir, program) {
+  const [file, ...args] = program;
+  const script =
+    "$ProgressPreference = 'SilentlyContinue'; " +
+    `Start-Process -FilePath ${psQuote(file)} -ArgumentList ${psQuote(args.map(winArgQuote).join(' '))} ` +
+    `-WorkingDirectory ${psQuote(psWildcardEscape(dir))}`;
+  return { file, args, dir, script };
+}
+
+/**
+ * Only a guard against a PowerShell that never returns. The start usually takes
+ * about 0.5 s, but a fresh Windows Sandbox once took over 10 s, and a start
+ * cut off then may still open Claude Code after LayerCake has reported that it
+ * failed, inviting a second click and a second session.
+ */
+const CONSOLE_START_TIMEOUT_MS = 60_000;
+
+/**
+ * PowerShell's own words for a failed start. With -EncodedCommand its errors
+ * arrive on stderr as CLIXML: each line an <S S="Error"> element, line breaks
+ * written _x000D__x000A_. The first line says what went wrong ("Start-Process
+ * : This command cannot be run due to the error: The system cannot find the
+ * file specified."); the rest is the position in the script.
+ */
+export function powershellError(stderr) {
+  const lines = [...String(stderr || '').matchAll(/<S S="Error">([\s\S]*?)<\/S>/g)].map((m) =>
+    m[1].replace(/_x000D__x000A_/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&').trim()
+  );
+  return lines.find(Boolean) || null;
+}
+
+function startInConsole(plan) {
+  return new Promise((resolve, reject) => {
+    execFile(
+      WINDOWS_POWERSHELL,
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodeCommand(plan.script)],
+      { windowsHide: true, timeout: CONSOLE_START_TIMEOUT_MS },
+      (err, _stdout, stderr) => {
+        if (!err) return resolve();
+        const why = powershellError(stderr) || (err.killed ? `no answer in ${CONSOLE_START_TIMEOUT_MS / 1000} s` : `exit ${err.code ?? err.message}`);
+        reject(new Error(`Windows Terminal was not found, and starting Claude Code in a console window failed: ${why}`));
+      }
+    );
+  });
+}
+
 export async function launchClaude({ dir, port, screen }) {
   refuseTerminalSeparator(dir);
   // The program wt starts: 'claude' when claude.exe is on PATH, else node plus
@@ -127,6 +192,7 @@ export async function launchClaude({ dir, port, screen }) {
   const settingsPath = await writeLaunch(record, settings);
   registerLaunch(record);
 
+  const program = [...claude, '--session-id', sessionId, '--settings', settingsPath];
   const argv = [
     '-w',
     'LayerCake',
@@ -137,27 +203,23 @@ export async function launchClaude({ dir, port, screen }) {
     '--suppressApplicationTitle',
     '-d',
     dir,
-    ...claude,
-    '--session-id',
-    sessionId,
-    '--settings',
-    settingsPath,
+    ...program,
   ];
+  const fallback = consoleStart(dir, program);
 
-  // For the smoke test: everything but the process start.
+  // For the smoke test: everything but the process start, both ways.
   if (process.env.LAYERCAKE_LAUNCH_DRY_RUN === '1') {
-    return { launchId: id, sessionId, dryRun: true, argv, settingsPath };
+    return { launchId: id, sessionId, dryRun: true, argv, console: fallback, settingsPath };
   }
 
-  await new Promise((resolve, reject) => {
+  const started = await new Promise((resolve, reject) => {
     const child = spawn('wt.exe', argv, { detached: true, stdio: 'ignore' });
-    child.once('error', (err) =>
-      reject(err.code === 'ENOENT' ? new Error('Windows Terminal (wt.exe) was not found.') : err)
-    );
+    child.once('error', (err) => (err.code === 'ENOENT' ? resolve(false) : reject(err)));
     child.once('spawn', () => {
       child.unref();
-      resolve();
+      resolve(true);
     });
   });
-  return { launchId: id, sessionId };
+  if (!started) await startInConsole(fallback);
+  return { launchId: id, sessionId, terminal: started ? 'windows-terminal' : 'console' };
 }
