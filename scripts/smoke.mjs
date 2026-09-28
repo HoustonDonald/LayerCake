@@ -31,6 +31,7 @@ import { projectSlug, samePathKey } from '../server/paths.js';
 import { buildClientIfStale } from './build-if-stale.js';
 import { makeSessionFixture, runLaunchChecks, runSessionChecks, runSummaryChecks, stopFixtureProcesses } from './smoke-sessions.mjs';
 import { runCreateChecks } from './smoke-create.mjs';
+import { runManagedChecks, runManagedDefaultsChecks, runManagedWatchCheck } from './smoke-managed.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -335,6 +336,17 @@ async function waitForServer(timeoutMs = 20000) {
 }
 
 const { proj, snaps, configHome, fakeHome } = await makeFixture();
+// Managed policy (#147): an empty managed folder, legacy folder and registry
+// keys of the run's own, none of which exist, so the machine's policy is never
+// read and a managed machine's cannot change a verdict. Set in smoke's own
+// environment before anything starts, so every server, CLI run and in-process
+// scan below inherits them rather than each spawn having to remember.
+process.env.LAYERCAKE_MANAGED_DIR = path.join(smokeDir, 'no-managed-policy');
+process.env.ProgramData = path.join(smokeDir, 'no-programdata');
+process.env.LAYERCAKE_POLICY_KEYS = JSON.stringify({
+  hklm: `HKCU\\Software\\LayerCakeSmoke-none-${process.pid}\\HKLM`,
+  hkcu: `HKCU\\Software\\LayerCakeSmoke-none-${process.pid}\\HKCU`,
+});
 // Synthetic Claude session data and LayerCake app data: the real ones are never read or written.
 const { claudeData, appData } = await makeSessionFixture(smokeDir, proj);
 
@@ -582,6 +594,17 @@ try {
     const inHome = lineage.levels.filter((l) => underRealHome(l.dir) || l.entries.some((e) => underRealHome(e.absPath)));
     check('the scan reads nothing from the real home folder', inHome.length === 0 && manifest.home !== machineHome,
       JSON.stringify(inHome.map((l) => l.dir)));
+  }
+  // #147: the managed folder, the drop-ins and the registry values the main
+  // run reads are its own, and absent; a registry value is queried and found missing.
+  {
+    const managedLevel = lineage.levels.find((l) => l.kind === 'managed');
+    const own = (p) => p.toLowerCase().startsWith(smokeDir.toLowerCase());
+    check('the scan reads no managed policy of the machine\'s (#147)',
+      manifest.managedFolder?.every((t) => own(t.file)) && own(manifest.managedDropInDir || '') &&
+        (manifest.registryPolicy || []).every((k) => /LayerCakeSmoke-none-/.test(k.key)) &&
+        (process.platform !== 'win32' || (managedLevel?.policies?.length === 2 && managedLevel.policies.every((p) => p.state === 'absent'))),
+      JSON.stringify({ folder: manifest.managedFolder, registry: manifest.registryPolicy, policies: managedLevel?.policies }));
   }
 
   const scanId = lineage.scanId;
@@ -1768,6 +1791,11 @@ try {
   // Last, because it scans more often than the server keeps scans (8), which
   // evicts the scan every check above still holds an id for.
   await runCreateChecks({ base: BASE, token, check, skip, smokeDir, configHome, snaps, fakeHome });
+
+  // --- managed policy (#147), on a server of its own ----------------------------
+  await runManagedChecks({ root: ROOT, check, skip, smokeDir });
+  await runManagedDefaultsChecks({ check, skip });
+  await runManagedWatchCheck({ check, smokeDir });
 
   // --- local-scope MCP servers (#120) ----------------------------------------
   // Found under the key Claude Code uses. The fixture's .claude.json names each

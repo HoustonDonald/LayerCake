@@ -44,7 +44,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { CLAUDE_DIR_TREES, TEMP_PREFIX, isUncPath, samePathKey } from './paths.js';
+import { CLAUDE_DIR_TREES, TEMP_PREFIX, isUncPath, managedDropInDir, samePathKey } from './paths.js';
 import { describeError, isSecret } from './safety.js';
 import { SHARE_STUCK, shareKeyOf, timedFsCall } from './sharegate.js';
 
@@ -70,6 +70,8 @@ const TREE_NAMES = new Set(CLAUDE_DIR_TREES.map((t) => t.name.toLowerCase()));
 function configTrees(lineage) {
   const roots = new Set();
   for (const level of lineage.levels) {
+    // managed-settings.d is open the same way: any *.json there is policy (#147).
+    if (level.kind === 'managed') roots.add(samePathKey(managedDropInDir()));
     if (!level.dir) continue;
     const base = level.kind === 'user' ? level.dir : level.kind === 'directory' ? path.join(level.dir, '.claude') : null;
     if (!base) continue;

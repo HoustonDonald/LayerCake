@@ -26,13 +26,19 @@ import {
   globalConfigFile,
   legacyGlobalConfigFile,
   homeDir,
+  isDropInName,
   isUncPath,
   managedCandidates,
+  managedDir,
+  managedDropInDir,
+  managedFolderTargets,
   pluginCacheDir,
   projectMemoryDir,
   projectSlug,
+  remoteSettingsFile,
   samePathKey,
 } from './paths.js';
+import { readRegistryPolicy } from './policy.js';
 import {
   describeError,
   isNonConfigDir,
@@ -355,7 +361,83 @@ function finalizeLevel(level) {
   return level;
 }
 
-/** Managed / enterprise settings. Existence-probed on all platforms. */
+/**
+ * managed-settings.d (#147): every *.json directly inside that is not hidden,
+ * files and links, as Claude Code reads them. Anything else there is listed
+ * as not read, so a policy file with the wrong name is visible rather than
+ * silently missing. A drop-in's category is settings, like the file it
+ * merges over.
+ */
+async function scanDropIns(level) {
+  const dir = managedDropInDir();
+  const { st, error } = await statOf(dir);
+  if (!st || !st.isDirectory()) {
+    if (error && error.code !== 'ENOENT' && error.code !== 'ENOTDIR') level.errors.push({ path: dir, ...describeError(error) });
+    else level.absent.push({ absPath: dir, name: 'managed-settings.d/', category: 'settings' });
+    return;
+  }
+  let dirents;
+  try {
+    dirents = await timedFsCall(dir, () => fs.readdir(dir, { withFileTypes: true }));
+  } catch (err) {
+    level.errors.push({ path: dir, ...describeError(err) });
+    return;
+  }
+  const before = level.entries.length;
+  const notRead = (dirent, abs, why) =>
+    level.other.push({
+      id: nextId('o'),
+      name: path.join('managed-settings.d', dirent.name),
+      absPath: abs,
+      type: dirent.isDirectory() ? 'dir' : 'file',
+      size: null,
+      note: why,
+    });
+  for (const dirent of dirents) {
+    const abs = path.join(dir, dirent.name);
+    if (isSecret(abs)) {
+      level.redacted.push({ absPath: abs, reason: 'Credential file, never read' });
+      continue;
+    }
+    if (!(dirent.isFile() || dirent.isSymbolicLink()) || !isDropInName(dirent.name)) {
+      notRead(dirent, abs, 'Not read by Claude Code: it reads only the files here whose names end in .json, in lower case, and do not start with a dot; no folders.');
+      continue;
+    }
+    const probe = await statOf(abs);
+    if (probe.st && probe.st.isFile()) {
+      level.entries.push(
+        makeEntry({
+          absPath: abs,
+          category: 'settings',
+          level: { dir: managedDir() },
+          st: probe.st,
+          error: null,
+          note: 'Drop-in policy: merged over managed-settings.json, the drop-ins in name order.',
+        })
+      );
+    } else if (probe.error && probe.error.code !== 'ENOENT') {
+      level.entries.push(makeEntry({ absPath: abs, category: 'settings', level: { dir: managedDir() }, st: null, error: probe.error }));
+      level.errors.push({ path: abs, ...describeError(probe.error) });
+    } else {
+      notRead(dirent, abs, 'A link that leads to no file, so Claude Code takes nothing from it.');
+    }
+  }
+  if (level.entries.length === before) {
+    level.absent.push({
+      absPath: dir,
+      name: 'managed-settings.d/',
+      category: 'settings',
+      note: 'Directory exists but holds no policy files',
+      dirExists: true,
+    });
+  }
+}
+
+/**
+ * Managed / enterprise policy. Existence-probed on all platforms; the rest of
+ * the managed folder, the registry and the server-managed cache on this one
+ * (#147).
+ */
 async function scanManaged() {
   const level = newLevel({
     kind: 'managed',
@@ -363,17 +445,22 @@ async function scanManaged() {
     dir: null,
     note: 'Highest real-world precedence in Claude Code: overrides every level below.',
   });
-  for (const candidate of managedCandidates()) {
+  const where = (c) => (c.legacy ? `${c.platform} legacy location, which Claude Code no longer reads` : `${c.platform} location`);
+  const targets = [
+    ...managedCandidates().map((c) => ({ ...c, category: 'settings', note: where(c) })),
+    ...managedFolderTargets().map((t) => ({ ...t, platform: process.platform })),
+  ];
+  for (const candidate of targets) {
     const { st, error } = await statOf(candidate.file);
     if (st && st.isFile()) {
       level.entries.push(
         makeEntry({
           absPath: candidate.file,
-          category: 'settings',
+          category: candidate.category,
           level: { dir: path.dirname(candidate.file) },
           st,
           error: null,
-          note: candidate.legacy ? `${candidate.platform} legacy location, which Claude Code no longer reads` : `${candidate.platform} location`,
+          note: candidate.note,
         })
       );
     } else if (error && error.code !== 'ENOENT') {
@@ -382,16 +469,42 @@ async function scanManaged() {
       level.absent.push({
         absPath: candidate.file,
         name: path.basename(candidate.file),
-        category: 'settings',
+        category: candidate.category,
         // Another OS's location is listed so the level says where managed
         // settings live there, but the watcher does not try to watch it: on
         // Windows /Library/... is C:\Library\..., which read as a gap (#133).
         platform: candidate.platform,
-        note: candidate.legacy ? `${candidate.platform} legacy location, which Claude Code no longer reads` : `${candidate.platform} location`,
+        note: candidate.note,
       });
     }
   }
-  return finalizeLevel(level);
+  await scanDropIns(level);
+
+  // Server-managed settings outrank everything here and come from Anthropic's
+  // servers, so the cache is the only trace of them on disk. Its own
+  // category, which is not editable: an edit lasts until the next fetch.
+  await probeFile(
+    remoteSettingsFile(),
+    'remote-settings',
+    level,
+    'Claude Code\'s cached copy of server-managed settings (claude.ai admin console or a Claude apps gateway). ' +
+      'Shown, never merged: Claude Code fetches them again at startup and can hold them back until they are approved.'
+  );
+  // Named from the config home, as the level has no folder of its own: the
+  // absolute path was cut before the file name in the tree.
+  const cache = level.entries.find((e) => samePathKey(e.absPath) === samePathKey(remoteSettingsFile()));
+  if (cache) cache.relPath = path.join(path.basename(claudeHome()), 'remote-settings.json');
+
+  // The registry sources (#147, decision 17): records, not entries, because a
+  // registry value is not a file and nothing may treat its key as a path.
+  level.policies = await readRegistryPolicy();
+  finalizeLevel(level);
+  // A registry value is policy with no file beside it, and a failed read is a
+  // gap, so both count toward what the level says it found.
+  if (level.status === 'empty' && level.policies.some((p) => p.state === 'set')) level.status = 'found';
+  if (level.status === 'found' && level.policies.some((p) => p.state === 'error')) level.status = 'partial';
+  if (level.status === 'empty' && level.policies.some((p) => p.state === 'error')) level.status = 'error';
+  return level;
 }
 
 /**

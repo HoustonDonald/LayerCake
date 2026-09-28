@@ -26,7 +26,16 @@ import {
   createNameProblem,
   createTrees,
 } from './safety.js';
-import { CLAUDE_DIR_FILE_TARGETS, CLAUDE_DIR_TREES, DIR_FILE_TARGETS, PLUGIN_MANIFEST_FILES, samePathKey, settingsSourceFiles } from './paths.js';
+import {
+  CLAUDE_DIR_FILE_TARGETS,
+  CLAUDE_DIR_TREES,
+  DIR_FILE_TARGETS,
+  PLUGIN_MANIFEST_FILES,
+  isDropInName,
+  managedDropInDir,
+  samePathKey,
+  settingsSourceFiles,
+} from './paths.js';
 import { readForDisplay, splitFrontmatter } from './readfile.js';
 import { shareGatedCall } from './sharegate.js';
 
@@ -128,8 +137,11 @@ export function validateContent(absPath, content) {
     // Claude Code reads keys from these, so valid JSON that is not an object
     // (a list, a string) is as broken as a syntax error (#145). By name, not
     // category: keybindings.json shares the settings category and may be a list.
+    // A managed drop-in is a policy object whatever its name (#147).
     const name = path.basename(absPath).toLowerCase();
-    const objectFile = ['settings.json', 'settings.local.json', 'managed-settings.json', '.mcp.json'].includes(name);
+    const objectFile =
+      ['settings.json', 'settings.local.json', 'managed-settings.json', 'managed-mcp.json', '.mcp.json'].includes(name) ||
+      samePathKey(path.dirname(absPath)) === samePathKey(managedDropInDir());
     if (objectFile && (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))) {
       throw refuse(`Refusing to write ${path.basename(absPath)} with a top level that is not an object: Claude Code reads its keys from one.`, 'EBADJSON', 400);
     }
@@ -565,6 +577,12 @@ export function restorableWhenAbsent(lineage, absPath) {
     // A probed FILE recorded absent. Folder records (".claude/", "agents/")
     // are not: restoring a file there broke the level (#105).
     if (level.absent.some((a) => !String(a.name || '').endsWith('/') && samePathKey(a.absPath) === key)) return true;
+    // A managed drop-in (#147), by Claude Code's own name rule: the managed
+    // level has no folder of its own, so the test below never reaches it, and
+    // a deleted drop-in could not be put back.
+    if (level.kind === 'managed' && samePathKey(path.dirname(absPath)) === samePathKey(managedDropInDir()) && isDropInName(path.basename(absPath))) {
+      return true;
+    }
     if (!level.dir) continue;
     if (level.kind === 'directory') {
       if (DIR_FILE_TARGETS.some((t) => samePathKey(path.join(level.dir, t.name)) === key)) return true;

@@ -35,6 +35,9 @@ const SENSITIVE_BASENAMES = new Set([
   'settings.local.json',
   '.claude.json',
   '.mcp.json',
+  // Claude Code's cache of server-managed settings, which it writes readable
+  // by its owner only (mode 0600 in the 2.1.283 bundle) (#147).
+  'remote-settings.json',
 ]);
 
 /**
@@ -239,14 +242,15 @@ export function isSensitive(filePath) {
 }
 
 /**
- * Categories of file Claude Code itself rewrites as it runs: `~/.claude.json`
- * and the plugin manifests. They nearly always differ from a snapshot, and
+ * Categories of file Claude Code itself rewrites as it runs: `~/.claude.json`,
+ * the plugin manifests and its cache of server-managed settings (#147). They
+ * nearly always differ from a snapshot, and
  * rolling one back rolls back Claude Code's own state, so no restore selects
  * them unless asked by name (#96, #109). One list for the page and the CLI:
  * the CLI once selected `~/.claude.json` by default and printed an undo that
  * did it again (#134).
  */
-const CLAUDE_REWRITES = new Set(['home-config', 'plugin-manifest']);
+const CLAUDE_REWRITES = new Set(['home-config', 'plugin-manifest', 'remote-settings']);
 
 export function rewrittenByClaudeCode(category) {
   return CLAUDE_REWRITES.has(category);

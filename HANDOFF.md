@@ -4,7 +4,7 @@ Working state for picking this up in a new session. **Disposable.** Durable rule
 `CLAUDE.md`, user-facing spec in `README.md`. If something here contradicts those, they win and this
 file is stale.
 
-Last verified: **2026-09-27**. Write/snapshot work was done 2026-09-05; file watching 2026-09-15;
+Last verified: **2026-09-28**. Write/snapshot work was done 2026-09-05; file watching 2026-09-15;
 the single executable and the app-window isolation fix 2026-09-25; session history (Phase 1 of the
 session-wrap plan) 2026-09-26; testing against a copy of a real project, 2026-09-26 to 27 (see
 those sections below).
@@ -23,11 +23,12 @@ npm run smoke                       # expect: 0 failed
 node cli/index.js here C:\dev\LayerCake   # expect: ~18 line summary, exit 0
 ```
 
-Smoke was 356 passed, 0 failed, 3 skipped on 2026-09-28 with the #126/#143 commit (Windows; the skips are the
+Smoke was 397 passed, 0 failed, 3 skipped on 2026-09-28 with the #147 commit (Windows; the skips are the
 opt-in mapped-drive checks, a Linux-only one, and #144's link-to-a-share check, which needs a
 directory symlink this user cannot make without Developer Mode). WSL Ubuntu (Node 22.22.1, copy at
 `/tmp/layercake-linux-smoke`, lockfile unchanged so `rsync` the tree over it and run
-`node scripts/smoke.mjs`): 317 passed, 0 failed, 15 skipped on 2026-09-28 after 2c7a1f0.
+`node scripts/smoke.mjs`): 341 passed, 0 failed, 17 skipped on 2026-09-28 with the #147 commit.
+Smoke now writes and deletes a throwaway `HKCU\Software\LayerCakeSmoke-*` key on Windows (#147).
 
 ### 2026-09-28: triage of the open issues, and the order to take them in
 
@@ -35,10 +36,7 @@ The owner's answers that set it: LayerCake runs on this machine AND on managed w
 macOS and Linux are not required; mapped drives are likely at work. Every issue's triage comment
 holds the detail. Work top down:
 
-1. **#147**, both halves: probe the managed folder's `CLAUDE.md`, `managed-mcp.json` and
-   `managed-settings.d/` (read only; smoke can point `ProgramFiles` at a fixture), and read the
-   registry policy with reg.exe (decision 17). A managed `CLAUDE.md` loads first and is not even
-   listed as looked for today.
+1. ~~**#147**~~: done, 2026-09-28 afternoon (section below).
 2. **#150**: make the failed row visible in smoke, then reproduce under parallel load. The restore
    path, cause unknown; it fails closed.
 3. **#75**: a dead mapped drive, (a) at work. Needs the owner: a local share for the fast-failure
@@ -49,6 +47,27 @@ holds the detail. Work top down:
 7. Verification only: **#11** (rises if a work machine lacks Git Bash), **#89**.
 
 The owner chose to keep documented (b) limits open (#74, #54, #89, #11).
+
+### 2026-09-28, afternoon: managed policy (#147)
+
+One commit, its message listing every check. What changed is in README "00 Managed / enterprise
+settings" and the settings-merge bullets; the rules are in CLAUDE.md (policy.js's reg.exe line,
+`isDropInName` in the restore fence, the two smoke-only knobs).
+
+- **Premise corrected:** decision 17's note says server-managed settings cannot be read from disk.
+  Claude Code caches them at `<config home>\remote-settings.json`. LayerCake lists that file read
+  only and never merges it (the assistant's call, labelled as such to the owner): Claude Code
+  fetches it again at startup and can hold it back for approval.
+- **Found and fixed on the way:** LayerCake read `%ProgramFiles%` where Claude Code uses a fixed
+  `C:\Program Files\ClaudeCode` (#153), and smoke probed the machine's own managed folders (#154).
+- **A review agent** found eight real gaps, all fixed in the same commit; the (b) remainder is #155.
+- **Not rebuilt:** `dist\LayerCake.exe` (the owner's copy was running). This build was built in a
+  tree copy and launch-checked on port 5231. Run `npm run build:exe` once it is closed.
+- **Tooling** in this session's scratchpad (`83d40ce1-...`): `mutate-147b.mjs` (the engine and
+  every #147 mutant), `ui-147.mjs` (headless Edge), `exe-lifecycle-147.ps1`, `copy-tree.cjs`.
+- **Harness traps met again:** a JSON env var through Git Bash lost its doubled backslashes, and
+  reg.exe's `/f` became a path without `MSYS_NO_PATHCONV=1` (both CLAUDE.md 3h). Set such values
+  from Node or PowerShell.
 
 ### 2026-09-28, morning: the two open owner decisions (#143, #126)
 
@@ -498,8 +517,9 @@ Made by the owner on 2026-09-28, asked in the terminal, each the recommended opt
 16. **Plugin cache files are read only in LayerCake (#126)**: viewable, never edited or deleted,
     each saying why. Restore and create were extended to match, as the assistant's inference.
 17. **Registry policy is read with reg.exe (#147)**: `System32\reg.exe query` on the two
-    `Policies\ClaudeCode` keys, fixed argv, read only, 5 s timeout, output parsed as data. A new
-    process LayerCake starts, so it needs its line in CLAUDE.md when built.
+    `Policies\ClaudeCode` keys, fixed argv, read only, 5 s timeout, output parsed as data. Built
+    2026-09-28 (`server/policy.js`), with its line in CLAUDE.md. The note's "server-managed
+    settings cannot be read from disk" was wrong: see the #147 section above.
 
 ---
 

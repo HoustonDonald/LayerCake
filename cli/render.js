@@ -234,6 +234,13 @@ export function renderHere(summary) {
       )
     );
   }
+  if (summary.mcp.exclusive) {
+    continued(
+      paint.yellow(
+        `managed-mcp.json has exclusive control: ${plural(summary.mcp.blocked, 'other source')} not loaded, see: layercake show mcp`
+      )
+    );
+  }
 
   labelled(
     'Settings',
@@ -249,6 +256,20 @@ export function renderHere(summary) {
   );
   for (const [key, value] of summary.settings.highlights) {
     fitLine(`${' '.repeat(LABEL)}${paint.dim(padEnd(key, 14))} `, value, ' '.repeat(LABEL + 15));
+  }
+  // Which managed source applies (#147), said only when there is one to say.
+  const managed = summary.managed;
+  for (const file of managed.fatal) {
+    continued(paint.red(`managed policy does not parse, which Claude Code treats as fatal: ${file}`));
+  }
+  if (managed.used.length || managed.skipped.length || managed.remoteCache) {
+    continued(
+      `managed policy: ${managed.used.length ? managed.used.join(' + ') : 'none applies'} (${managed.behavior})` +
+        (managed.skipped.length ? paint.yellow(`; skipped: ${managed.skipped.join(', ')}`) : '')
+    );
+    if (managed.remoteCache) {
+      continued(paint.yellow('server-managed settings cached: they outrank the above and are not merged here'));
+    }
   }
 
   labelled(
@@ -517,9 +538,11 @@ function breakKey(key, max) {
  * key too long for its column breaks after a dot onto the lines below.
  */
 function provenanceLines(provenance, max) {
-  const mode = (p) =>
-    p.mode === 'concat' ? paint.yellow('combined') : p.mode === 'replace' ? paint.yellow('taken whole') : paint.dim(p.mode);
-  const froms = (p) => p.sources.map((s) => (p.mode === 'concat' ? `${s.source} +${s.added.length}` : s.source));
+  const MODES = { concat: 'combined', replace: 'taken whole', 'replace+concat': 'taken whole, then combined' };
+  const mode = (p) => (MODES[p.mode] ? paint.yellow(MODES[p.mode]) : paint.dim(p.mode));
+  // A managed source names its file or registry value: there can be several (#147).
+  const name = (s) => (s.part ? `${s.source}:${s.part}` : s.source);
+  const froms = (p) => p.sources.map((s) => (Array.isArray(s.added) && p.mode !== 'replace' ? `${name(s)} +${s.added.length}` : name(s)));
   const modeWidth = Math.max(...provenance.map((p) => width(mode(p))));
   const fromWidth = Math.max(...provenance.flatMap((p) => froms(p).map((f) => f.length)));
   const keyWidth = Math.min(
@@ -555,11 +578,26 @@ function renderSettingsView(view, lineage) {
     .map((file) => [
       file.sources.join('+'),
       shortenPath(file.path, lineage.home),
-      file.sensitive ? paint.yellow('sensitive') : '',
+      file.managed && !file.managed.applied ? paint.yellow('skipped') : file.sensitive ? paint.yellow('sensitive') : '',
       status(file),
     ]);
   if (sourceRows.length === 0) out(paint.dim('  none'));
   for (const line of fitColumns(sourceRows, w - 2, { flex: 1, spill: true })) out(`  ${line}`);
+
+  // Which managed source applies, and why the others do not (#147).
+  if (view.managed) {
+    out();
+    out(paint.cyan(`Managed policy, highest first (${view.managed.behavior})`));
+    for (const f of view.managed.fatal) {
+      fitLine('  ', paint.red(`does not parse, which Claude Code treats as fatal at startup: ${shortenPath(f.path, lineage.home)}`), '    ');
+    }
+    const cache = view.managed.remoteCache;
+    fitLine('  ', `${padEnd('server-managed', 24)} ${cache.present ? paint.yellow('cached, not merged: outranks the rest') : paint.dim('no cache, most likely none')}`);
+    for (const s of view.managed.sources) {
+      fitLine('  ', `${padEnd(s.label, 24)} ${s.applied ? paint.green('applied') : paint.dim(s.paths.length ? 'not used' : 'not present')}`);
+      if (!s.applied && s.reason && s.paths.length) for (const line of wrapText(s.reason, w - 4, '    ')) out(paint.dim(line));
+    }
+  }
 
   const notRead = files.filter((file) => !file.sources.length);
   if (notRead.length) {
@@ -638,9 +676,13 @@ function renderMcpView(view, lineage) {
       ? paint.red(s.error.code)
       : s.jsonError
         ? paint.red('parse error')
-        : s.notRead
-          ? paint.yellow('not read by Claude Code, not loaded')
-          : '',
+        : s.blocked
+          ? paint.yellow('not loaded: managed-mcp.json has exclusive control')
+          : s.notRead
+            ? paint.yellow('not read by Claude Code, not loaded')
+            : s.exclusive
+              ? paint.green('managed, exclusive control')
+              : '',
   ]);
   if (rows.length === 0) out(paint.dim('  none'));
   // The path is what a source is, so a long one spills onto its own line

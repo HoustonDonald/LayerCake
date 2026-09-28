@@ -118,24 +118,104 @@ export function claudeHomeSource() {
 }
 
 /**
+ * The folder Claude Code reads managed policy from on a platform (#147).
+ *
+ * On Windows that is C:\Program Files\ClaudeCode as a literal, not
+ * %ProgramFiles%: the 2.1.283 bundle returns the fixed string for "windows"
+ * (and the docs name the same path), so on a machine whose Program Files is
+ * elsewhere, reading the variable looked in a folder Claude Code never does.
+ *
+ * LAYERCAKE_MANAGED_DIR replaces this platform's folder, for smoke only:
+ * the real one needs elevation to write, and smoke must never read the
+ * machine's own policy.
+ */
+export function managedDir(platform = process.platform) {
+  const override = String(process.env.LAYERCAKE_MANAGED_DIR || '').trim();
+  if (override && platform === process.platform) return path.resolve(override);
+  if (platform === 'win32') return 'C:\\Program Files\\ClaudeCode';
+  if (platform === 'darwin') return '/Library/Application Support/ClaudeCode';
+  return '/etc/claude-code';
+}
+
+/** A file in a platform's managed folder, in that platform's path form. */
+function managedPath(platform, name) {
+  return (platform === 'win32' ? path.win32 : path.posix).join(managedDir(platform), name);
+}
+
+/**
  * Managed / enterprise settings candidates for all three platforms.
  * Every candidate is probed for existence; none is assumed.
  *
  * `legacy` marks a location Claude Code no longer reads. The docs say so of
  * %ProgramData%\ClaudeCode ("doesn't read the legacy Windows path"), and
- * 2.1.283's debug log probes only %ProgramFiles%\ClaudeCode. Still probed,
+ * 2.1.283's debug log probes only C:\Program Files\ClaudeCode. Still probed,
  * because a policy left there is one its owner believes is in force (#119).
  */
 export function managedCandidates() {
   const programData = process.env.ProgramData || 'C:\\ProgramData';
-  const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
   return [
     { platform: 'win32', file: path.join(programData, 'ClaudeCode', 'managed-settings.json'), legacy: true },
     { platform: 'win32', file: path.join(programData, 'Claude Code', 'managed-settings.json'), legacy: true },
-    { platform: 'win32', file: path.join(programFiles, 'ClaudeCode', 'managed-settings.json') },
-    { platform: 'darwin', file: '/Library/Application Support/ClaudeCode/managed-settings.json' },
-    { platform: 'linux', file: '/etc/claude-code/managed-settings.json' },
+    { platform: 'win32', file: managedPath('win32', 'managed-settings.json') },
+    { platform: 'darwin', file: managedPath('darwin', 'managed-settings.json') },
+    { platform: 'linux', file: managedPath('linux', 'managed-settings.json') },
   ];
+}
+
+/**
+ * The rest of this platform's managed folder (#147), from the docs and the
+ * 2.1.283 bundle. Another OS's are not listed: its managed-settings.json
+ * already says where that folder is.
+ */
+export function managedFolderTargets() {
+  return [
+    {
+      file: path.join(managedDir(), 'CLAUDE.md'),
+      category: 'memory',
+      note: 'Managed policy instructions: loaded before every other CLAUDE.md, and they cannot be excluded.',
+    },
+    {
+      file: managedMcpFile(),
+      category: 'mcp',
+      note:
+        'Managed MCP servers. While this file exists it has exclusive control: Claude Code loads only its servers ' +
+        'and those in managed settings\' managedMcpServers, even when the file does not parse.',
+    },
+  ];
+}
+
+/** The managed MCP file, whose existence alone gives it exclusive control of MCP servers. */
+export function managedMcpFile() {
+  return path.join(managedDir(), 'managed-mcp.json');
+}
+
+/**
+ * Drop-in policy files: every *.json directly in this folder that is not
+ * hidden, merged over managed-settings.json in name order (#147). The name
+ * test is Claude Code's own, case included: `name.endsWith(".json") &&
+ * !name.startsWith(".")`, files and links only, sorted with a plain sort.
+ */
+export function managedDropInDir() {
+  return path.join(managedDir(), 'managed-settings.d');
+}
+
+export function isDropInName(name) {
+  return name.endsWith('.json') && !name.startsWith('.');
+}
+
+/** Code-unit order, which is what Claude Code's plain .sort() gives: "B.json" before "a.json". */
+export function dropInOrder(a, b) {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * Claude Code's cached copy of server-managed settings (#147), one of its own
+ * state files in the configuration home. Listed, never merged: Claude Code
+ * fetches the settings again at startup and can hold them back until they
+ * are approved, so the cache says what was delivered, not what applies.
+ */
+export function remoteSettingsFile() {
+  return path.join(claudeHome(), 'remote-settings.json');
 }
 
 /**
@@ -156,6 +236,12 @@ export function managedCandidates() {
 export function settingsSourceFiles(lineage) {
   const configHome = lineage.levels.find((l) => l.kind === 'user')?.dir || null;
   const projectClaude = path.join(lineage.projectDir, '.claude');
+  // The drop-ins the scan found, in the order they apply (#147). The scan
+  // keeps only names Claude Code reads, so this takes them as listed.
+  const dropInKey = samePathKey(managedDropInDir());
+  const dropIns = (lineage.levels.find((l) => l.kind === 'managed')?.entries || [])
+    .filter((e) => e.type === 'file' && samePathKey(path.dirname(e.absPath)) === dropInKey)
+    .sort((a, b) => dropInOrder(a.name, b.name));
   return [
     ...(configHome ? [{ source: 'user', file: path.join(configHome, 'settings.json') }] : []),
     { source: 'project', file: path.join(projectClaude, 'settings.json') },
@@ -163,6 +249,7 @@ export function settingsSourceFiles(lineage) {
     ...managedCandidates()
       .filter((c) => c.platform === lineage.platform && !c.legacy)
       .map((c) => ({ source: 'managed', file: c.file })),
+    ...dropIns.map((e) => ({ source: 'managed', file: e.absPath })),
   ];
 }
 

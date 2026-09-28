@@ -84,7 +84,80 @@ function MemoryView({ data }) {
   );
 }
 
-const MODE_LABEL = { override: 'override', concat: 'combined', replace: 'taken whole' };
+const MODE_LABEL = {
+  override: 'override',
+  concat: 'combined',
+  replace: 'taken whole',
+  'replace+concat': 'taken whole, then combined',
+};
+
+/**
+ * Which managed source Claude Code uses, and why each other one is not
+ * (#147). Server-managed settings come first because they outrank the rest,
+ * and LayerCake can only say whether Claude Code has cached any.
+ */
+function ManagedSources({ managed }) {
+  if (!managed) return null;
+  const cache = managed.remoteCache;
+  return (
+    <div className="flat-section">
+      <div className="flat-section-head">
+        <span className="flat-section-title">Managed policy: which source applies</span>
+        <span className="badge">{managed.behavior}</span>
+      </div>
+      <div className="flat-file-body">
+        {managed.fatal?.map((f) => (
+          <div className="notice err" key={f.path}>
+            {f.path} ({f.source}) does not parse as a JSON object. Claude Code 2.1.283 treats an admin policy document
+            like that as fatal at startup, so it will most likely not start until the document is fixed or removed.
+          </div>
+        ))}
+        {managed.behaviorFrom && (
+          <div className="notice info">
+            managedSourcesBehavior is &quot;{managed.behavior}&quot;, read from the {managed.behaviorFrom}, the highest source present.
+          </div>
+        )}
+        <table className="prov-table">
+          <thead>
+            <tr>
+              <th>Source, highest first</th>
+              <th>Used</th>
+              <th>Why</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                Server-managed settings
+                <div className="muted">{cache.path}</div>
+              </td>
+              <td>{cache.present ? 'probably' : 'most likely not'}</td>
+              <td>
+                {cache.present
+                  ? 'Claude Code has cached server-managed settings here. While they are in force they are used in place of every source below, so the effective settings on this page may not be what applies. Not merged: Claude Code fetches them again at startup and can hold them back until they are approved.'
+                  : 'No cache here, so this configuration home has most likely not received server-managed settings. They come from the claude.ai admin console or a Claude apps gateway and are fetched, never read from a file.'}
+              </td>
+            </tr>
+            {managed.sources.map((s) => (
+              <tr key={s.id}>
+                <td>
+                  {s.label}
+                  {s.paths.map((p) => (
+                    <div className="muted" key={p}>
+                      {p}
+                    </div>
+                  ))}
+                </td>
+                <td>{s.applied ? 'yes' : 'no'}</td>
+                <td>{s.applied ? 'Applied.' : s.reason}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 /** A dotted key with a line-break opportunity after each dot (#129). */
 function KeyPath({ path }) {
@@ -137,7 +210,7 @@ function SettingsView({ data }) {
                       {row.sources.map((s) => (
                         <div className="prov-source" key={s.file}>
                           {s.label}
-                          {row.mode === 'concat' ? ` (+${s.added.length})` : ''}{' '}
+                          {Array.isArray(s.added) && row.mode !== 'replace' ? ` (+${s.added.length})` : ''}{' '}
                           <span className="muted">{s.file}</span>
                         </div>
                       ))}
@@ -149,6 +222,8 @@ function SettingsView({ data }) {
           </div>
         </div>
       )}
+
+      <ManagedSources managed={data.managed} />
 
       {data.ignored?.length > 0 && (
         <div className="flat-section">
@@ -184,14 +259,24 @@ function SettingsView({ data }) {
             <div className={`flat-file${file.notRead ? ' not-read' : ''}`} key={file.path}>
               <div className="flat-file-head">
                 {file.path}{' '}
+                {file.registry && <span className="badge">registry value</span>}{' '}
                 {file.sources.length > 0 ? (
                   <span className="badge">{file.sources.join(' + ')} settings</span>
                 ) : (
                   <span className="badge partial">not read by Claude Code</span>
-                )}
+                )}{' '}
+                {file.managed &&
+                  (file.managed.applied ? (
+                    <span className="badge found">applied</span>
+                  ) : (
+                    <span className="badge partial" title={file.managed.reason || ''}>
+                      skipped, see the managed policy table
+                    </span>
+                  ))}
               </div>
               <div className="flat-file-body">
                 {file.notRead && <div className="notice info">{file.notRead}</div>}
+                {file.note && file.note !== file.notRead && <div className="notice info">{file.note}</div>}
                 {file.error ? (
                   <div className="notice err">
                     {file.error.code}: {file.error.message}
@@ -286,7 +371,8 @@ function McpView({ data }) {
               <span className="tag">{String(source.precedence).padStart(2, '0')}</span>
               <span>
                 {source.path}
-                {source.notRead && <> <span className="badge partial">not read by Claude Code</span></>}
+                {source.exclusive && <> <span className="badge">managed, exclusive control</span></>}
+                {source.notRead && <> <span className="badge partial">{source.blocked ? 'not loaded' : 'not read by Claude Code'}</span></>}
                 {source.jsonError ? ` — JSON error: ${source.jsonError}` : ''}
                 {source.error ? ` — ${source.error.message}` : ''}
                 {!source.error && !source.jsonError && !source.notRead

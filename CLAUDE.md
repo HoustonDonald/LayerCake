@@ -70,12 +70,19 @@ configuration home, read for session data only; smoke points it at a synthetic f
 sessions are never read). Claude Code's own `CLAUDE_CONFIG_DIR` is honoured the way Claude Code
 reads it (#7): every `~/.claude` path, and `.claude.json` inside it, come from `claudeHome()` and
 `globalConfigFile()` in paths.js, never from `homeDir()` directly. Smoke sets it to a synthetic
-config home, so its user level is never the real one. Three more exist for smoke only:
+config home, so its user level is never the real one. More exist for smoke only:
 `LAYERCAKE_LAUNCH_DRY_RUN=1` (launch builds its argv and settings but starts nothing),
 `LAYERCAKE_CLAUDE_CMD` (a JSON array replacing `claude` for AI summaries, pointed at
-`scripts/smoke-claude-stub.mjs`, so no usage is ever spent testing), and
+`scripts/smoke-claude-stub.mjs`, so no usage is ever spent testing),
 `LAYERCAKE_REPORT_WINDOW_MS` (how long a launched session counts as running after its last report;
-45 s in use, a few seconds in smoke so "stopped reporting" can be tested).
+45 s in use, a few seconds in smoke so "stopped reporting" can be tested), and two for managed
+policy (#147): `LAYERCAKE_MANAGED_DIR` replaces this platform's managed folder (`C:\Program
+Files\ClaudeCode`, which needs elevation to write), and `LAYERCAKE_POLICY_KEYS` (JSON
+`{"hklm": key, "hkcu": key}`) names registry keys to read in place of the two policy keys, refused
+unless both sit under `HKCU\Software\LayerCakeSmoke`. Smoke sets both, and `ProgramData`, in its
+own environment before it starts anything, so what it starts inherits them rather than reading the
+machine's policy; its managed checks write a throwaway `HKCU\Software\LayerCakeSmoke-<pid>-<random>`
+key and delete it at the end.
 `LAYERCAKE_BROWSER_PROFILE_DIR` (default `%LOCALAPPDATA%\LayerCake\browser`) moves the app window's
 Edge profile (#59). Every exe test sets it, beside the three data folders above: without it the
 test's Edge writes into the real profile, and a real LayerCake window already open takes the test's
@@ -95,6 +102,7 @@ server/paths.js     platform paths, the scan manifest, snapshot root
 server/safety.js    denylists, editable categories, size cap, timeout, errors
 server/sharegate.js one filesystem call per network share at a time, process-wide; scan and watch use it
 server/scan.js      lineage resolver -> ordered levels
+server/policy.js    the registry policy values (reg.exe), kept off the served lineage
 server/plugins.js   which installed plugins load for a project (measured rules, #122); marks the rest
 server/readfile.js  the ONLY producer of a file body
 server/flatten.js   the four flattened views
@@ -211,8 +219,8 @@ Three routes extend it without breaking it (#15, #92):
   It may put back a file the current scan did not find only when it is in the snapshot and
   `restorableWhenAbsent` says the current scan would list it there: a probed FILE it recorded
   absent (never a folder record), a manifest shape under a `.claude` folder or the config home,
-  project memory as the scan walks it, or the plugins folder's own manifests (never its cache,
-  #126). The tree rules are the
+  project memory as the scan walks it, the plugins folder's own manifests (never its cache,
+  #126), or a managed drop-in by Claude Code's name rule (`isDropInName`, #147). The tree rules are the
   scan's own (`treeSkipsDir`, `treeTakesFile` in safety.js), so the two cannot drift apart. That
   covers everything delete allows, so a delete is always undoable (#97). It is then created, never written over, because the restore's own snapshot comes from the scan and cannot hold
   a file that appeared since.
@@ -318,7 +326,11 @@ the output parsed as numbers only. The query returns each start time in both for
 writes as `procStart` (a FILETIME from native claude.exe, .NET ticks from an npm install, told apart
 at 3e17), matched within 1 ms (#82). Answers are cached per pid for 60 s, so a pid reused within
 that minute still reads live until its entry refreshes (#83), and concurrent callers share the one
-query in flight (#86). Any new spawn needs the same shape and a line here.
+query in flight (#86). `policy.js` runs `reg.exe query <key> /v Settings` on the two
+`Policies\ClaudeCode` keys during a scan, on Windows only (#147, owner decision 17): its absolute
+System32 path, a fixed argv, both keys at once, a 5 s timeout, output capped at 2 MiB, read only,
+the value parsed as JSON data. A smoke-only override may name other keys, and only keys under
+`HKCU\Software\LayerCakeSmoke`. Any new spawn needs the same shape and a line here.
 
 **Only `summaries.js` may spend Claude usage, and only on an explicit request.** Everything else
 reads files. `claude` means `claude.exe` from PATH, or, for an npm install that provides only the

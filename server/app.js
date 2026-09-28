@@ -64,9 +64,13 @@ import {
   homeDir,
   legacyGlobalConfigFile,
   managedCandidates,
+  managedDropInDir,
+  managedFolderTargets,
+  remoteSettingsFile,
   rootState,
   snapshotRoot,
 } from './paths.js';
+import { registryPolicyKeys } from './policy.js';
 
 export const HOST = '127.0.0.1';
 
@@ -189,6 +193,12 @@ export function createApp({ port, staticFiles }) {
         extensions: t.exts,
       })),
       managedCandidates: managedCandidates(),
+      // The rest of the managed tier (#147): this platform's folder, its
+      // drop-ins, the server-managed cache, and the registry values.
+      managedFolder: managedFolderTargets().map(({ file, category }) => ({ file, category })),
+      managedDropInDir: managedDropInDir(),
+      remoteSettingsFile: remoteSettingsFile(),
+      registryPolicy: registryPolicyKeys(),
       homeExtras: [
         legacyGlobalConfigFile(),
         globalConfigFile(),

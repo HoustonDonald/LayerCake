@@ -124,11 +124,16 @@ export async function buildSummary(lineage) {
 
   // Merged means read by Claude Code (#119): a parent folder's settings file
   // is found, shown and counted apart, never merged.
-  const allSettingsFiles = settings.sections.flatMap((s) => s.files);
-  const readSettingsFiles = allSettingsFiles.filter((f) => f.sources.length);
+  // A registry value is not a file, and a managed file whose source is skipped
+  // is read but not merged; both are said on the managed line instead (#147).
+  const allSettingsFiles = settings.sections.flatMap((s) => s.files).filter((f) => !f.registry);
+  const readSettingsFiles = allSettingsFiles.filter((f) => f.sources.length && (!f.managed || f.managed.applied));
   const settingsFiles = readSettingsFiles.length;
-  const settingsNotRead = allSettingsFiles.length - readSettingsFiles.length;
-  const settingsErrors = readSettingsFiles.filter((f) => f.error || f.jsonError).length;
+  const settingsNotRead = allSettingsFiles.filter((f) => !f.sources.length).length;
+  // Every file Claude Code reads, applied or not: a managed file that does not
+  // parse is skipped for that very reason, and must still be counted.
+  const settingsErrors = allSettingsFiles.filter((f) => f.sources.length && (f.error || f.jsonError)).length;
+  const managedSources = settings.managed.sources;
 
   const levelsWithContent = lineage.levels.filter((l) => l.entries.length > 0).length;
 
@@ -148,7 +153,10 @@ export async function buildSummary(lineage) {
       repeated: mcp.servers.filter((s) => s.reachedByMultipleRoutes).length,
       names: mcp.servers.map((s) => s.name),
       badSources: mcp.sources.filter((s) => !s.notRead && (s.error || s.jsonError)).length,
-      notRead: mcp.sources.filter((s) => s.notRead).map((s) => s.path),
+      notRead: mcp.sources.filter((s) => s.notRead && !s.blocked).map((s) => s.path),
+      // Shut out by managed-mcp.json (#147): read, not loaded.
+      blocked: mcp.sources.filter((s) => s.blocked).length,
+      exclusive: mcp.sources.find((s) => s.exclusive)?.path || null,
     },
     settings: {
       files: settingsFiles,
@@ -156,6 +164,13 @@ export async function buildSummary(lineage) {
       unreadable: settingsErrors,
       highlights: settingsHighlights(settings.merged),
       empty: Object.keys(settings.merged).length === 0,
+    },
+    managed: {
+      behavior: settings.managed.behavior,
+      used: managedSources.filter((s) => s.applied).map((s) => s.label),
+      skipped: managedSources.filter((s) => !s.applied && s.paths.length).map((s) => s.label),
+      remoteCache: settings.managed.remoteCache.present,
+      fatal: settings.managed.fatal.map((f) => f.path),
     },
     levels: {
       total: lineage.levels.length,

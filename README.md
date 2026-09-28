@@ -67,14 +67,43 @@ Existence-probed on all three platforms, never assumed:
 ```
 %ProgramData%\ClaudeCode\managed-settings.json                   (legacy, not read by Claude Code)
 %ProgramData%\Claude Code\managed-settings.json                  (legacy, not read by Claude Code)
-%ProgramFiles%\ClaudeCode\managed-settings.json
+C:\Program Files\ClaudeCode\managed-settings.json
 /Library/Application Support/ClaudeCode/managed-settings.json    (macOS)
 /etc/claude-code/managed-settings.json                           (Linux)
 ```
 
 The legacy locations are still probed, because a policy left there is one its owner may believe is
-in force; the settings view shows it as not read. `managed-settings.d\` and registry policy are not
-scanned.
+in force; the settings view shows it as not read. The Windows folder is `C:\Program Files\ClaudeCode`
+as written, not `%ProgramFiles%`: Claude Code 2.1.283 uses that fixed path, and so does its
+documentation (#147).
+
+The rest of this platform's managed tier (#147):
+
+```
+<managed folder>\CLAUDE.md                  managed instructions: loaded first, cannot be excluded
+<managed folder>\managed-mcp.json           while it exists, the only MCP servers that load
+<managed folder>\managed-settings.d\*.json  drop-ins, merged over managed-settings.json in name order
+<config home>\remote-settings.json          Claude Code's cache of server-managed settings: shown, never merged
+HKLM\SOFTWARE\Policies\ClaudeCode  Settings (Windows) policy as JSON in a REG_SZ or REG_EXPAND_SZ value
+HKCU\SOFTWARE\Policies\ClaudeCode  Settings (Windows) the same, writable by the user
+```
+
+A drop-in is read as Claude Code reads one: a file (or link) directly in the folder whose name ends
+in `.json`, in lower case, and does not start with a dot, in plain code-unit order, so `B.json`
+comes before `a.json`. Anything else there is listed as not read. A deleted drop-in can be restored
+like any other deleted file. One named like a credential file (`credentials.json`) is never opened,
+as everywhere in LayerCake, so it is listed as redacted and left out of the merge although Claude
+Code applies it. The server-managed cache is its own category, which is not editable (an edit lasts
+until Claude Code's next fetch), is flagged sensitive (Claude Code writes it readable by its owner
+only), and a restore does not select it unless asked.
+
+The registry values are read with `reg.exe query <key> /v Settings`, the way Claude Code reads them:
+from its System32 path, both keys at once, 5 s timeout, output capped at 2 MiB, parsed as data. They
+are not files, so they are listed on the level but have no entry to open; the settings view shows
+their content. `reg.exe` returns text in the console code page, so a character outside it is lost
+(measured: `é` came back re-encoded and `✓` as `?`). Claude Code parses the same output, so it most
+likely loses them too; a value holding such characters says so. Registry changes are picked up by
+the next scan, not by the watcher. macOS's managed preferences (the MDM plist) are not read.
 
 ### 01 User / home
 
@@ -226,10 +255,10 @@ Four chains, each stating its own merge rule in the UI rather than leaving it im
 
 | View | What it shows |
 |---|---|
-| **CLAUDE.md chain** | `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `MEMORY.md` and `.claude\rules`, concatenated top to bottom with per-level headers, each level's rules after its `CLAUDE.md`. A rule with `paths` in its frontmatter is marked conditional. `AGENTS.md` is left out, and marked in the Explorer, where the project's folders hold a `CLAUDE.md`. Individual per-project memory files are excluded: they are recalled on demand, not loaded every session, and sweeping in 60+ of them would bury the actual instruction set. |
+| **CLAUDE.md chain** | `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `MEMORY.md` and `.claude\rules`, concatenated top to bottom with per-level headers, each level's rules after its `CLAUDE.md`, the managed folder's `CLAUDE.md` first (#147). A rule with `paths` in its frontmatter is marked conditional. `AGENTS.md` is left out, and marked in the Explorer, where the project's folders hold a `CLAUDE.md`. Individual per-project memory files are excluded: they are recalled on demand, not loaded every session, and sweeping in 60+ of them would bury the actual instruction set. |
 | **settings.json chain** | Every settings file in precedence order, plus a computed effective merge and a table naming the level that won each key. |
 | **Agents & skills** | Definitions grouped by declared name (frontmatter `name`, else filename or skill folder; a plugin's as `plugin:name`), showing which level's version shadows the others. Plugins that do not load here are left out and counted. |
-| **MCP servers** | The `.mcp.json` in the project folder and every folder above it, plus the global and per-project `mcpServers` blocks in `~/.claude.json` (the per-project key is described below), with shadowed definitions flagged. A `.mcp.json` inside a `.claude` folder is listed as not read, naming the servers it defines, which are not loaded. |
+| **MCP servers** | The `.mcp.json` in the project folder and every folder above it, plus the global and per-project `mcpServers` blocks in `~/.claude.json` (the per-project key is described below), with shadowed definitions flagged. A `.mcp.json` inside a `.claude` folder is listed as not read, naming the servers it defines, which are not loaded. While a `managed-mcp.json` exists in the managed folder, parsed or not, it has exclusive control: its servers are the only ones listed as loading, and every other source is listed with the servers it defines, not loaded (#147). Servers in managed settings' `managedMcpServers` load beside them and are not listed. |
 
 The settings merge is **computed by this tool**, not read back out of Claude Code, and it follows
 what Claude Code 2.1.283 was observed to read for a session started in the project directory:
@@ -242,12 +271,35 @@ what Claude Code 2.1.283 was observed to read for a session started in the proje
   the local settings of a session started in the folder above the config home, where the user and
   project file are one file, applied once), and the legacy managed locations.
 - **Merge:** objects merge key by key, so `env` merges per variable; lists are combined and
-  de-duplicated, so `permissions.allow` rules and hooks from every file apply. `fallbackModel` is
-  taken whole from the strongest file, `modelPicker` is ignored in project and local files (listed
-  as ignored), and a managed `availableModels` is taken as-is.
-- **Not modelled, and said so in the rule:** `--settings` for one session, `managed-settings.d\`,
-  registry and server-managed policy, `modelSettings`, the few security keys where a stricter lower
-  value wins over managed, and on macOS and Linux the git-root location of `settings.local.json`.
+  de-duplicated, so `permissions.allow` rules and hooks from every file apply. In every file,
+  `fallbackModel` and `modelPicker` are taken whole from the stronger file and
+  `extraKnownMarketplaces` and `managedMcpServers` entry by entry: Claude Code 2.1.283's own merge
+  customizer, read from its bundle (#147). `modelPicker` is ignored in project and local files and
+  `claudeMd` everywhere but managed policy (each listed as ignored), and a managed
+  `availableModels` is taken as-is.
+- **Managed policy is one source of four** (#147), from Claude Code's documentation and its 2.1.283
+  bundle, highest first: server-managed settings, the HKLM registry value, the managed files, and
+  the HKCU registry value. The managed files are `managed-settings.json` and then each drop-in in
+  name order, a later file winning; a blank one counts as `{}`. By default (`first-wins`) the
+  highest source holding a policy key is used alone; `managedSourcesBehavior` and
+  `wslInheritsWindowsSettings` on their own do not count. With `managedSourcesBehavior: "merge"` in
+  that source, every admin source holding a policy key applies, combined the same way. HKCU is used
+  only when no admin source is present, one that fails to parse or to be read included, and never in
+  a merge. An admin document (the HKLM value or a managed file) that does not parse as a JSON object
+  is marked in red: Claude Code's bundle marks that fatal at startup, so it most likely will not
+  start (read, not measured, since a real one needs elevation to write). A panel in the view names
+  each source, whether it applies and why not; each managed file is badged applied or skipped.
+- **Server-managed settings are not merged.** They come from Anthropic's servers; the cache Claude
+  Code keeps in the config home is shown with the managed files, and the view says whether it
+  exists. While they are in force they outrank everything else, so a present cache means the
+  computed merge may not be what applies.
+- **Not modelled, and said so in the rule:** `--settings` for one session, the keys a skipped admin
+  source still supplies under `first-wins` (`env` per variable, `deniedMcpServers` and the others
+  the docs list), the stricter rules of `merge` (a lock taking the strictest value, keys taken from
+  the highest source only), keys Claude Code drops from some sources (`managedMcpServers` from user,
+  project and local settings; plugin keys from the HKCU value, among others), `modelSettings`, the
+  few security keys where a stricter lower value wins over managed, and on macOS and Linux the
+  git-root location of `settings.local.json`.
 
 How it was established (#119): a scratch config home and project tree, a marker hook, a distinct
 `model` and an `env` pair in every candidate settings file, and `claude -p` pointed at a local stub

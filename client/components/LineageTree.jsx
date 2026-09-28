@@ -15,6 +15,7 @@ const CATEGORY_ORDER = [
   'rule',
   'plugin-manifest',
   'home-config',
+  'remote-settings',
   'other',
 ];
 
@@ -30,8 +31,41 @@ const CATEGORY_LABEL = {
   rule: 'Rules',
   'plugin-manifest': 'Plugin manifests',
   'home-config': 'Home config',
+  'remote-settings': 'Server-managed settings (Claude Code\'s cache, read only)',
   other: 'Other',
 };
+
+/**
+ * The registry policy values on the managed level (#147). Not files, so not
+ * buttons: their content is in the settings chain view, beside the managed
+ * files it competes with. A value that is not there joins the absent list.
+ */
+function PolicyList({ policies }) {
+  const found = policies.filter((p) => p.state !== 'absent');
+  if (!found.length) return null;
+  return (
+    <div>
+      <div className="group-label">Registry policy</div>
+      {found.map((p) => (
+        <div className="policy-item" key={p.id} title={`${p.location}\nShown in full in the settings.json chain view`}>
+          <span className={`dot${p.state === 'error' || p.jsonError ? ' error' : ''}`} />
+          {/* The label, not the key: two keys differ only past where a narrow pane cuts them. */}
+          <span className="entry-name">{p.label}</span>
+          <span className="entry-size">
+            {p.state === 'error'
+              ? `${p.error.code}: ${p.error.message}`
+              : p.jsonError
+                ? `${p.type}, not a JSON object: ${p.jsonError}`
+                : p.topLevelKeys != null
+                  ? `${p.type}, ${p.topLevelKeys} key${p.topLevelKeys === 1 ? '' : 's'}`
+                  : p.type}
+          </span>
+          {p.note && <div className="policy-note">{p.note}</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 /**
  * Label for one entry. Plugin trees nest six levels deep, so the raw relative
@@ -220,8 +254,16 @@ function Level({ level, selectedPath, onSelect, defaultOpen, overlay, createOpti
             </div>
           )}
 
+          <PolicyList policies={level.policies || []} />
           <OtherList items={level.other || []} />
-          <AbsentList items={level.absent} />
+          <AbsentList
+            items={[
+              ...level.absent,
+              ...(level.policies || [])
+                .filter((p) => p.state === 'absent')
+                .map((p) => ({ absPath: p.location, note: `registry value${p.note ? `; ${p.note}` : ''}` })),
+            ]}
+          />
           {onCreate && <CreateFile options={createOptions} namePattern={namePattern} onCreate={onCreate} />}
         </div>
       )}

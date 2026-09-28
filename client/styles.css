@@ -371,6 +371,33 @@ button {
   flex-shrink: 0;
 }
 
+/* A registry policy value (#147): laid out like an entry, but not a button,
+   and its state may be long enough to wrap. */
+.policy-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 4px 12px 4px 30px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.policy-item .entry-size {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.policy-note {
+  flex-basis: 100%;
+  padding-left: 14px;
+  font-family: var(--sans);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
 .dot {
   width: 6px;
   height: 6px;
