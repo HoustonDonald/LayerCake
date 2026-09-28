@@ -23,12 +23,16 @@ npm run smoke                       # expect: 0 failed
 node cli/index.js here C:\dev\LayerCake   # expect: ~18 line summary, exit 0
 ```
 
-Smoke was 397 passed, 0 failed, 3 skipped on 2026-09-28 with the #147 commit (Windows; the skips are the
+Smoke was 397 passed, 0 failed, 3 skipped on 2026-09-28 with 42df32a (Windows; the skips are the
 opt-in mapped-drive checks, a Linux-only one, and #144's link-to-a-share check, which needs a
-directory symlink this user cannot make without Developer Mode). WSL Ubuntu (Node 22.22.1, copy at
-`/tmp/layercake-linux-smoke`, lockfile unchanged so `rsync` the tree over it and run
-`node scripts/smoke.mjs`): 341 passed, 0 failed, 17 skipped on 2026-09-28 with the #147 commit.
-Smoke now writes and deletes a throwaway `HKCU\Software\LayerCakeSmoke-*` key on Windows (#147).
+directory symlink this user cannot make without Developer Mode). With `SMOKE_MAPPED_DRIVE=1`: 400
+passed, 0 failed, 2 skipped (it could not pass before 42df32a, #156). WSL Ubuntu (Node 22.22.1, copy
+at `/tmp/layercake-linux-smoke`, lockfile unchanged so `rsync` the tree over it and run
+`node scripts/smoke.mjs`): 341 passed, 0 failed, 17 skipped on 2026-09-28 with 42df32a.
+Smoke writes and deletes a throwaway `HKCU\Software\LayerCakeSmoke-*` key on Windows (#147).
+
+`dist\LayerCake.exe` was rebuilt from 42df32a at 14:51 on 2026-09-28 and launch-checked; it is
+current. Older "not rebuilt" notes below are history.
 
 ### 2026-09-28: triage of the open issues, and the order to take them in
 
@@ -37,16 +41,43 @@ macOS and Linux are not required; mapped drives are likely at work. Every issue'
 holds the detail. Work top down:
 
 1. ~~**#147**~~: done, 2026-09-28 afternoon (section below).
-2. **#150**: make the failed row visible in smoke, then reproduce under parallel load. The restore
-   path, cause unknown; it fails closed.
+2. ~~**#150**~~: done, 2026-09-28 evening (section below).
 3. **#75**: a dead mapped drive, (a) at work. Needs the owner: a local share for the fast-failure
    case, a work machine off VPN for the timeout case (plan on the issue).
-4. **#79 with #95 part 2**: smoke robustness, one batch.
+4. ~~**#79 with #95 part 2**~~: done, 2026-09-28 evening, with #156 found on the way.
 5. **#76**, then **#54**, then **#64**, then **#95 part 1**: (b), cheap.
 6. **#146** (macOS/Linux, not required), **#74** (needs Developer Mode to test).
 7. Verification only: **#11** (rises if a work machine lacks Git Bash), **#89**.
 
 The owner chose to keep documented (b) limits open (#74, #54, #89, #11).
+
+### 2026-09-28, evening: #150 found and fixed; smoke robustness (#79, #95 part 2, #156)
+
+Two commits, each message listing every check and mutant:
+- **fd300e6** (#150): `createExclusive` published with a hard link, then removed the temp name.
+  On Windows, while another program (most likely antivirus; not identified) still held that name,
+  the new file could not be replaced for 28 to 60 s, so a save, delete or restore moments after a
+  create failed with EPERM once the 5 s rename retry ran out. Now: temp, exclusive empty
+  placeholder, rename. Product-level A/B side by side under load: HEAD 14 of 1,200 failed, the fix
+  0 of 1,200. 24 smoke runs four at a time never showed it; a targeted loop did at once.
+  Classified (a) on a busy machine or heavier endpoint protection. Nothing in smoke fails if the
+  hard link comes back (it needs load); the scratch loops are the evidence.
+- **42df32a** (#79, #156, #95 part 2): the opt-in mapped-drive run maps to its own fixture folder,
+  writes its pid, and removes a smoke mapping whose run has ended; its launch checks take their own
+  scan (#156: the opt-in run could not pass, reproduced on HEAD); the client build holds a named-pipe
+  lock so runs started together on a stale tree build once. #95 stays open for part 1.
+
+Tooling, in this session's scratchpad (`%TEMP%\claude\c--dev-layercake\6d86c8d6-...\scratchpad`):
+`stress-150d.mjs` (create then atomicWrite: modes link, plain, placeholder), `stress-150e.mjs`
+(the product sequence; `STRESS_ROOT` points it at another tree's `server/`),
+`create-branches-150.mjs`, `mutate-150.mjs` (mutants in tree copies; junction unlinked before any
+delete), `test-79.mjs` (plants three mappings, runs smoke with the flag, checks and cleans up),
+`lock-test-95.mjs`, `e2e-95.cjs`, `exe-lifecycle-150.ps1`.
+
+**Two traps met:** `Invoke-RestMethod` turns an ISO `mtime` into a DateTime and `ConvertTo-Json`
+writes `.100Z` back as `.1Z`, which the server reads as a conflict (use `ConvertFrom-Json -DateKind
+String`); and several processes appending to one file with `>>` in Git Bash lose lines, so give
+each process its own log.
 
 ### 2026-09-28, afternoon: managed policy (#147)
 
@@ -61,8 +92,8 @@ settings" and the settings-merge bullets; the rules are in CLAUDE.md (policy.js'
 - **Found and fixed on the way:** LayerCake read `%ProgramFiles%` where Claude Code uses a fixed
   `C:\Program Files\ClaudeCode` (#153), and smoke probed the machine's own managed folders (#154).
 - **A review agent** found eight real gaps, all fixed in the same commit; the (b) remainder is #155.
-- **Not rebuilt:** `dist\LayerCake.exe` (the owner's copy was running). This build was built in a
-  tree copy and launch-checked on port 5231. Run `npm run build:exe` once it is closed.
+- **Exe:** built in a tree copy and launch-checked on port 5231 while the owner's copy ran;
+  `dist\LayerCake.exe` has been rebuilt since (top of this file).
 - **Tooling** in this session's scratchpad (`83d40ce1-...`): `mutate-147b.mjs` (the engine and
   every #147 mutant), `ui-147.mjs` (headless Edge), `exe-lifecycle-147.ps1`, `copy-tree.cjs`.
 - **Harness traps met again:** a JSON env var through Git Bash lost its doubled backslashes, and
@@ -83,9 +114,8 @@ its message listing the checks and mutants:
   manifests are unaffected. `pluginShape`'s cache branch in writefile.js was deleted as unreachable.
 - **#152**, found on the way and fixed in the same commit: a save dropped the viewed file's note.
 
-Not rebuilt: `dist\LayerCake.exe` (the owner's copy was running). This build was built and
-launch-checked in a tree copy on port 5231 (`exe-lifecycle-126.ps1`). Run `npm run build:exe` once
-it is closed. Tooling in this session's scratchpad (`d003ca25-...`): `mutate-126.mjs` (the 125
+Exe: built and launch-checked in a tree copy on port 5231 (`exe-lifecycle-126.ps1`) while the
+owner's copy ran; `dist\LayerCake.exe` has been rebuilt since (top of this file). Tooling in this session's scratchpad (`d003ca25-...`): `mutate-126.mjs` (the 125
 engine and mutants, plus 13 for #126), `ui-126-143.mjs`, `exe-lifecycle-126.ps1`.
 
 ### 2026-09-28, night: snapshots, UI polish, junctions, write-path edges, the CLI's width
@@ -109,7 +139,8 @@ Shipped and closed, each commit message listing its checks and mutants:
 - **7bd582e** (#124): the CLI fits the terminal's width (done by a subagent in a tree copy, reviewed;
   the settings dump is cut only on a terminal). **4588b0f** (#151): `layercake session` too.
 
-Filed and open: #150 (a restore failed once under four parallel smoke runs; not reproduced).
+Filed: #150 (a restore failed once under four parallel smoke runs), since reproduced and fixed
+(fd300e6).
 Owner decisions #143 and #126 were settled the next morning (section above). Owner-facing, not an
 issue: `context7` sits only in `~/.claude/.mcp.json`, which no session reads (told on Telegram and in
 the terminal).
@@ -140,8 +171,8 @@ refuses it); each commit message lists the measurements, checks and mutants.
   moved to #147 (needs elevation to measure).
 - **2e43c73** (#149, the owner's screenshot): long tool names no longer print over the summary.
 
-Not rebuilt: `dist\LayerCake.exe`. The owner had it running all session, so every exe check built
-in a copy of the tree and launched on port 5231 beside it. Run `npm run build:exe` once it is closed.
+The owner had the exe running all session, so every exe check built in a copy of the tree and
+launched on port 5231 beside it. `dist\LayerCake.exe` has been rebuilt since (top of this file).
 
 Tooling, in this session's scratchpad (`%TEMP%\claude\c--dev-layercake\82a4caf9-...\scratchpad`):
 `mutate-125.mjs` (every mutant of this round, 25 plus the control; name filter as argument),
@@ -596,7 +627,7 @@ third survives. The MCP fix was mutation-tested afterwards (revert it and the su
   of `~/.claude.json`, so always redirect and always clean up.** `\browser` exists (the app window's
   profile, created 2026-09-25); see the process slip above.
 - `C:\lc-verify-r5` (an earlier reviewer's fake home) is gone; the owner removed it.
-- The built bundle in `public/` and `dist\LayerCake.exe` were rebuilt on 2026-09-27. A change under
+- The built bundle in `public/` and `dist\LayerCake.exe` were rebuilt on 2026-09-28 (42df32a). A change under
   `client/` makes `public/` stale and `npm start` rebuilds; a change under `server/` alone does not
   and does not need to.
 
