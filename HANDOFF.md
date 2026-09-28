@@ -31,8 +31,29 @@ at `/tmp/layercake-linux-smoke`, lockfile unchanged so `rsync` the tree over it 
 `node scripts/smoke.mjs`): 341 passed, 0 failed, 17 skipped on 2026-09-28 with 42df32a.
 Smoke writes and deletes a throwaway `HKCU\Software\LayerCakeSmoke-*` key on Windows (#147).
 
-`dist\LayerCake.exe` was rebuilt from 42df32a at 14:51 on 2026-09-28 and launch-checked; it is
+`dist\LayerCake.exe` was rebuilt from 8dfb36f at 16:57 on 2026-09-28 and launch-checked; it is
 current. Older "not rebuilt" notes below are history.
+
+### 2026-09-28, late evening: a plain-Windows minimum (#11, #157)
+
+Owner: PowerShell 7 and Git Bash may be requirements, but keep a minimum that works without them.
+LayerCake itself needs neither (its processes: wt.exe, reg.exe, System32 Windows PowerShell 5.1,
+claude, the browser). The work machines are Windows 11 with Terminal, no Git Bash, native Claude
+Code installs (owner's answers, on #11 and #89).
+- **c1fd5c4** (#11): the launched status line works under PowerShell. Later proven in Windows
+  Sandbox: Claude Code chose 5.1 itself there.
+- **8dfb36f** (#157): "Start Claude here" opens a console window where wt.exe is missing, through
+  an encoded Windows PowerShell 5.1 `Start-Process` (every other route measured and rejected; see
+  the commit). README "Requirements" states what is needed and what works without it.
+- **Windows Sandbox is enabled on this machine** and is the plain-Windows test bed (CLAUDE.md,
+  Known limits). Kit in this session's scratchpad: `layercake-plain.wsb` (networking off),
+  `layercake-plain-net.wsb` (on), `sandbox-in\run.ps1` (the last driver) and `stub.mjs`. Copy
+  `claude.exe`, `node.exe` and the exe into `sandbox-in` before a run; results land in
+  `sandbox-out`. Offline, a never-signed-in Claude Code exits at once, so a launch test needs
+  networking on.
+- Scratch probes worth keeping: `console-probe\probe3.mjs` to `probe7.mjs` (how to open a console
+  window), `probe-11c.ps1` (a hook with shell "powershell" takes Claude Code's PowerShell branch),
+  `e2e-157.ps1` (the fallback on this machine, wt.exe hidden from the server's PATH).
 
 ### 2026-09-28: triage of the open issues, and the order to take them in
 
