@@ -7,6 +7,7 @@ const CATEGORY_ORDER = [
   'memory',
   'settings',
   'mcp',
+  'plugin-mcp',
   'agent',
   'skill',
   'command',
@@ -21,6 +22,7 @@ const CATEGORY_LABEL = {
   memory: 'Instructions / memory',
   settings: 'Settings',
   mcp: 'MCP',
+  'plugin-mcp': 'MCP (plugin, read only)',
   agent: 'Agents',
   skill: 'Skills',
   command: 'Commands',
@@ -197,7 +199,11 @@ function Level({ level, selectedPath, onSelect, defaultOpen, overlay, createOpti
                   />
                   <span className="entry-name">{entryLabel(entry)}</span>
                   {overlay?.recorded && entry.category === 'memory' && <LoadedBadge reason={overlay.byKey.get(pathKey(entry.absPath))} />}
-                  {entry.inactive && <span className="loaded-badge no" title={entry.note || 'Not read by Claude Code'}>not read</span>}
+                  {entry.inactive && (
+                    <span className="loaded-badge no" title={entry.note || 'Not read by Claude Code'}>
+                      {entry.pluginId ? 'not loaded' : 'not read'}
+                    </span>
+                  )}
                   <span className="entry-size">{formatBytes(entry.size)}</span>
                 </button>
               ))}

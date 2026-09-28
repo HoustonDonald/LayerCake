@@ -230,7 +230,13 @@ export function renderTree(lineage, { all }) {
           Math.max(20, w - 26)
         ),
         entry.type === 'dir' ? paint.dim('dir') : paint.dim(bytes(entry.size)),
-        entry.error ? paint.red(entry.error.code) : entry.sensitive ? paint.yellow('sensitive') : '',
+        entry.error
+          ? paint.red(entry.error.code)
+          : entry.inactive
+            ? paint.yellow(entry.pluginId ? 'not loaded' : 'not read')
+            : entry.sensitive
+              ? paint.yellow('sensitive')
+              : '',
       ]);
       for (const line of columns(rows)) out(`      ${line}`);
     }

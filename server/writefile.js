@@ -479,13 +479,18 @@ function treeShape(tree, rest) {
 }
 
 /** The plugins folder's shapes: its manifest files, and a cached plugin version's trees and plugin.json. */
-function pluginShape(pluginsDir, absPath) {
-  const parts = segmentsUnder(pluginsDir, absPath);
+function pluginShape(level, absPath) {
+  const parts = segmentsUnder(level.dir, absPath);
   if (!parts) return false;
   if (parts.length === 1) return PLUGIN_MANIFEST_FILES.some((n) => sameName(n, parts[0]));
   // cache/<marketplace>/<plugin>/<version>/...
-  if (!sameName(parts[0], 'cache') || parts.length < 6) return false;
+  if (!sameName(parts[0], 'cache') || parts.length < 5) return false;
+  // Only in a version installed_plugins.json names: the scan walks no other
+  // (#122), so a file restored elsewhere would be one it never lists.
+  const versionDir = path.join(level.dir, ...parts.slice(0, 4));
+  if (level.installs && !level.installs.some((i) => samePathKey(i.installPath) === samePathKey(versionDir))) return false;
   const rest = parts.slice(4);
+  if (rest.length === 1) return sameName(rest[0], '.mcp.json');
   if (rest.length === 2 && sameName(rest[0], '.claude-plugin') && sameName(rest[1], 'plugin.json')) return true;
   const tree = CLAUDE_DIR_TREES.find((t) => sameName(t.name, rest[0]));
   return Boolean(tree) && treeShape(tree, rest.slice(1));
@@ -528,7 +533,7 @@ export function restorableWhenAbsent(lineage, absPath) {
       const parts = segmentsUnder(level.dir, absPath);
       if (parts && treeShape(MEMORY_TREE, parts)) return true;
     } else if (level.kind === 'plugins') {
-      if (pluginShape(level.dir, absPath)) return true;
+      if (pluginShape(level, absPath)) return true;
     }
   }
   return false;

@@ -25,12 +25,16 @@ const DEFINITION_CATEGORIES = ['agent', 'skill', 'command'];
  */
 const COUNTED_CATEGORIES = ['hook', 'rule'];
 
-/** Distinct files: one the directory walk reaches a second time is one (#125). */
+/**
+ * Distinct files: one the directory walk reaches a second time is one (#125).
+ * A file Claude Code does not read (a plugin that does not load here, #122)
+ * is not counted.
+ */
 function countEntries(lineage, category) {
   const seen = new Set();
   for (const level of lineage.levels) {
     for (const entry of level.entries) {
-      if (entry.type === 'file' && entry.category === category) seen.add(samePathKey(entry.absPath));
+      if (entry.type === 'file' && !entry.inactive && entry.category === category) seen.add(samePathKey(entry.absPath));
     }
   }
   return seen.size;

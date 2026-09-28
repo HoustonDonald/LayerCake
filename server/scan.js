@@ -46,6 +46,7 @@ import {
 // a threadpool thread per level and starves every other call (#55).
 import { markNetworkRoot, timedFsCall } from './sharegate.js';
 import { readForDisplay } from './readfile.js';
+import { annotatePlugins, readInstalls } from './plugins.js';
 
 let entrySeq = 0;
 function nextId(prefix) {
@@ -413,11 +414,21 @@ async function scanPlugins() {
     kind: 'plugins',
     label: 'Plugins (user level)',
     dir: pluginsDir,
-    note: 'Plugin-provided skills, agents and commands. Namespaced as plugin:skill at runtime.',
+    note: 'Plugin-provided skills, agents, commands and MCP servers. Named plugin:name at runtime.',
   });
 
   for (const name of PLUGIN_MANIFEST_FILES) {
     await probeFile(path.join(pluginsDir, name), 'plugin-manifest', level);
+  }
+
+  // Only the versions installed_plugins.json names are read by Claude Code
+  // (#122); the rest of the cache is listed, not walked. Unreadable, it is
+  // said, and every version is walked as before rather than guessed at.
+  const { installs, error: installsError } = await readInstalls(path.join(pluginsDir, 'installed_plugins.json'));
+  level.installs = installs;
+  level.uninstalledVersions = 0;
+  if (installsError) {
+    level.note += ` installed_plugins.json could not be read (${installsError.message}), so every cached version is scanned and none is marked loaded or not.`;
   }
 
   const cacheDir = path.join(pluginsDir, 'cache');
@@ -457,6 +468,19 @@ async function scanPlugins() {
       }
       for (const version of versions.filter((d) => d.isDirectory())) {
         const versionPath = path.join(pluginPath, version.name);
+        if (installs && !installs.some((i) => samePathKey(i.installPath) === samePathKey(versionPath))) {
+          const orphaned = Boolean((await statOf(path.join(versionPath, '.orphaned_at'))).st);
+          level.uninstalledVersions += 1;
+          level.other.push({
+            id: nextId('o'),
+            name: path.join(market.name, plugin.name, version.name),
+            absPath: versionPath,
+            type: 'dir',
+            size: null,
+            note: `Cached version installed_plugins.json does not name${orphaned ? ' (marked orphaned)' : ''}: Claude Code does not read it, so it is not scanned.`,
+          });
+          continue;
+        }
         for (const tree of CLAUDE_DIR_TREES) {
           const abs = path.join(versionPath, tree.name);
           const probe = await statOf(abs);
@@ -473,6 +497,11 @@ async function scanPlugins() {
           'plugin-manifest',
           level
         );
+        // A plugin's MCP servers (#121): plugin:<plugin>:<server> when loaded.
+        // Its own category, not 'mcp', so it is not editable: the file may keep
+        // its servers at the top level, where the executable acknowledgement,
+        // which looks for mcpServers, would not see a new command (#122).
+        await probeFile(path.join(versionPath, '.mcp.json'), 'plugin-mcp', level);
       }
     }
   }
@@ -694,7 +723,7 @@ export async function resolveLineage(projectDir) {
   const filePaths = levels.flatMap((l) => l.entries.filter((e) => e.type === 'file').map((e) => e.absPath));
   const fileCount = distinct(filePaths);
 
-  return {
+  const lineage = {
     projectDir: resolved,
     home: homeDir(),
     platform: process.platform,
@@ -710,4 +739,8 @@ export async function resolveLineage(projectDir) {
       redactedCount: distinct(levels.flatMap((l) => l.redacted.map((r) => r.absPath))),
     },
   };
+  // Last: which plugins load depends on the settings merge and the git root,
+  // both of which need the rest of the lineage (#122).
+  lineage.plugins = await annotatePlugins(lineage);
+  return lineage;
 }

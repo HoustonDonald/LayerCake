@@ -75,6 +75,7 @@ async function flattenMemory(lineage) {
       (e) =>
         e.category === 'memory' &&
         e.type === 'file' &&
+        !e.inactive &&
         INSTRUCTION_BASENAMES.has(e.name.toLowerCase())
     );
     const repeated = allMemoryFiles.filter((e) => emitted.has(samePathKey(e.absPath)));
@@ -336,9 +337,19 @@ function definitionName(entry, frontmatter) {
   return path.basename(entry.name, path.extname(entry.name));
 }
 
+/**
+ * A plugin file's plugin name: from the install that holds it (plugins.js),
+ * else from its cache folder (<marketplace>/<plugin>) when installed_plugins.json
+ * could not be read.
+ */
+function pluginNameOf(entry) {
+  return entry.pluginName || (entry.plugin ? entry.plugin.split('/')[1] : null) || null;
+}
+
 /** Agents, skills and commands grouped by name, strongest definition first. */
 async function flattenDefinitions(lineage) {
   const groups = new Map();
+  let notLoaded = 0;
 
   for (const level of lineage.levels) {
     const defs = level.entries.filter(
@@ -346,9 +357,18 @@ async function flattenDefinitions(lineage) {
     );
     for (const entry of defs) {
       if (entry.category === 'skill' && !entry.isSkillManifest) continue;
+      // A plugin that does not load here (#122): its definitions are not in
+      // play, so they neither count nor shadow. The Explorer marks each.
+      if (entry.inactive) {
+        notLoaded += 1;
+        continue;
+      }
       const read = await readForDisplay(entry.absPath);
       const fm = read.error ? null : read.frontmatter || splitFrontmatter(read.content || '').frontmatter;
-      const name = definitionName(entry, fm);
+      // Claude Code names a plugin's definitions <plugin>:<name> (measured,
+      // #122), so one never shadows a project's definition of the same name.
+      const plugin = level.kind === 'plugins' ? pluginNameOf(entry) : null;
+      const name = plugin ? `${plugin}:${definitionName(entry, fm)}` : definitionName(entry, fm);
       const key = `${entry.category}:${name}`;
       if (!groups.has(key)) groups.set(key, { key, category: entry.category, name, definitions: [] });
       groups.get(key).definitions.push({
@@ -396,8 +416,12 @@ async function flattenDefinitions(lineage) {
     rule:
       'Grouped by declared name (frontmatter name, else the filename or skill folder). ' +
       'The definition closest to the project shadows the ones above it. ' +
-      'Plugin definitions are namespaced as plugin:skill at runtime, so they rarely collide. ' +
+      'A plugin\'s are named plugin:name, as Claude Code names them, so they never shadow a project\'s. ' +
+      (notLoaded
+        ? `${notLoaded} definition(s) from plugins that do not load here are left out; the Plugins level says why. `
+        : '') +
       'A file reachable by two routes is one definition, listed once.',
+    notLoaded,
     groups: list,
   };
 }
@@ -414,10 +438,11 @@ async function flattenMcp(lineage) {
   const servers = new Map();
   const sources = [];
 
-  const addServers = (block, meta) => {
-    if (!block || typeof block !== 'object') return [];
+  const addServers = (block, meta, prefix = '') => {
+    if (!block || typeof block !== 'object' || Array.isArray(block)) return [];
     const names = [];
-    for (const [name, def] of Object.entries(block)) {
+    for (const [bare, def] of Object.entries(block)) {
+      const name = prefix + bare;
       names.push(name);
       if (!servers.has(name)) servers.set(name, { name, definitions: [] });
       servers.get(name).definitions.push({
@@ -438,12 +463,28 @@ async function flattenMcp(lineage) {
     // .claude.json is included because servers added through the Claude app land
     // there, not in a .mcp.json. Leaving it out would make the view look complete
     // while missing the servers most likely to be in play.
+    // A plugin's servers come from its .mcp.json or its plugin.json (#121).
     const mcpFiles = level.entries.filter(
-      (e) => e.type === 'file' && (e.category === 'mcp' || e.name === '.mcp.json' || e.category === 'home-config')
+      (e) =>
+        e.type === 'file' &&
+        (e.category === 'mcp' ||
+          e.name === '.mcp.json' ||
+          e.category === 'home-config' ||
+          (level.kind === 'plugins' && e.name === 'plugin.json'))
     );
     for (const entry of mcpFiles) {
       const read = await readForDisplay(entry.absPath);
       const parsed = read.parsed && typeof read.parsed === 'object' ? read.parsed : null;
+      const plugin = level.kind === 'plugins' ? pluginNameOf(entry) : null;
+      // A plugin's .mcp.json may hold the servers at its top level (the
+      // playwright plugin's does) or under mcpServers; plugin.json only under
+      // mcpServers, as an object. A plugin.json without one is no MCP source.
+      const pluginBlock = !plugin
+        ? null
+        : entry.name === 'plugin.json'
+          ? parsed?.mcpServers && typeof parsed.mcpServers === 'object' ? parsed.mcpServers : null
+          : parsed?.mcpServers ?? parsed;
+      if (plugin && entry.name === 'plugin.json' && !pluginBlock) continue;
       const source = {
         levelId: level.id,
         levelTitle: levelTitle(level),
@@ -459,9 +500,28 @@ async function flattenMcp(lineage) {
       // it defines, so they can be found, and contributes none of them.
       if (entry.inactive) {
         source.notRead = entry.note || 'Not read by Claude Code.';
-        if (parsed?.mcpServers && typeof parsed.mcpServers === 'object') {
-          source.serverNames.push(...Object.keys(parsed.mcpServers));
+        const block = plugin ? pluginBlock : parsed?.mcpServers;
+        if (block && typeof block === 'object' && !Array.isArray(block)) {
+          source.serverNames.push(...Object.keys(block).map((n) => (plugin ? `plugin:${plugin}:${n}` : n)));
         }
+        sources.push(source);
+        continue;
+      }
+
+      // A loaded plugin's servers, named as Claude Code names them.
+      if (plugin) {
+        source.serverNames.push(
+          ...addServers(
+            pluginBlock,
+            {
+              levelTitle: levelTitle(level),
+              precedence: level.precedence,
+              path: entry.absPath,
+              scope: `plugin ${entry.pluginId || plugin}`,
+            },
+            `plugin:${plugin}:`
+          )
+        );
         sources.push(source);
         continue;
       }
@@ -537,6 +597,8 @@ async function flattenMcp(lineage) {
         : '') +
       'A .mcp.json inside a .claude folder, the configuration home\'s included, is not read by Claude Code: ' +
       'it is listed among the sources as not read, and its servers are not. ' +
+      'A plugin that loads here adds the servers of its installed version\'s .mcp.json or plugin.json, ' +
+      'named plugin:<plugin>:<server>; one that does not load is listed as not read, with the reason. ' +
       'A server defined at more than one level is flagged; the definition closest to the project is shown ' +
       'as the winner. Servers still awaiting per-project approval are listed here even though Claude Code ' +
       'will not have loaded them. A file reachable by two routes is listed once.',

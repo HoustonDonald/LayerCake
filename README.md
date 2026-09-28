@@ -110,7 +110,32 @@ Code also honours.
 ~\.claude\plugins\blocklist.json
 ~\.claude\plugins\cache\<marketplace>\<plugin>\<version>\{agents,skills,commands,hooks,rules,memory}
 ~\.claude\plugins\cache\<marketplace>\<plugin>\<version>\.claude-plugin\plugin.json
+~\.claude\plugins\cache\<marketplace>\<plugin>\<version>\.mcp.json     read only
 ```
+
+A plugin's `.mcp.json` is listed and read, never edited: it can keep its servers at the top level
+rather than under `mcpServers`, where the executable acknowledgement would not see a command being
+added.
+
+Only the versions `installed_plugins.json` names are scanned; any other cached version (usually one
+Claude Code marked `.orphaned_at` after an update) is listed under "other" as not read. If
+`installed_plugins.json` cannot be read, every cached version is scanned and the level says so.
+
+Which installed plugins load for the project is decided the way Claude Code 2.1.283 was measured to
+decide it (#122), with `claude plugin list --json`, `claude mcp list` and a `claude -p` against a
+local stub API (no usage), from a scratch config home holding a copy of this machine's plugins:
+
+- A plugin loads only when the merged `enabledPlugins` of the settings Claude Code reads (the
+  settings view's own merge) sets it `true`. `false` is off, and so is a plugin not named at all.
+- A `local` or `project` install loads only where the project's git root, or the folder itself
+  outside a repository, is its `projectPath`: from a subfolder of the repository it loads, from a
+  subfolder of a plain folder it does not.
+- Its agents, skills and commands are named `<plugin>:<name>` (the frontmatter name), so a plugin's
+  never shadows a project's; its MCP servers, from the installed version's `.mcp.json` or an
+  `mcpServers` object in `plugin.json`, are named `plugin:<plugin>:<server>`.
+
+A file of a plugin that does not load stays listed, marked "not loaded" with the reason, and the
+level note names those plugins. The definitions and MCP views leave such files out, and say how many.
 
 ### 03 Project memory (home-stored)
 
@@ -181,7 +206,7 @@ Four chains, each stating its own merge rule in the UI rather than leaving it im
 |---|---|
 | **CLAUDE.md chain** | `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `MEMORY.md` concatenated top to bottom with per-level headers. Individual per-project memory files are excluded: they are recalled on demand, not loaded every session, and sweeping in 60+ of them would bury the actual instruction set. |
 | **settings.json chain** | Every settings file in precedence order, plus a computed effective merge and a table naming the level that won each key. |
-| **Agents & skills** | Definitions grouped by declared name (frontmatter `name`, else filename or skill folder), showing which level's version shadows the others. |
+| **Agents & skills** | Definitions grouped by declared name (frontmatter `name`, else filename or skill folder; a plugin's as `plugin:name`), showing which level's version shadows the others. Plugins that do not load here are left out and counted. |
 | **MCP servers** | The `.mcp.json` in the project folder and every folder above it, plus the global and per-project `mcpServers` blocks in `~/.claude.json` (the per-project key is described below), with shadowed definitions flagged. A `.mcp.json` inside a `.claude` folder is listed as not read, naming the servers it defines, which are not loaded. |
 
 The settings merge is **computed by this tool**, not read back out of Claude Code, and it follows

@@ -165,6 +165,48 @@ async function makeFixture() {
     hooks: { SessionStart: hook('user') },
     fallbackModel: ['user-fallback'],
     modelPicker: { fromUser: true },
+    // #122: unnamed-plugin is left out, which Claude Code treats as off.
+    enabledPlugins: {
+      'on-plugin@smoke-mkt': true,
+      'off-plugin@smoke-mkt': false,
+      'away-plugin@smoke-mkt': true,
+      'here-plugin@smoke-mkt': true,
+    },
+  }, null, 2));
+  // Installed plugins (#122, #121), each a case measured on Claude Code
+  // 2.1.283: enabled; set false; not named in enabledPlugins; a local install
+  // for another folder; a local install for proj (in no repository, so proj
+  // is its root). on-plugin has an older cached version, marked orphaned,
+  // that installed_plugins.json does not name, and an agent named like
+  // proj's own "reviewer". smoke-plugin is where the create checks plant a
+  // file (#97).
+  const cache = path.join(configHome, 'plugins', 'cache', 'smoke-mkt');
+  const plugFile = async (rel, body) => {
+    await fs.mkdir(path.dirname(path.join(cache, rel)), { recursive: true });
+    await fs.writeFile(path.join(cache, rel), body);
+  };
+  await plugFile('on-plugin/1.0.0/.orphaned_at', '1790000000000');
+  await plugFile('on-plugin/1.0.0/agents/reviewer.md', '---\nname: reviewer\n---\nOld version.\n');
+  await plugFile('on-plugin/2.0.0/agents/reviewer.md', '---\nname: reviewer\n---\nPlugin reviewer.\n');
+  // A plugin .mcp.json may hold its servers at the top level, as playwright's does.
+  await plugFile('on-plugin/2.0.0/.mcp.json', JSON.stringify({ browser: { command: 'on-cmd' } }));
+  await plugFile('off-plugin/1.0.0/agents/off-agent.md', '---\nname: off-agent\n---\n');
+  await plugFile('off-plugin/1.0.0/.mcp.json', JSON.stringify({ mcpServers: { offsrv: { command: 'off-cmd' } } }));
+  await plugFile('unnamed-plugin/1.0.0/agents/unnamed-agent.md', '---\nname: unnamed-agent\n---\n');
+  await plugFile('away-plugin/1.0.0/agents/away-agent.md', '---\nname: away-agent\n---\n');
+  await plugFile('here-plugin/1.0.0/agents/here-agent.md', '---\nname: here-agent\n---\n');
+  await plugFile('here-plugin/1.0.0/.claude-plugin/plugin.json', JSON.stringify({ name: 'here-plugin', mcpServers: { inline: { command: 'here-cmd' } } }));
+  const install = (name, version, extra = {}) => [{ scope: 'user', installPath: path.join(cache, name, version), version, ...extra }];
+  await fs.writeFile(path.join(configHome, 'plugins', 'installed_plugins.json'), JSON.stringify({
+    version: 2,
+    plugins: {
+      'on-plugin@smoke-mkt': install('on-plugin', '2.0.0'),
+      'off-plugin@smoke-mkt': install('off-plugin', '1.0.0'),
+      'unnamed-plugin@smoke-mkt': install('unnamed-plugin', '1.0.0'),
+      'away-plugin@smoke-mkt': install('away-plugin', '1.0.0', { scope: 'local', projectPath: parent }),
+      'here-plugin@smoke-mkt': install('here-plugin', '1.0.0', { scope: 'local', projectPath: proj }),
+      'smoke-plugin@smoke-mkt': install('smoke-plugin', '1.0.0'),
+    },
   }, null, 2));
   await fs.writeFile(path.join(configHome, 'settings.local.json'), JSON.stringify({ userLocalOnly: true, env: { SMOKE_WIN: 'user-local' } }, null, 2));
   await fs.writeFile(path.join(configHome, 'keybindings.json'), JSON.stringify({ bindings: [] }, null, 2));
@@ -646,6 +688,49 @@ try {
       homeMcpEntries.length === 2 && homeMcpEntries.every((e) => e.inactive === true && /Not read by Claude Code/.test(e.note || '')) &&
       (mcp.servers || []).some((s) => s.name === 'smoke-shadowed'),
     JSON.stringify({ source: homeMcp[0], servers: (mcp.servers || []).map((s) => s.name) }));
+
+  // --- plugins: what loads, under which names (#122, #121) -----------------
+  const plugLevel = lineage.levels.find((l) => l.kind === 'plugins');
+  const plugEntry = (rel) => plugLevel.entries.find((e) => samePathKey(e.absPath) === samePathKey(path.join(configHome, 'plugins', 'cache', 'smoke-mkt', rel)));
+  const oldVersion = path.join(configHome, 'plugins', 'cache', 'smoke-mkt', 'on-plugin', '1.0.0');
+  check('a cached version installed_plugins.json does not name is listed, not scanned (#122)',
+    !plugLevel.entries.some((e) => samePathKey(e.absPath).startsWith(samePathKey(oldVersion) + path.sep)) &&
+      plugLevel.other.some((o) => samePathKey(o.absPath) === samePathKey(oldVersion) && /does not name \(marked orphaned\)/.test(o.note || '')) &&
+      Boolean(plugEntry(path.join('on-plugin', '2.0.0', 'agents', 'reviewer.md'))),
+    JSON.stringify(plugLevel.other.map((o) => [o.name, o.note])));
+  const groupNames = defs.groups.map((g) => g.name);
+  const projReviewer = defs.groups.find((g) => g.category === 'agent' && g.name === 'reviewer');
+  check('a plugin\'s agent is named plugin:name and does not shadow the project\'s of the same name (#122)',
+    groupNames.includes('on-plugin:reviewer') && projReviewer?.definitions.length === 1 && !projReviewer.shadowed,
+    JSON.stringify({ names: groupNames, reviewer: projReviewer?.definitions.map((d) => d.path) }));
+  check('only plugins that load here count: disabled, not enabled and another project\'s are left out (#122)',
+    groupNames.includes('here-plugin:here-agent') &&
+      !groupNames.some((n) => /^(off|unnamed|away)-plugin:/.test(n)) && defs.notLoaded === 3,
+    JSON.stringify({ names: groupNames, notLoaded: defs.notLoaded }));
+  const noteOf = (rel) => plugEntry(rel)?.inactive === true ? plugEntry(rel).note || '' : '(active)';
+  check('each file of a plugin that does not load says why (#122)',
+    /Disabled/.test(noteOf(path.join('off-plugin', '1.0.0', 'agents', 'off-agent.md'))) &&
+      /Not enabled/.test(noteOf(path.join('unnamed-plugin', '1.0.0', 'agents', 'unnamed-agent.md'))) &&
+      /Installed for .*local scope/.test(noteOf(path.join('away-plugin', '1.0.0', 'agents', 'away-agent.md'))) &&
+      !plugEntry(path.join('here-plugin', '1.0.0', 'agents', 'here-agent.md'))?.inactive,
+    JSON.stringify(['off', 'unnamed', 'away'].map((p) => noteOf(path.join(`${p}-plugin`, '1.0.0', 'agents', `${p}-agent.md`)))));
+  const serverNames = (mcp.servers || []).map((s) => s.name);
+  const offMcp = (mcp.sources || []).find((s) => samePathKey(s.path) === samePathKey(path.join(configHome, 'plugins', 'cache', 'smoke-mkt', 'off-plugin', '1.0.0', '.mcp.json')));
+  check('a loaded plugin\'s MCP servers are named plugin:<plugin>:<server>, a disabled one\'s are not loaded (#121)',
+    serverNames.includes('plugin:on-plugin:browser') && serverNames.includes('plugin:here-plugin:inline') &&
+      !serverNames.some((n) => /offsrv/.test(n)) && Boolean(offMcp?.notRead) &&
+      JSON.stringify(offMcp?.serverNames) === '["plugin:off-plugin:offsrv"]',
+    JSON.stringify({ servers: serverNames, off: offMcp }));
+  // Listed and read, never edited: its servers can sit at the top level, where
+  // the executable acknowledgement (which looks for mcpServers) would not see
+  // a command being added.
+  const onMcp = path.join(configHome, 'plugins', 'cache', 'smoke-mkt', 'on-plugin', '2.0.0', '.mcp.json');
+  const onMcpBefore = await fs.readFile(onMcp, 'utf8');
+  const onMcpWrite = await write({ path: onMcp, content: JSON.stringify({ browser: { command: 'on-cmd' }, added: { command: 'evil' } }) });
+  check("a plugin's .mcp.json is listed but not editable (#122)",
+    onMcpWrite.status === 403 && (await fs.readFile(onMcp, 'utf8')) === onMcpBefore &&
+      plugEntry(path.join('on-plugin', '2.0.0', '.mcp.json'))?.category === 'plugin-mcp',
+    `${onMcpWrite.status}`);
 
   // --- write refusals -----------------------------------------------------
   check(

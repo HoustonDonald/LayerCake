@@ -538,6 +538,8 @@ export async function runCreateChecks({ base, token, check, skip, smokeDir, conf
   const donor = fenceManifest.files.find((x) => same(x.absPath, path.join(proj, 'CLAUDE.md')));
   const outsidePath = path.join(smokeDir, 'outside', 'startup', 'evil.cmd');
   const unlisted = [
+    // A cached version installed_plugins.json does not name: the scan does not walk it (#122).
+    path.join(configHome, 'plugins', 'cache', 'smoke-mkt', 'on-plugin', '1.0.0', 'agents', 'planted.md'),
     path.join(configHome, 'plugins', 'marketplaces', 'smoke-mkt', 'evil.sh'),
     path.join(configHome, 'projects', projectSlug(proj), 'memory', 'notes.txt'),
     path.join(proj, '.claude', 'hooks', '.layercake-tmp-fence'),
@@ -546,7 +548,7 @@ export async function runCreateChecks({ base, token, check, skip, smokeDir, conf
   ];
   for (const p of unlisted) fenceManifest.files.push({ ...donor, absPath: p });
   await fs.writeFile(path.join(fenceDir, 'manifest.json'), JSON.stringify(fenceManifest, null, 2));
-  const fenced2 = await post('/api/restore', { scanId: lin.scanId, id: fenceSnap.json.id, paths: unlisted.slice(0, 4) });
+  const fenced2 = await post('/api/restore', { scanId: lin.scanId, id: fenceSnap.json.id, paths: unlisted.slice(0, 5) });
   const madeAny = (await Promise.all(unlisted.map((p) => exists(p)))).some(Boolean);
   check('a restore never creates a file where the scan would not list it',
     fenced2.status === 403 && !madeAny, `${fenced2.status} ${JSON.stringify(fenced2.json?.details?.refused?.map((x) => x.code))}`);

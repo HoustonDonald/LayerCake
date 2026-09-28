@@ -95,6 +95,7 @@ server/paths.js     platform paths, the scan manifest, snapshot root
 server/safety.js    denylists, editable categories, size cap, timeout, errors
 server/sharegate.js one filesystem call per network share at a time, process-wide; scan and watch use it
 server/scan.js      lineage resolver -> ordered levels
+server/plugins.js   which installed plugins load for a project (measured rules, #122); marks the rest
 server/readfile.js  the ONLY producer of a file body
 server/flatten.js   the four flattened views
 server/watch.js     directory watches over a scanned lineage, polling on a share (UNC or mapped drive); never opens a body
