@@ -69,8 +69,12 @@ Env knobs: `PORT` (default 5178), `CLAUDE_EXPLORER_DIR_TIMEOUT_MS` (default 3000
 configuration home, read for session data only; smoke points it at a synthetic folder so real
 sessions are never read). Claude Code's own `CLAUDE_CONFIG_DIR` is honoured the way Claude Code
 reads it (#7): every `~/.claude` path, and `.claude.json` inside it, come from `claudeHome()` and
-`globalConfigFile()` in paths.js, never from `homeDir()` directly. Smoke sets it to a synthetic
-config home, so its user level is never the real one. More exist for smoke only:
+`globalConfigFile()` in paths.js, never from `homeDir()` directly. So does a `CLAUDE_CONFIG_DIR` in
+the env block of the default home's `settings.json` (#64): `resolveConfigHome` in scan.js reads it
+before every scan, at server start and in the CLI, and `claudeHome()` returns the moved home to
+every caller; `.claude.json` stays put (measured). Smoke sets `CLAUDE_CONFIG_DIR` to a synthetic
+config home, so its user level is never the real one; the #64 checks run a server of their own
+without it (`smoke-confighome.mjs`). More exist for smoke only:
 `LAYERCAKE_LAUNCH_DRY_RUN=1` (launch builds its argv and settings but starts nothing),
 `LAYERCAKE_CLAUDE_CMD` (a JSON array replacing `claude` for AI summaries, pointed at
 `scripts/smoke-claude-stub.mjs`, so no usage is ever spent testing),

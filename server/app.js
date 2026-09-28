@@ -28,7 +28,7 @@ import express from 'express';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { resolveLineage } from './scan.js';
+import { resolveConfigHome, resolveLineage } from './scan.js';
 import { flatten } from './flatten.js';
 import { readForDisplay } from './readfile.js';
 import {
@@ -139,6 +139,9 @@ function registerScan(lineage) {
  * (diskStatic or memoryStatic below).
  */
 export function createApp({ port, staticFiles }) {
+  // Where Claude Code's home is, for the session routes before the first scan
+  // (#64). In the background: a home on a slow share must not delay startup.
+  resolveConfigHome().catch(() => {});
   const app = express();
   // First, and on every route including the HTML: see hostGuard for why this
   // one, unlike the origin guard below, must not be scoped to /api.

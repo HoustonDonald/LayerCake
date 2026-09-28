@@ -78,14 +78,47 @@ export function claudeConfigDirEnv() {
 }
 
 /**
+ * The configuration home before any settings file moves it: CLAUDE_CONFIG_DIR
+ * when set, else ~/.claude. Its settings.json is where a move is read (#64).
+ */
+export function defaultClaudeHome() {
+  return claudeConfigDirEnv() || path.join(homeDir(), '.claude');
+}
+
+/**
+ * A configuration home moved from inside settings (#64): { dir, file }, or
+ * null. Claude Code applies a settings file's env block and then resolves its
+ * home again, so a CLAUDE_CONFIG_DIR in the env block of the default home's
+ * settings.json moves everything: measured on 2.1.284 (a scratch home, a stub
+ * API), the other home's CLAUDE.md, agents and hooks were loaded and its
+ * transcripts written, and nothing of the default home's was used, not even
+ * that settings file's own hooks. A project's settings naming a home were
+ * ignored. The one thing that stayed was .claude.json (globalConfigFile).
+ *
+ * Process-wide, like Claude Code's own home. Set by resolveConfigHome in
+ * scan.js before every scan and at server start, so every caller of
+ * claudeHome() sees the same answer.
+ */
+let movedHome = null;
+
+export function setMovedClaudeHome(value) {
+  movedHome = value;
+}
+
+export function movedClaudeHome() {
+  return movedHome;
+}
+
+/**
  * Claude Code's configuration home: CLAUDE_CONFIG_DIR when set, else
- * ~/.claude. Docs: "If you set CLAUDE_CONFIG_DIR, every ~/.claude path lives
- * under that directory instead", which covers settings, CLAUDE.md, agents,
- * skills, plugins, projects/ (transcripts and auto memory), sessions/ and
- * history.jsonl. Every one of those is built from here, never from homeDir().
+ * ~/.claude, unless a settings file moved it (#64). Docs: "If you set
+ * CLAUDE_CONFIG_DIR, every ~/.claude path lives under that directory
+ * instead", which covers settings, CLAUDE.md, agents, skills, plugins,
+ * projects/ (transcripts and auto memory), sessions/ and history.jsonl. Every
+ * one of those is built from here, never from homeDir().
  */
 export function claudeHome() {
-  return claudeConfigDirEnv() || path.join(homeDir(), '.claude');
+  return movedHome?.dir || defaultClaudeHome();
 }
 
 /**
@@ -101,7 +134,10 @@ export function claudeHome() {
  * installed claude.exe, 2026-09-26; #87).
  */
 export function legacyGlobalConfigFile() {
-  return path.join(claudeHome(), '.config.json');
+  // The home before a settings move, as for .claude.json, which measurably
+  // stays put (#64): both are read before settings are. Reasoned for this
+  // one; a .config.json was not part of the measurement.
+  return path.join(defaultClaudeHome(), '.config.json');
 }
 
 export function globalConfigFile() {
@@ -110,6 +146,7 @@ export function globalConfigFile() {
 
 /** Where claudeHome() came from, for the UI to state rather than leave implied. */
 export function claudeHomeSource() {
+  if (movedHome) return `CLAUDE_CONFIG_DIR in the env block of ${movedHome.file}`;
   if (claudeConfigDirEnv()) return 'CLAUDE_CONFIG_DIR';
   if (String(process.env.CLAUDE_CONFIG_DIR || '').trim()) {
     return 'default (CLAUDE_CONFIG_DIR is set but not an absolute path, which Claude Code refuses)';
@@ -389,7 +426,7 @@ function snapshotRootUnchecked() {
 
 /** The trees LayerCake's own stores must stay out of: Claude Code's data and config homes. */
 export function claudeTrees() {
-  return [claudeDataDir(), claudeHome(), path.join(homeDir(), '.claude')];
+  return [claudeDataDir(), claudeHome(), defaultClaudeHome(), path.join(homeDir(), '.claude')];
 }
 
 /** Whether `child` is `parent` or inside it, folded the way the filesystem folds names. */

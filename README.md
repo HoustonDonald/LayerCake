@@ -151,9 +151,16 @@ If `CLAUDE_CONFIG_DIR` is set, as Claude Code reads it, the `~\.claude` part of 
 `.claude.json` moves inside it too: Claude Code resolves it as `CLAUDE_CONFIG_DIR\.claude.json`.
 `~\CLAUDE.md` does not move; it is a file in the home directory. The level says which location it
 used and why, and `/api/manifest` states `claudeHome`, `claudeHomeSource` and `globalConfigFile`.
-A `CLAUDE_CONFIG_DIR` that is not an absolute path is ignored, as Claude Code refuses it too. One
-case is not covered: a `CLAUDE_CONFIG_DIR` set inside a settings file's `env` block, which Claude
-Code also honours.
+A `CLAUDE_CONFIG_DIR` that is not an absolute path is ignored, as Claude Code refuses it too.
+
+A `CLAUDE_CONFIG_DIR` in the `env` block of the default home's `settings.json` moves the home as
+well (#64), and LayerCake follows it the way Claude Code does, measured on Claude Code 2.1.284:
+everything under the home, sessions included, comes from the new folder, and nothing from the old
+one applies, not even that settings file's own hooks. Two things stay: `.claude.json`, which
+Claude Code still keeps at `~\.claude.json`, and the settings file that made the move, which the
+user level lists as inactive so it can be edited to move the home back. The level's note names
+it. Checked before every scan and at startup, so an edit shows at the next scan. A project's
+settings cannot move the home (measured); managed settings can, but that is not modelled (#158).
 
 ### 02 Plugins
 

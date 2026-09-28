@@ -33,6 +33,7 @@ import { buildClientIfStale } from './build-if-stale.js';
 import { makeSessionFixture, runLaunchChecks, runSessionChecks, runSummaryChecks, stopFixtureProcesses } from './smoke-sessions.mjs';
 import { runCreateChecks } from './smoke-create.mjs';
 import { runManagedChecks, runManagedDefaultsChecks, runManagedWatchCheck } from './smoke-managed.mjs';
+import { runConfigHomeChecks } from './smoke-confighome.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -1884,6 +1885,9 @@ try {
   await runManagedChecks({ root: ROOT, check, skip, smokeDir });
   await runManagedDefaultsChecks({ check, skip });
   await runManagedWatchCheck({ check, smokeDir });
+
+  // --- a configuration home moved by a settings env block (#64), own server ---
+  await runConfigHomeChecks({ root: ROOT, check, smokeDir });
 
   // --- local-scope MCP servers (#120) ----------------------------------------
   // Found under the key Claude Code uses. The fixture's .claude.json names each

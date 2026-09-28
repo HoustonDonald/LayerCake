@@ -22,7 +22,7 @@ import { flatten } from '../server/flatten.js';
 import { samePathKey, snapshotRoot } from '../server/paths.js';
 import { timedFsCall } from '../server/sharegate.js';
 import { restoreSnapshotFiles } from '../server/writefile.js';
-import { resolveLineage } from '../server/scan.js';
+import { resolveConfigHome, resolveLineage } from '../server/scan.js';
 import {
   compareSnapshot,
   createSnapshot,
@@ -434,6 +434,8 @@ async function main() {
   if (!command) {
     throw new CliError(`Unknown command: ${name}\nCommands: ${Object.keys(COMMANDS).join(', ')}`);
   }
+  // Before any command reads Claude Code's home: a settings file can move it (#64).
+  await resolveConfigHome();
   await command(argv.slice(1));
 }
 

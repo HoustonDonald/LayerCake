@@ -23,6 +23,7 @@ import {
   ancestorChain,
   claudeHome,
   claudeHomeSource,
+  defaultClaudeHome,
   globalConfigFile,
   legacyGlobalConfigFile,
   homeDir,
@@ -35,8 +36,10 @@ import {
   pluginCacheDir,
   projectMemoryDir,
   projectSlug,
+  movedClaudeHome,
   remoteSettingsFile,
   samePathKey,
+  setMovedClaudeHome,
 } from './paths.js';
 import { readRegistryPolicy } from './policy.js';
 import {
@@ -508,24 +511,67 @@ async function scanManaged() {
 }
 
 /**
- * Claude Code's configuration home (~/.claude, or CLAUDE_CONFIG_DIR) plus its
- * global config file and ~/CLAUDE.md. The first two follow CLAUDE_CONFIG_DIR;
- * ~/CLAUDE.md does not, because it is reached as a file in the home directory,
- * not as part of the configuration home (#7).
+ * Where Claude Code's configuration home is once settings are read (#64): a
+ * CLAUDE_CONFIG_DIR in the env block of the default home's settings.json moves
+ * it (see movedClaudeHome in paths.js for what was measured). Claude Code's own
+ * rule for the value applies: a non-empty absolute path. Read again before
+ * every scan, so an edit that adds or removes the move shows at the next one.
+ * Only user settings are read here. Managed settings can move it too, by the
+ * bundle's own description, but that is not modelled (#158).
+ */
+export async function resolveConfigHome() {
+  const file = path.join(defaultClaudeHome(), 'settings.json');
+  const read = await readForDisplay(file);
+  let moved = null;
+  if (!read.error && typeof read.content === 'string') {
+    try {
+      const raw = JSON.parse(read.content)?.env?.CLAUDE_CONFIG_DIR;
+      const dir = typeof raw === 'string' && path.isAbsolute(raw.trim()) ? path.resolve(raw.trim()) : null;
+      if (dir && samePathKey(dir) !== samePathKey(defaultClaudeHome())) moved = { dir, file };
+    } catch {
+      /* not JSON: Claude Code applies no env block from it either */
+    }
+  }
+  setMovedClaudeHome(moved);
+  return moved;
+}
+
+/**
+ * Claude Code's configuration home (~/.claude, CLAUDE_CONFIG_DIR, or where a
+ * settings file moved it, #64) plus its global config file and ~/CLAUDE.md.
+ * The first two follow CLAUDE_CONFIG_DIR; ~/CLAUDE.md does not, because it is
+ * reached as a file in the home directory, not as part of the configuration
+ * home (#7). The global config file does not follow a settings move either.
  */
 async function scanUser() {
   const home = homeDir();
   const claudeDir = claudeHome();
   const source = claudeHomeSource();
+  const moved = movedClaudeHome();
   const level = newLevel({
     kind: 'user',
     label: 'User / home',
     dir: claudeDir,
-    note:
-      source === 'CLAUDE_CONFIG_DIR'
+    note: moved
+      ? `Applies to every project for this OS user. Moved here from ${defaultClaudeHome()} by CLAUDE_CONFIG_DIR in the ` +
+        `env block of ${moved.file}, as Claude Code does it (#64): it then reads its configuration and keeps its sessions ` +
+        'here, and nothing from the old home applies. Only .claude.json stays where it was.'
+      : source === 'CLAUDE_CONFIG_DIR'
         ? 'Applies to every project for this OS user. Located by CLAUDE_CONFIG_DIR, as Claude Code does.'
         : `Applies to every project for this OS user. Location: ${source}.`,
   });
+  // The file that moved the home: listed, so it can be seen and edited to undo
+  // the move, and inactive, because nothing in it applies but that env block.
+  if (moved) {
+    await probeFile(
+      moved.file,
+      'settings',
+      level,
+      `Moved the configuration home to ${moved.dir}: Claude Code reads the CLAUDE_CONFIG_DIR in its env block and ` +
+        'nothing else from here applies (measured on 2.1.284: its hooks did not run, #64). Remove that key to move it back.'
+    );
+    markInactive(level, moved.file);
+  }
 
   // A config home that cannot be read at all (on a share that does not
   // answer, say) is an error on the level itself, so nothing is offered for
@@ -893,6 +939,9 @@ function markAgentsMd(walkLevels) {
  * Full lineage for a project directory, ordered weakest precedence first.
  */
 export async function resolveLineage(projectDir) {
+  // First: everything below that reaches the configuration home asks
+  // claudeHome(), which a settings file can move (#64).
+  await resolveConfigHome();
   const resolved = path.resolve(projectDir);
   const chain = ancestorChain(resolved); // project first
   const walkLevels = [];
