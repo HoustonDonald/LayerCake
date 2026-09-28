@@ -219,6 +219,34 @@ export async function runCreateChecks({ base, token, check, skip, smokeDir, conf
   // #136: the answer names it as recreated, which its undo cannot remove.
   check('a restore names the files it recreated (#136)',
     back.json?.created?.length === 1 && same(back.json.created[0], agentPath), JSON.stringify(back.json?.created));
+  // #142: requested paths match as the fence does (case folded on Windows),
+  // and one the snapshot does not hold is failed with a reason, never dropped;
+  // when none matches, the refusal says so for each.
+  lin = await scan(proj);
+  const notHeld = path.join(proj, 'CLAUDE.md');
+  const variant = process.platform === 'win32' ? agentPath.toUpperCase() : agentPath;
+  const mixedRes = await post('/api/restore', { scanId: lin.scanId, id: del.json?.undoSnapshotId, paths: [variant, notHeld] });
+  const noneRes = await post('/api/restore', { scanId: lin.scanId, id: del.json?.undoSnapshotId, paths: [notHeld] });
+  // Matched means restored or failed for another reason: this checks the
+  // matching, not the write (which once failed under four parallel runs, #150).
+  const variantRow = [...(mixedRes.json?.restored || []).map((p) => ({ absPath: p })), ...(mixedRes.json?.failed || [])].find((r) => same(r.absPath, variant));
+  check('a restore matches paths as the fence does, and fails one the snapshot does not hold (#142)',
+    mixedRes.status === 200 && Boolean(variantRow) && variantRow.code !== 'ENOTINSNAPSHOT' &&
+      mixedRes.json?.failed?.some((f) => same(f.absPath, notHeld) && f.code === 'ENOTINSNAPSHOT') &&
+      noneRes.status === 400 && noneRes.json?.details?.failed?.[0]?.code === 'ENOTINSNAPSHOT',
+    JSON.stringify({ mixed: mixedRes.json, none: noneRes.json }));
+  // #145: a settings file must be an object; every refusal carries a code.
+  const settingsPath = path.join(proj, '.claude', 'settings.json');
+  await fs.mkdir(path.dirname(settingsPath), { recursive: true });
+  await fs.writeFile(settingsPath, '{}\n');
+  lin = await scan(proj);
+  const arrayRoot = await post('/api/write', { scanId: lin.scanId, path: settingsPath, content: '[1, 2]' });
+  const outsideScan = await post('/api/write', { scanId: lin.scanId, path: path.join(proj, 'nope.md'), content: 'x' });
+  check('a settings file with a list at its top is refused, and a refusal always has a code (#145)',
+    arrayRoot.status === 400 && arrayRoot.json?.code === 'EBADJSON' && (await fs.readFile(settingsPath, 'utf8')) === '{}\n' &&
+      outsideScan.status === 403 && outsideScan.json?.code === 'ENOTINSCAN',
+    JSON.stringify({ arrayRoot: arrayRoot.json, outsideScan: outsideScan.json }));
+  await fs.rm(settingsPath, { force: true });
 
   // A gone file that reappears after the scan is never written over: the
   // restore's own snapshot came from the scan and cannot hold it.

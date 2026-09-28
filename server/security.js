@@ -44,11 +44,11 @@ export function originGuard(port) {
   return (req, res, next) => {
     const origin = req.get('origin');
     if (origin && !allowed.has(origin)) {
-      return res.status(403).json({ message: 'Cross-origin request refused.' });
+      return res.status(403).json({ message: 'Cross-origin request refused.', code: 'ECROSSORIGIN' });
     }
     const site = req.get('sec-fetch-site');
     if (site && site !== 'same-origin' && site !== 'none') {
-      return res.status(403).json({ message: 'Cross-site request refused.' });
+      return res.status(403).json({ message: 'Cross-site request refused.', code: 'ECROSSSITE' });
     }
     return next();
   };

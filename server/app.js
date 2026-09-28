@@ -219,7 +219,7 @@ export function createApp({ port, staticFiles }) {
 
   app.post('/api/scan', async (req, res) => {
     const dir = String(req.body?.dir || '').trim();
-    if (!dir) return res.status(400).json({ message: 'dir is required' });
+    if (!dir) return res.status(400).json({ message: 'dir is required', code: 'EBADREQUEST' });
     try {
       const lineage = await resolveLineage(dir);
       const scanId = registerScan(lineage);
@@ -233,15 +233,16 @@ export function createApp({ port, staticFiles }) {
     const scanId = String(req.query.scanId || '');
     const target = String(req.query.path || '');
     const scan = scans.get(scanId);
-    if (!scan) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan the directory.' });
-    if (!target) return res.status(400).json({ message: 'path is required' });
+    if (!scan) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan the directory.', code: 'ESCANGONE' });
+    if (!target) return res.status(400).json({ message: 'path is required', code: 'EBADREQUEST' });
     if (!scan.allowed.has(allowKey(target))) {
       return res.status(403).json({
         message: 'Path is not part of this scan result. Only files discovered by the scan can be opened.',
+        code: 'ENOTINSCAN',
       });
     }
     if (isSecret(target)) {
-      return res.status(403).json({ message: 'Credential file. Never read by this tool.' });
+      return res.status(403).json({ message: 'Credential file. Never read by this tool.', code: 'EREDACTED' });
     }
     const result = await readForDisplay(path.resolve(target));
     res.json(result);
@@ -251,7 +252,7 @@ export function createApp({ port, staticFiles }) {
     const scanId = String(req.query.scanId || '');
     const kind = String(req.query.kind || 'claude-md');
     const scan = scans.get(scanId);
-    if (!scan) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan the directory.' });
+    if (!scan) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan the directory.', code: 'ESCANGONE' });
     try {
       const result = await flatten(scan.lineage, kind);
       res.json(result);
@@ -278,11 +279,12 @@ export function createApp({ port, staticFiles }) {
     const scanId = String(req.query.scanId || '');
     const scan = scans.get(scanId);
     if (!scan) {
-      return res.status(404).json({ message: 'Unknown or expired scan. Re-scan the directory.' });
+      return res.status(404).json({ message: 'Unknown or expired scan. Re-scan the directory.', code: 'ESCANGONE' });
     }
     if (watchStreams.size >= MAX_WATCH_STREAMS) {
       return res.status(429).json({
         message: `Already watching on ${MAX_WATCH_STREAMS} connections. Close another LayerCake tab.`,
+        code: 'ETOOMANY',
       });
     }
 
@@ -352,12 +354,15 @@ export function createApp({ port, staticFiles }) {
     if (!scan) {
       const err = new Error('Unknown or expired scan. Re-scan the directory.');
       err.status = 404;
+      err.code = 'ESCANGONE';
       throw err;
     }
     const entry = scan.allowed.get(allowKey(target));
     if (!entry) {
       const err = new Error('Path is not part of this scan result.');
       err.status = 403;
+      // A code on every refusal, so a client or a log can tell them apart (#145).
+      err.code = 'ENOTINSCAN';
       throw err;
     }
     return { scan, entry };
@@ -371,9 +376,9 @@ export function createApp({ port, staticFiles }) {
 
   app.post('/api/write', async (req, res) => {
     const { scanId, path: target, content, expectedMtime, acknowledgeExecutable } = req.body || {};
-    if (!isText(scanId) || !isText(target)) return res.status(400).json({ message: 'scanId and path must be strings' });
+    if (!isText(scanId) || !isText(target)) return res.status(400).json({ message: 'scanId and path must be strings', code: 'EBADREQUEST' });
     if (typeof content !== 'string') {
-      return res.status(400).json({ message: 'content must be a string' });
+      return res.status(400).json({ message: 'content must be a string', code: 'EBADREQUEST' });
     }
     try {
       const { scan, entry } = requireEntry(String(scanId || ''), String(target || ''));
@@ -396,9 +401,9 @@ export function createApp({ port, staticFiles }) {
   app.post('/api/create', async (req, res) => {
     const { scanId, createId, name, ext, acknowledgeExecutable } = req.body || {};
     // Strings only: String(['x']) is 'x', so an array would pass as an id (#102).
-    if (!isText(scanId) || !isText(createId)) return res.status(400).json({ message: 'scanId and createId must be strings' });
+    if (!isText(scanId) || !isText(createId)) return res.status(400).json({ message: 'scanId and createId must be strings', code: 'EBADREQUEST' });
     const scan = scans.get(scanId);
-    if (!scan) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan first.' });
+    if (!scan) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan first.', code: 'ESCANGONE' });
     const option = scan.creatable.find((o) => o.id === String(createId || ''));
     if (!option) {
       return res.status(403).json({
@@ -423,7 +428,7 @@ export function createApp({ port, staticFiles }) {
   // #15: deletes a scanned file, after a snapshot that holds it.
   app.post('/api/delete', async (req, res) => {
     const { scanId, path: target, expectedMtime } = req.body || {};
-    if (!isText(scanId) || !isText(target)) return res.status(400).json({ message: 'scanId and path must be strings' });
+    if (!isText(scanId) || !isText(target)) return res.status(400).json({ message: 'scanId and path must be strings', code: 'EBADREQUEST' });
     try {
       const { scan, entry } = requireEntry(scanId, target);
       return res.json(await deleteFile({ entry, lineage: scan.lineage, expectedMtime: expectedMtime || null }));
@@ -434,7 +439,7 @@ export function createApp({ port, staticFiles }) {
 
   app.post('/api/snapshot', async (req, res) => {
     const scan = scans.get(String(req.body?.scanId || ''));
-    if (!scan) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan first.' });
+    if (!scan) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan first.', code: 'ESCANGONE' });
     try {
       const manifest = await createSnapshot(scan.lineage, {
         label: String(req.body?.label || '').slice(0, 200),
@@ -489,7 +494,7 @@ export function createApp({ port, staticFiles }) {
   app.get('/api/snapshot/:id/file', async (req, res) => {
     try {
       // A string, never ?path[]=x, which String() would flatten into one (#110).
-      if (!isText(req.query.path)) return res.status(400).json({ message: 'path must be a string' });
+      if (!isText(req.query.path)) return res.status(400).json({ message: 'path must be a string', code: 'EBADREQUEST' });
       return res.json(await readSnapshotFile(req.params.id, req.query.path));
     } catch (err) {
       return sendError(res, err);
@@ -500,10 +505,10 @@ export function createApp({ port, staticFiles }) {
     const { scanId, id, paths } = req.body || {};
     // Strings only, as for create, write and delete (#102, #110).
     if (!isText(id) || !Array.isArray(paths) || paths.length === 0 || !paths.every(isText)) {
-      return res.status(400).json({ message: 'id must be a string, and paths a non-empty array of strings' });
+      return res.status(400).json({ message: 'id must be a string, and paths a non-empty array of strings', code: 'EBADREQUEST' });
     }
     const scan = scans.get(String(scanId || ''));
-    if (!scan) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan first.' });
+    if (!scan) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan first.', code: 'ESCANGONE' });
     try {
       // Restore targets must be in the current scan. Without this, a stale
       // snapshot could write to a path the current scan never validated. The
@@ -530,7 +535,7 @@ export function createApp({ port, staticFiles }) {
   // request body, the same way a write takes its target from the scan.
   app.post('/api/launch', async (req, res) => {
     const scan = scans.get(String(req.body?.scanId || ''));
-    if (!scan) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan first.' });
+    if (!scan) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan first.', code: 'ESCANGONE' });
     try {
       const screen = req.body?.screen && typeof req.body.screen === 'object' ? req.body.screen : null;
       return res.json(await launchClaude({ dir: scan.lineage.projectDir, port, screen }));

@@ -287,7 +287,7 @@ export function registerSessionRoutes(app) {
       const reader = await getReader(req.params.id);
       const n = Number(req.params.n);
       const t = reader.model.turns.find((x) => x.n === n);
-      if (!t) return res.status(404).json({ message: 'No such turn.' });
+      if (!t) return res.status(404).json({ message: 'No such turn.', code: 'ENOTURN' });
       return res.json({
         ...turnSummary(t),
         text: clip(t.text, MAX_TEXT_CHARS),
@@ -305,9 +305,9 @@ export function registerSessionRoutes(app) {
   /** Prompts of a session whose transcript is gone, from history.jsonl. */
   app.get('/api/history/:id', async (req, res) => {
     const id = String(req.params.id || '');
-    if (!SESSION_ID_RE.test(id)) return res.status(400).json({ message: 'Not a session id.' });
+    if (!SESSION_ID_RE.test(id)) return res.status(400).json({ message: 'Not a session id.', code: 'EBADREQUEST' });
     const prompts = (await readHistory()).filter((h) => h.sessionId === id).map((h) => ({ at: h.at, text: h.text }));
-    if (!prompts.length) return res.status(404).json({ message: 'No history for that session.' });
+    if (!prompts.length) return res.status(404).json({ message: 'No history for that session.', code: 'ENOHISTORY' });
     return res.json({ sessionId: id, prompts });
   });
 
@@ -322,7 +322,7 @@ export function registerSessionRoutes(app) {
     // forever, with its poller running (shown in review: four early aborts,
     // then "Already following 4 sessions" with none open).
     if (streams.size >= MAX_STREAMS) {
-      return res.status(429).json({ message: `Already following ${MAX_STREAMS} sessions. Close another LayerCake tab.` });
+      return res.status(429).json({ message: `Already following ${MAX_STREAMS} sessions. Close another LayerCake tab.`, code: 'ETOOMANY' });
     }
     // The slot is TAKEN here too, not only checked: opens arriving together
     // all passed a check whose slot was taken after the await (#30). Every
@@ -397,7 +397,7 @@ export function registerSessionRoutes(app) {
 
   /** The one route that spends Claude usage. One run at a time. */
   app.post('/api/session/:id/summarize', async (req, res) => {
-    if (summarizing) return res.status(409).json({ message: 'A summary is already running.' });
+    if (summarizing) return res.status(409).json({ message: 'A summary is already running.', code: 'EBUSY' });
     // Taken before the first await: two requests arriving together would
     // otherwise both pass the check above and both run.
     summarizing = String(req.params.id);

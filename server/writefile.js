@@ -111,14 +111,23 @@ export function validateContent(absPath, content) {
   const warnings = [];
 
   if (ext === '.json') {
+    let parsed;
     try {
-      JSON.parse(content);
+      parsed = JSON.parse(content);
     } catch (err) {
       throw refuse(
         `Refusing to write invalid JSON: ${err.message}. A malformed settings file degrades every future Claude Code session.`,
         'EBADJSON',
         400
       );
+    }
+    // Claude Code reads keys from these, so valid JSON that is not an object
+    // (a list, a string) is as broken as a syntax error (#145). By name, not
+    // category: keybindings.json shares the settings category and may be a list.
+    const name = path.basename(absPath).toLowerCase();
+    const objectFile = ['settings.json', 'settings.local.json', 'managed-settings.json', '.mcp.json'].includes(name);
+    if (objectFile && (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))) {
+      throw refuse(`Refusing to write ${path.basename(absPath)} with a top level that is not an object: Claude Code reads its keys from one.`, 'EBADJSON', 400);
     }
   }
 
@@ -384,7 +393,9 @@ function templateFor(option, name, ext) {
     case 'agent':
       return `---\nname: ${name}\ndescription: When Claude should hand work to this agent.\n---\n\nInstructions for the agent.\n`;
     case 'command':
-      return `---\ndescription: What /${name} does.\n---\n\nThe prompt /${name} sends. $ARGUMENTS stands for anything typed after it.\n`;
+      // $ARGUMENTS is live: Claude Code replaces it when the command runs, so
+      // it is used as the placeholder it is, not named in prose (#145).
+      return `---\ndescription: What /${name} does.\n---\n\nThe prompt /${name} sends. Anything typed after the command arrives here: $ARGUMENTS\n`;
     case 'skill':
       return `---\nname: ${name}\ndescription: What this skill does, and when Claude should use it.\n---\n\nInstructions for the skill.\n`;
     case 'rule':
@@ -600,7 +611,15 @@ export async function restoreSnapshotFiles({ id, paths, lineage }) {
     err.details = { refused };
     throw err;
   }
-  const result = await restoreFiles(id, accepted, lineage, { absentPaths });
+  let result;
+  try {
+    result = await restoreFiles(id, accepted, lineage, { absentPaths });
+  } catch (err) {
+    // None of the accepted paths is in the snapshot: say so for each, and
+    // keep the ones the fence refused rather than dropping them (#142).
+    if (err.status === 400 && err.details?.failed) err.details.failed.push(...refused);
+    throw err;
+  }
   result.failed.push(...refused);
   return result;
 }

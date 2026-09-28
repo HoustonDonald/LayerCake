@@ -303,7 +303,8 @@ The app reads the whole lineage and can edit the files it found. Writes are narr
 - **Writes land atomically**, via a temp file in the same directory followed by a rename. A crash
   leaves either the old file or the new one, never a half-written config.
 - **Structural validation before the write, with a deliberate severity split.** Invalid JSON or YAML
-  is refused outright, because a malformed settings file degrades every future session. Malformed
+  is refused outright, because a malformed settings file degrades every future session; so is a
+  settings file or `.mcp.json` whose top level is valid JSON but not an object (#145). Malformed
   markdown frontmatter is a warning and the write proceeds, because it breaks one definition and
   leaves the rest working.
 - **Concurrent edits are detected.** The editor sends the mtime it loaded; a mismatch returns 409
@@ -430,7 +431,9 @@ that tree is a restore target, and a backup the restore can overwrite is not a b
   since that snapshot was taken while it was missing and a restore never deletes; the page and the
   CLI name such files as not covered by the undo (the restore's answer lists them as `created`). It does not replace a
   file that snapshot could not hold (over the 2 MB cap), nor one marked read-only: that row fails
-  and says so. A row that fails does not stop the others. A snapshot does not record the read-only
+  and says so. A requested path the snapshot does not hold fails too, saying so, rather than
+  vanishing from the answer; paths match as the scan's do, ignoring case on Windows (#142). A row
+  that fails does not stop the others. A snapshot does not record the read-only
   attribute, so a file a restore recreates is writable.
 - **A file gone from disk can be restored**, including after a rescan that no longer lists it,
   wherever the current scan would list it: a file it probes by name (`~/CLAUDE.md`, a directory's

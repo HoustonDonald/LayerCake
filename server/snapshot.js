@@ -606,12 +606,20 @@ export async function restoreFiles(id, absPaths, lineage, { absentPaths = [] } =
   // taken from the scan and cannot hold a file that has appeared since.
   const absentKeys = new Set(absentPaths.map((p) => samePathKey(p)));
   const manifest = await readManifest(id);
-  const wanted = new Set(absPaths.map((p) => path.resolve(p)));
-  const chosen = manifest.files.filter((f) => wanted.has(path.resolve(f.absPath)));
+  // Matched as the fence matches, folding case on Windows: a case variant of
+  // a held path used to pass the fence, match no row, and vanish from the
+  // answer; so did a path the snapshot does not hold (#142). Each is failed.
+  const wanted = new Map(absPaths.map((p) => [samePathKey(p), p]));
+  const chosen = manifest.files.filter((f) => wanted.has(samePathKey(f.absPath)));
+  const matched = new Set(chosen.map((f) => samePathKey(f.absPath)));
+  const unmatched = [...wanted]
+    .filter(([key]) => !matched.has(key))
+    .map(([, p]) => ({ absPath: p, code: 'ENOTINSNAPSHOT', message: 'Not restored: this snapshot does not hold this file.' }));
 
   if (chosen.length === 0) {
     const err = new Error('None of the requested files are in this snapshot.');
     err.status = 400;
+    err.details = { failed: unmatched };
     throw err;
   }
 
@@ -665,5 +673,5 @@ export async function restoreFiles(id, absPaths, lineage, { absentPaths = [] } =
       failed.push({ absPath: entry.absPath, ...described });
     }
   }
-  return { restored, created, failed, undoSnapshotId: undo.id };
+  return { restored, created, failed: [...failed, ...unmatched], undoSnapshotId: undo.id };
 }
