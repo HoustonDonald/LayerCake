@@ -23,9 +23,44 @@ npm run smoke                       # expect: 0 failed
 node cli/index.js here C:\dev\LayerCake   # expect: ~18 line summary, exit 0
 ```
 
-Smoke was 324 passed, 0 failed, 2 skipped on 2026-09-27 after c53c3c3 (Windows; the 2 skips are the opt-in
+Smoke was 343 passed, 0 failed, 2 skipped on 2026-09-27 after 49edc6e (Windows; the 2 skips are the opt-in
 mapped-drive checks and a Linux-only one). The last recorded WSL Ubuntu run was 258/0, before the
 checks added since; it has not been rerun.
+
+### 2026-09-27, evening: the views now match what Claude Code loads (#125, #120 to #123, #149)
+
+Each established by a zero-usage probe of Claude Code 2.1.283 (scratch config home; `claude mcp
+list`, `claude plugin list --json`, or `claude -p` against a stub API that records the request and
+refuses it); each commit message lists the measurements, checks and mutants.
+- **24697d7** (#125): counts are of distinct files, with "N reached twice".
+- **cbd211e** (#120): `~/.claude.json` project keys are forward slashes, at the git root (a
+  worktree's main repository), case as typed; `lineage.gitRoot` finds that root from the filesystem.
+- **72b8b50** (#121): a `.mcp.json` inside `.claude` (the config home's included) is never read;
+  listed as not read. Owner-facing: this machine's `context7` lives only there, so no session loads
+  it (told on Telegram; the owner's call).
+- **32b38b6** (#122, #121): plugins. Only installed versions are scanned; a plugin loads only when
+  `enabledPlugins` sets it true (missing is off); a local install only at its projectPath's git
+  root; names `plugin:name`, servers `plugin:<plugin>:<server>` (`server/plugins.js`). A plugin's
+  `.mcp.json` is category `plugin-mcp`, not editable: as `mcp`, a write adding a flat-map server
+  returned 200 with no acknowledgement.
+- **49edc6e** (#123): rules in the chain (conditional when `paths:`); AGENTS.md only when the
+  project's folders hold no CLAUDE.md; project memory keyed by the git root. The managed-folder part
+  moved to #147 (needs elevation to measure).
+- **2e43c73** (#149, the owner's screenshot): long tool names no longer print over the summary.
+
+Not rebuilt: `dist\LayerCake.exe`. The owner had it running all session, so every exe check built
+in a copy of the tree and launched on port 5231 beside it. Run `npm run build:exe` once it is closed.
+
+Tooling, in this session's scratchpad (`%TEMP%\claude\c--dev-layercake\82a4caf9-...\scratchpad`):
+`mutate-125.mjs` (every mutant of this round, 25 plus the control; name filter as argument),
+`edge.mjs` (see the trap below), `ui-120/121/122/123/125/149.mjs`, `exe-lifecycle-125.ps1` (safe
+beside a running LayerCake: follows its own window by the Edge process's profile, the exe by PID,
+and checks that no Edge started by the test runs on the real profile), `copy-tree.mjs`, and the
+probes `mcp-probe-120/121.mjs`, `plugin-probe-122*.mjs`, `instr-probe-123.mjs`, `agents-probe-123*.mjs`.
+
+**A trap:** headless Edge 154 exits 0 at once and relaunches itself, so `puppeteer.launch` fails
+("Code: 0") and leaves the browser running on the test profile. `edge.mjs` starts Edge with
+`--remote-debugging-port=0` and connects through `<profile>\DevToolsActivePort` instead.
 
 ### 2026-09-27, later: faster saves, and the settings model now matches Claude Code
 
@@ -103,11 +138,9 @@ Filed #111 to #145. Shipped and closed, each commit message listing its checks a
 
 **Suggested order for what is open** (the issues hold the detail; all reachable in ordinary use
 unless marked):
-Done since: #137, #118, #119, #135, #129, #131, #138 (30-day retention), #140, and part of #143
-(sections above).
-1. #125 (counts include two-route files), #120 (per-project MCP never found on Windows), #121, #122,
-   #123. For #120, the settings probe's method (marker hooks, stub API, zero usage) can establish
-   what Claude Code actually reads before changing the model.
+Done since: #137, #118, #119, #135, #129, #131, #138 (30-day retention), #140, part of #143,
+and all of item 1: #125, #120, #121, #122, #123, plus #149 (sections above).
+1. (done)
 2. Snapshots: #132, #139 (a refused over-cap edit still leaves an empty snapshot), #141 (delete
    removes a read-only file), #136 (restore of a recreated file is not undoable; disclosed in the CLI,
    open in the UI), and what is left of #143 (sticky Restore bar, full-width panel).
@@ -515,4 +548,4 @@ Windows and tooling specifics, on top of what `C:\dev\CLAUDE.md` already documen
 4. Smoke never runs the exe. After touching `server/app.js`, `desktop/` or `client/`, run
    `npm run build:exe` and launch `dist\LayerCake.exe` with `Start-Process` (as Explorer would),
    with every data folder and `LAYERCAKE_BROWSER_PROFILE_DIR` redirected.
-5. Pick up the suggested order in the 2026-09-26 to 27 section, starting with #125.
+5. Pick up the suggested order in the 2026-09-26 to 27 section, at item 2 (snapshots).
