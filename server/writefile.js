@@ -12,6 +12,7 @@ import yaml from 'js-yaml';
 
 import { createSnapshot, atomicWrite, createExclusive, removeFile, restoreFiles } from './snapshot.js';
 import {
+  MAX_FILE_BYTES,
   MAX_WRITE_BYTES,
   isEditableCategory,
   isExecutableCategory,
@@ -158,6 +159,35 @@ function assertHeld(snapshot, absPath, verb) {
 }
 
 /**
+ * Refusals a stat can decide, made before the undo snapshot so a refused write
+ * costs a stat and leaves no empty snapshot behind (#139, #141).
+ * - Over the snapshot's size cap: the snapshot could not hold it. assertHeld
+ *   still checks what the snapshot actually held, for a file that grows.
+ * - Read-only: the save's rename would fail with a raw EPERM naming the temp
+ *   file, and a delete would succeed anyway, because libuv clears the
+ *   attribute on unlink. Someone marked the file to keep it as it is.
+ * A file that cannot be stat'ed is left to the checks that follow.
+ */
+async function assertReplaceable(absPath, verb) {
+  let st;
+  try {
+    st = await shareGatedCall(absPath, () => fs.stat(absPath));
+  } catch {
+    return;
+  }
+  if (st.size > MAX_FILE_BYTES) {
+    throw refuse(
+      `${verb}: the file is over the 2 MB snapshot cap, so the snapshot taken first could not hold it and there would be no way back.`,
+      'ENOBACKUP',
+      409
+    );
+  }
+  if ((st.mode & 0o200) === 0) {
+    throw refuse(`${verb}: the file is read-only. Clear its read-only attribute first if you mean to change it.`, 'EREADONLY', 409);
+  }
+}
+
+/**
  * Detects a concurrent change since the editor loaded the file.
  *
  * The realistic case is not two people, it is one person with the file open in
@@ -192,6 +222,7 @@ export async function editFile({
   const warnings = validateContent(entry.absPath, content);
   await assertUnchanged(entry.absPath, expectedMtime);
   if (!acknowledgeExecutable) await assertNoNewCommands(entry, content);
+  await assertReplaceable(entry.absPath, 'Not saved');
 
   // Only this file: automatic snapshots hold what the operation replaces
   // (owner decision, 2026-09-27; see createSnapshot).
@@ -419,6 +450,7 @@ export async function deleteFile({ entry, lineage, expectedMtime = null }) {
     if (err.code === 'ENOENT') throw refuse('The file is already gone from disk. Re-scan.', 'EGONE', 404);
     throw err;
   }
+  await assertReplaceable(entry.absPath, 'Not deleted');
 
   const undo = await createSnapshot(lineage, { label: `Before deleting ${path.basename(entry.absPath)}`, paths: [entry.absPath] });
   const held = assertHeld(undo, entry.absPath, 'Not deleted');

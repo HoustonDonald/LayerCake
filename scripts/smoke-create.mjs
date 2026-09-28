@@ -152,9 +152,14 @@ export async function runCreateChecks({ base, token, check, skip, smokeDir, conf
   const BIG = 2 * 1024 * 1024 + 1;
   await fs.writeFile(big, Buffer.alloc(BIG, 0x61));
   lin = await scan(proj);
+  // Snapshot folders in the store, to show a refusal takes none (#139).
+  const snapFolders = async () => (await fs.readdir(snaps)).length;
+  const foldersBeforeBigDel = await snapFolders();
   const bigDel = await post('/api/delete', { scanId: lin.scanId, path: big, expectedMtime: entriesOf(lin).find((e) => same(e.absPath, big))?.mtime });
   check('delete is refused when the snapshot could not hold the file, which stays',
     bigDel.status === 409 && bigDel.json?.code === 'ENOBACKUP' && (await exists(big)), `${bigDel.status} ${bigDel.json?.code}`);
+  check('a delete refused for the size cap takes no snapshot first (#139)',
+    (await snapFolders()) === foldersBeforeBigDel, `${foldersBeforeBigDel} -> ${await snapFolders()}`);
 
   // #96: the same holds for a restore or a save over it. Each used to replace
   // the file although its undo snapshot had skipped it, leaving no copy.
@@ -163,9 +168,41 @@ export async function runCreateChecks({ base, token, check, skip, smokeDir, conf
   check('a restore over a file the undo snapshot cannot hold is refused for that file, which stays',
     bigRestore.status === 200 && bigRestore.json?.failed?.[0]?.code === 'ENOBACKUP' && (await bigSize()) === BIG,
     `${bigRestore.status} ${JSON.stringify(bigRestore.json?.failed)} size ${await bigSize()}`);
+  const foldersBeforeBigWrite = await snapFolders();
   const bigWrite = await post('/api/write', { scanId: lin.scanId, path: big, content: 'x' });
   check('a save over a file the undo snapshot cannot hold is refused, and it stays',
     bigWrite.status === 409 && bigWrite.json?.code === 'ENOBACKUP' && (await bigSize()) === BIG, `${bigWrite.status} ${bigWrite.json?.code}`);
+  check('a save refused for the size cap takes no snapshot first (#139)',
+    (await snapFolders()) === foldersBeforeBigWrite, `${foldersBeforeBigWrite} -> ${await snapFolders()}`);
+
+  // #141: a read-only file is refused by delete, save and restore alike, with
+  // a readable reason, and a refused delete or save takes no snapshot. Unlink
+  // used to clear the attribute and delete it; a save failed with a raw EPERM
+  // naming the temp file; a restore over it succeeds on POSIX.
+  const ro = path.join(proj, '.claude', 'rules', 'readonly.md');
+  await fs.writeFile(ro, '# before\n');
+  lin = await scan(proj);
+  const roSnap = await post('/api/snapshot', { scanId: lin.scanId, label: 'readonly.md as it was' });
+  await fs.writeFile(ro, '# kept as it is\n');
+  await fs.chmod(ro, 0o444);
+  try {
+    lin = await scan(proj);
+    const roMtime = entriesOf(lin).find((e) => same(e.absPath, ro))?.mtime;
+    const foldersBeforeRo = await snapFolders();
+    const roDel = await post('/api/delete', { scanId: lin.scanId, path: ro, expectedMtime: roMtime });
+    const roWrite = await post('/api/write', { scanId: lin.scanId, path: ro, content: '# changed\n' });
+    const foldersAfterRo = await snapFolders();
+    const roRestore = await post('/api/restore', { scanId: lin.scanId, id: roSnap.json?.id, paths: [ro] });
+    check('a read-only file is refused by delete, save and restore, readably, and stays (#141)',
+      roDel.status === 409 && roDel.json?.code === 'EREADONLY' && roWrite.status === 409 && roWrite.json?.code === 'EREADONLY' &&
+        foldersAfterRo === foldersBeforeRo && roRestore.json?.failed?.[0]?.code === 'EREADONLY' &&
+        !/tmp/i.test(JSON.stringify([roDel.json, roWrite.json, roRestore.json?.failed])) &&
+        (await fs.readFile(ro, 'utf8')) === '# kept as it is\n',
+      JSON.stringify({ del: roDel.json, write: roWrite.json, restore: roRestore.json?.failed, folders: [foldersBeforeRo, foldersAfterRo] }));
+  } finally {
+    await fs.chmod(ro, 0o644);
+    await fs.rm(ro, { force: true });
+  }
 
   // --- #92: restore a file that is gone, after a scan that no longer lists it
   const otherScan = await scan(other);

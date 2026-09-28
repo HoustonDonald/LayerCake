@@ -289,8 +289,9 @@ The app reads the whole lineage and can edit the files it found. Writes are narr
 - **Every edit, delete and restore is preceded by an automatic snapshot**, and the response carries
   that snapshot id so the change can be undone. Each one then checks that the snapshot actually holds
   the file it is about to replace or remove, and refuses that file if not: a snapshot skips a file
-  over the 2 MB cap, and replacing one would leave no copy anywhere. A create replaces nothing, so it
-  takes none. This is enforced by the import graph: `writefile.js` depends on `snapshot.js`, so a
+  over the 2 MB cap, and replacing one would leave no copy anywhere. A save or delete of a file over
+  the cap, or of one marked read-only, is refused before any snapshot is taken, so a refusal leaves
+  nothing behind (#139, #141). A create replaces nothing, so it takes none. This is enforced by the import graph: `writefile.js` depends on `snapshot.js`, so a
   new route cannot skip it by forgetting.
 - **Writes land atomically**, via a temp file in the same directory followed by a rename. A crash
   leaves either the old file or the new one, never a half-written config.
@@ -363,7 +364,9 @@ undo is a delete. Managed policy, plugins and Claude Code's own project memory a
 
 **Delete** is in the file viewer and asks first, in the page. It takes a snapshot, and deletes only
 if that snapshot holds the file: a file over the 2 MB cap, which snapshots skip, is refused, since
-deleting it would have no way back. The mtime check that guards a save guards a delete too. The
+deleting it would have no way back. A read-only file is refused too, as a save of it is: Windows
+would delete it anyway (the unlink clears the attribute), and someone marked it to keep it. The
+mtime check that guards a save guards a delete too. The
 result names the snapshot; restore the file from **Snapshots**, where it shows as `gone from disk`.
 
 `GET /api/manifest` serves the create policy (`write.create`) from the same tables the server builds
@@ -419,8 +422,9 @@ that tree is a restore target, and a backup the restore can overwrite is not a b
   command with an `--only` for each file it replaced. A file the restore recreated is the exception,
   since that snapshot was taken while it was missing and a restore never deletes; the CLI names such
   files as not covered. It does not replace a
-  file that snapshot could not hold (over the 2 MB cap): that row fails and says so. A row that
-  fails does not stop the others.
+  file that snapshot could not hold (over the 2 MB cap), nor one marked read-only: that row fails
+  and says so. A row that fails does not stop the others. A snapshot does not record the read-only
+  attribute, so a file a restore recreates is writable.
 - **A file gone from disk can be restored**, including after a rescan that no longer lists it,
   wherever the current scan would list it: a file it probes by name (`~/CLAUDE.md`, a directory's
   `CLAUDE.md`, a settings file), a file in a `.claude` folder's trees, or a file in the

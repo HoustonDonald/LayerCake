@@ -54,7 +54,9 @@ const RENAME_RETRY_MS = 5000;
 
 async function isReadOnly(p) {
   try {
-    return ((await fs.stat(p)).mode & 0o200) === 0;
+    // Through the share gate, as every read before a write is (#66): a
+    // restore asks this of each file before replacing it (#141).
+    return ((await shareGatedCall(p, () => fs.stat(p))).mode & 0o200) === 0;
   } catch {
     return false;
   }
@@ -635,6 +637,16 @@ export async function restoreFiles(id, absPaths, lineage, { absentPaths = [] } =
           absPath: entry.absPath,
           code: 'ENOBACKUP',
           message: 'Not restored: the snapshot taken first could not hold the current file (over the 2 MB cap, or unreadable), so replacing it would have no way back.',
+        });
+        continue;
+      } else if (await isReadOnly(entry.absPath)) {
+        // Someone marked it to keep it, as a save or delete is refused (#141).
+        // Checked, not caught: on Windows the rename's EPERM names the temp
+        // file, and elsewhere a rename over a read-only file succeeds.
+        failed.push({
+          absPath: entry.absPath,
+          code: 'EREADONLY',
+          message: 'Not restored: the file is read-only. Clear its read-only attribute first if you mean to replace it.',
         });
         continue;
       } else {

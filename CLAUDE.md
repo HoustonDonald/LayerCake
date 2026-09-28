@@ -164,7 +164,10 @@ Writes land via temp file plus rename in the same directory, so a crash leaves t
 new one, never a half-written config that breaks every future session. On Windows the rename is
 retried for up to 5 s on EPERM/EACCES/EBUSY, because a rename over a file another process has open
 fails: without it, 99 of 300 writes failed with a reader polling the target (#49). A read-only
-target gives the same EPERM, so it is checked and fails at once instead of after the window.
+target gives the same EPERM, so it is checked and fails at once instead of after the window. Save,
+delete and restore all refuse a read-only file before writing (#141), save and delete before their
+snapshot too, as they do a file over the 2 MB cap (#139): the unlink clears the attribute, so a
+delete used to succeed, and elsewhere a rename over a read-only file succeeds.
 
 **The snapshot store must never live under `~/.claude`.** That tree is a restore target, and a
 backup the restore can overwrite is not a backup. See `snapshotRoot()`.
