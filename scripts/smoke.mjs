@@ -4,8 +4,9 @@
  * Self contained: rebuilds the client only when public/ is stale (the rule npm
  * start uses, #94), creates its own fixture tree, starts a server on its own
  * port with its own snapshot store, exercises the real HTTP API, and removes
- * everything it made. A rebuild empties public/ first, so two runs that both
- * find it stale can trip each other; after one has rebuilt, neither rebuilds.
+ * everything it made. A rebuild empties public/ first, so on Windows the check
+ * and the build hold a lock: runs started together on a stale tree build once,
+ * and the others wait and then find it fresh (#95).
  *
  * Why this exists when the project has no test framework: the write path can
  * fail SILENTLY. A CSRF guard applied one route too widely left every HTTP
@@ -1734,14 +1735,48 @@ try {
   } else {
     const netExe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'net.exe');
     const net = (args) => spawnSync(netExe, args, { encoding: 'utf8', timeout: 20000, windowsHide: true });
+    const LETTERS = 'ZYXWVUTSRQPONM';
+    // What a letter points at: its share path, itself for a local disk, null
+    // when it is free, 'unknown' when it fails or does not answer in 3 s (a
+    // dead mapping can hold a call for about 21 s).
+    const targetOf = (l) =>
+      Promise.race([
+        fs.realpath(`${l}:\\`).then(
+          (real) => real,
+          (err) => (err.code === 'ENOENT' ? null : 'unknown')
+        ),
+        new Promise((r) => setTimeout(() => r('unknown'), 3000)),
+      ]);
+    // Mapped to this run's own fixture folder rather than the share's root, so
+    // a mapping smoke made names a layercake-smoke- folder and is never taken
+    // for one of the user's. A run killed before its finally leaves its mapping
+    // until logoff (#79), so each run first removes those whose run has ended,
+    // by the pid written beside the fixture before mapping. A pid another
+    // process has since taken keeps the mapping: the safe side.
+    const ownMapping = /^\\\\localhost\\([a-z])\$(\\(?:[^\\]+\\)*layercake-smoke-[^\\]+)$/i;
+    const runEnded = async (target) => {
+      const [, drive, rest] = ownMapping.exec(target);
+      const pid = Number(await fs.readFile(path.join(`${drive}:${rest}`, 'smoke.pid'), 'utf8').catch(() => ''));
+      if (!Number.isInteger(pid) || pid <= 0) return false;
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch (err) {
+        return err.code === 'ESRCH';
+      }
+    };
+    for (const l of LETTERS) {
+      const target = await targetOf(l);
+      if (typeof target === 'string' && ownMapping.test(target) && (await runEnded(target))) {
+        const removed = net(['use', `${l}:`, '/delete', '/y']).status === 0;
+        process.stdout.write(`  NOTE  ${removed ? 'removed' : 'could not remove'} ${l}:, left mapped to ${target} by a smoke run that has ended (#79)\n`);
+      }
+    }
+    await fs.writeFile(path.join(smokeDir, 'smoke.pid'), String(process.pid));
     let letter = null;
-    for (const l of 'ZYXWVUTSRQPONM') {
-      const taken = await fs.stat(`${l}:\\`).then(
-        () => true,
-        (err) => err.code !== 'ENOENT'
-      );
-      if (taken) continue;
-      if (net(['use', `${l}:`, `\\\\localhost\\${proj[0]}$`, '/persistent:no']).status === 0) {
+    for (const l of LETTERS) {
+      if ((await targetOf(l)) !== null) continue;
+      if (net(['use', `${l}:`, viaAdminShare(smokeDir), '/persistent:no']).status === 0) {
         letter = l;
         break;
       }
@@ -1750,7 +1785,7 @@ try {
       skip(MAPPED_CHECKS, 'net use could not map a free drive letter to the admin share');
     } else {
       try {
-        const mappedProj = `${letter}:${proj.slice(2)}`;
+        const mappedProj = `${letter}:${proj.slice(smokeDir.length)}`;
         const mapped = await watchScanOf(mappedProj);
         check(
           'a folder on a mapped network drive is polled, not watched natively',
@@ -1782,7 +1817,10 @@ try {
   await runSessionChecks({ base: BASE, token, check, skip, proj, appData });
 
   // --- launch and ingest (Phase 2), dry run --------------------------------
-  await runLaunchChecks({ base: BASE, port: PORT, token, check, scanId: lineage.scanId, proj, appData, claudeData, reportWindowMs: REPORT_WINDOW_MS, serverStartedAt });
+  // A scan of its own: the server keeps 8, and the first one's id was evicted
+  // by the time the opt-in mapped-drive checks had scanned too (#156).
+  const launchScan = await (await fetch(`${BASE}/api/scan`, { method: 'POST', headers: H, body: JSON.stringify({ dir: proj }) })).json();
+  await runLaunchChecks({ base: BASE, port: PORT, token, check, scanId: launchScan.scanId, proj, appData, claudeData, reportWindowMs: REPORT_WINDOW_MS, serverStartedAt });
 
   // --- AI summaries, against a stand-in claude --------------------------------
   await runSummaryChecks({ base: BASE, token, check, skip, proj, smokeDir, appData });

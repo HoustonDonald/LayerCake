@@ -14,7 +14,9 @@
  */
 
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -61,15 +63,52 @@ function run(command, args) {
   });
 }
 
+/**
+ * Held from the staleness check to the end of the build, so two runs that
+ * start together on a stale tree build once: a Vite build empties public/
+ * first, and the other run's server was reading it (#95). The second waits,
+ * then finds the bundle fresh.
+ *
+ * A named pipe rather than a lock file, because Windows releases it when its
+ * process dies, so a build killed mid-way leaves no lock behind (measured: a
+ * second listener gets EADDRINUSE, and gets the pipe once the holder is
+ * killed). Keyed by this tree, so tree copies build side by side. Windows
+ * only: elsewhere nothing is held, as before.
+ */
+async function holdBuildLock() {
+  if (process.platform !== 'win32') return async () => {};
+  const key = crypto.createHash('sha256').update(root.toLowerCase()).digest('hex').slice(0, 16);
+  const name = `\\\\.\\pipe\\layercake-client-build-${key}`;
+  let told = false;
+  for (;;) {
+    const server = net.createServer();
+    const taken = await new Promise((resolve, reject) => {
+      server.once('error', (err) => (err.code === 'EADDRINUSE' ? resolve(false) : reject(err)));
+      server.listen(name, () => resolve(true));
+    });
+    if (taken) return () => new Promise((resolve) => server.close(() => resolve()));
+    if (!told) {
+      process.stdout.write('Waiting for another client build in this folder to finish...\n');
+      told = true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+
 /** Builds when stale, says which, and resolves true when it built. Rejects when the build fails. */
 export async function buildClientIfStale() {
-  const bundleMtime = fs.existsSync(bundle) ? fs.statSync(bundle).mtimeMs : 0;
-  const sourceMtime = Math.max(...INPUTS.map(newestMtime));
-  if (bundleMtime >= sourceMtime) {
-    process.stdout.write('Client bundle up to date.\n');
-    return false;
+  const release = await holdBuildLock();
+  try {
+    const bundleMtime = fs.existsSync(bundle) ? fs.statSync(bundle).mtimeMs : 0;
+    const sourceMtime = Math.max(...INPUTS.map(newestMtime));
+    if (bundleMtime >= sourceMtime) {
+      process.stdout.write('Client bundle up to date.\n');
+      return false;
+    }
+    process.stdout.write('Building client bundle...\n');
+    await run('npx', ['vite', 'build']);
+    return true;
+  } finally {
+    await release();
   }
-  process.stdout.write('Building client bundle...\n');
-  await run('npx', ['vite', 'build']);
-  return true;
 }

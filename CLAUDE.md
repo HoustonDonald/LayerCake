@@ -92,8 +92,10 @@ redirect `LOCALAPPDATA` for that process instead.
 `npm start`, `npm run app` and `npm run smoke` build the client only when `public/index.html` is
 older than the newest of `client/`, `vite.config.js` and `desktop/layercake.ico`
 (`scripts/build-if-stale.js`, the one copy of that rule, #94), so a change to `server/` alone does
-not trigger a rebuild and does not need one. A smoke rebuild empties `public/` first, so two smoke
-runs that both find it stale can trip each other.
+not trigger a rebuild and does not need one. A rebuild empties `public/` first, so on Windows the
+check and the build hold a lock (a named pipe keyed by the tree), and runs started together on a
+stale tree build once (#95). A client change made while a smoke run is serving still rebuilds under
+it, and `npm run build:exe` builds without the lock.
 
 ## Architecture
 
