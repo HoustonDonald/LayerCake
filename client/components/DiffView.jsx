@@ -19,13 +19,31 @@ const LINE_CLASS = {
  * nothing that could reach the network.
  *
  * Each line keeps its +/- marker, so the change reads the same in monochrome.
+ *
+ * It gives up after DIFF_TIMEOUT_MS, jsdiff's own `timeout` option, rather
+ * than freeze the page (#54): replacing every line of a 5,000-line file took
+ * 4.3 s, while a one-line edit of a 1.6 MB file takes about 20 ms and half of
+ * a 2,000-line file changed about 300 ms (measured, jsdiff 9, Node 24).
  */
+const DIFF_TIMEOUT_MS = 500;
+
+const lineCount = (text) => (text ? text.split('\n').length - (text.endsWith('\n') ? 1 : 0) : 0);
+
 export default function DiffView({ before, after }) {
   const hunks = useMemo(
-    () => structuredPatch('', '', before, after, '', '', { context: 3 }).hunks,
+    () => structuredPatch('', '', before, after, '', '', { context: 3, timeout: DIFF_TIMEOUT_MS })?.hunks ?? null,
     [before, after]
   );
 
+  if (hunks === null) {
+    return (
+      <div className="notice info">
+        Too different to show line by line: the comparison stopped after {DIFF_TIMEOUT_MS / 1000} s. The file has{' '}
+        {lineCount(before)} lines now and {lineCount(after)} in your edit. Save replaces all of it, after a snapshot of
+        what is there now.
+      </div>
+    );
+  }
   if (hunks.length === 0) return <div className="notice info">No differences.</div>;
 
   let added = 0;

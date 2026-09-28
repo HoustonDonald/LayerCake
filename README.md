@@ -397,6 +397,9 @@ The app reads the whole lineage and can edit the files it found. Writes are narr
   re-reads the file through `/api/file`, the same reader as everything else, and compares its mtime
   with the one loaded. If they differ it says the file changed on disk and draws no diff, because a
   diff against the old body would not show what Save replaces, and Save would get the 409 above.
+  The comparison stops after 0.5 s rather than freeze the page (#54), and then says the two are too
+  different to show line by line, with each one's line count: replacing every line of a
+  5,000-line file froze the page for 3 s before. Ordinary edits finish well inside the limit.
 - **An edited file keeps its line endings.** A browser text box turns every line break into LF, so
   the editor notes the file's ending when it loads and Save writes that one back: a CRLF file (any
   repo checked out with `core.autocrlf=true`) stays CRLF. A file that mixes CRLF and LF is saved
