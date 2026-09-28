@@ -23,9 +23,42 @@ npm run smoke                       # expect: 0 failed
 node cli/index.js here C:\dev\LayerCake   # expect: ~18 line summary, exit 0
 ```
 
-Smoke was 343 passed, 0 failed, 2 skipped on 2026-09-27 after 49edc6e (Windows; the 2 skips are the opt-in
-mapped-drive checks and a Linux-only one). The last recorded WSL Ubuntu run was 258/0, before the
-checks added since; it has not been rerun.
+Smoke was 352 passed, 0 failed, 3 skipped on 2026-09-28 after 4588b0f (Windows; the skips are the
+opt-in mapped-drive checks, a Linux-only one, and #144's link-to-a-share check, which needs a
+directory symlink this user cannot make without Developer Mode). WSL Ubuntu (Node 22.22.1, copy at
+`/tmp/layercake-linux-smoke`, lockfile unchanged so `rsync` the tree over it and run
+`node scripts/smoke.mjs`): 317 passed, 0 failed, 15 skipped on 2026-09-28 after 2c7a1f0.
+
+### 2026-09-28, night: snapshots, UI polish, junctions, write-path edges, the CLI's width
+
+Shipped and closed, each commit message listing its checks and mutants:
+- **aa25340** (#139, #141): an over-cap or read-only file is refused before any snapshot; save,
+  delete and restore all refuse a read-only file (a delete used to succeed: the unlink clears it).
+- **e949e53** (#132, #136, part of #143): the Snapshots panel compares again after a restore's
+  rescan; a restore names the files it recreated (`created`), which its undo cannot remove; the
+  Restore bar is sticky.
+- **510f4db** (#130, #133): runtime folders such as `skills/.trash` go to `other`, never an entry;
+  another OS's managed folder is no watch gap; a muted-only bar can be dismissed; the delete banner
+  leads with local time and clears when the file is restored. Not changed, said in the commit: the
+  "77,091 px" line scrolls inside its block, and the tree pane is resizable.
+- **2c7a1f0** (#144): a folder that is a link (a junction) is walked, since Claude Code loads skills
+  and agents through one (measured); each file notes the link; a link to a UNC share is listed, not
+  walked (`readlink`, never touching the share). The file viewer now shows every entry's note.
+- **d4ac237** (#142, #145): restore matches paths as the fence does and fails what it cannot match;
+  every refusal carries a code; a settings or `.mcp.json` file must be an object; the command
+  template's `$ARGUMENTS` is a real placeholder.
+- **7bd582e** (#124): the CLI fits the terminal's width (done by a subagent in a tree copy, reviewed;
+  the settings dump is cut only on a terminal). **4588b0f** (#151): `layercake session` too.
+
+Filed and open: #150 (a restore failed once under four parallel smoke runs; not reproduced).
+Owner decisions open: **#143** (full-width Snapshots panel; recommended yes) and #126 (plugin cache
+files editable?). Owner-facing, not an issue: `context7` sits only in `~/.claude/.mcp.json`, which no
+session reads (told on Telegram and in the terminal).
+
+Everything else open is (b), platform-only, or a question: `gh issue list`.
+
+**Mutants:** `mutate-125.mjs` in this session's scratchpad holds all 35 of the evening and night
+rounds; on the final tree the control passed 352 and every one was caught.
 
 ### 2026-09-27, evening: the views now match what Claude Code loads (#125, #120 to #123, #149)
 
@@ -138,17 +171,11 @@ Filed #111 to #145. Shipped and closed, each commit message listing its checks a
 
 **Suggested order for what is open** (the issues hold the detail; all reachable in ordinary use
 unless marked):
-Done since: #137, #118, #119, #135, #129, #131, #138 (30-day retention), #140, part of #143,
-and all of item 1: #125, #120, #121, #122, #123, plus #149 (sections above).
-1. (done)
-2. Snapshots: #132, #139 (a refused over-cap edit still leaves an empty snapshot), #141 (delete
-   removes a read-only file), #136 (restore of a recreated file is not undoable; disclosed in the CLI,
-   open in the UI), and what is left of #143 (sticky Restore bar, full-width panel).
-3. UI: #130, #133.
-4. #144 (junctioned skill folder): first confirm Claude Code loads skills through a junction.
-5. (b) or small: #142, #145, #124. Platform or managed-machine only: #146, #147.
+All done (2026-09-27 and 28, sections above): #137, #118, #119, #135, #129, #131, #138, #140,
+#125, #120 to #124, #130, #132, #133, #136, #139, #141, #142, #144, #145, #149, #151; #143 all but
+the full-width question. Still open from this list: platform or managed-machine only, #146, #147.
 
-Owner question still open: #126 (plugin cache files editable?).
+Owner questions still open: #143 (full-width Snapshots panel) and #126 (plugin cache files editable?).
 
 **A process slip, disclosed to the owner:** the first exe check on 2026-09-26 (21:58) did not set
 `LAYERCAKE_BROWSER_PROFILE_DIR`, so its Edge wrote into the real `%LOCALAPPDATA%\LayerCake\browser`
@@ -548,4 +575,5 @@ Windows and tooling specifics, on top of what `C:\dev\CLAUDE.md` already documen
 4. Smoke never runs the exe. After touching `server/app.js`, `desktop/` or `client/`, run
    `npm run build:exe` and launch `dist\LayerCake.exe` with `Start-Process` (as Explorer would),
    with every data folder and `LAYERCAKE_BROWSER_PROFILE_DIR` redirected.
-5. Pick up the suggested order in the 2026-09-26 to 27 section, at item 2 (snapshots).
+5. The suggested order in the 2026-09-26 to 27 section is done. Ask the owner about #143 and #126,
+   then take what `gh issue list` shows by reachability: (a) first; (b) only if it is cheap.
