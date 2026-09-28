@@ -9,7 +9,33 @@ import { computeHealth } from '../server/health.js';
 import { samePathKey } from '../server/paths.js';
 import { discoverSessions, getReader, liveSessions, retentionDays } from '../server/sessions.js';
 import { sessionCard } from '../server/summaries.js';
-import { elide, out, padEnd, paint, plural, shortenPath } from './format.js';
+import { elide, out, padEnd, paint, plural, shortenPath, termWidth, width } from './format.js';
+
+/** Where a labelled value starts: 'Activity' and two spaces. */
+const HANG = ' '.repeat(10);
+
+/**
+ * Prints a labelled line, wrapped at spaces to the terminal's width with the
+ * value's later lines hung under the value, not the label (#151). Measured by
+ * visible width, so painted text wraps where it looks as if it should.
+ */
+function labelled(text) {
+  const w = termWidth();
+  if (width(text) <= w) {
+    out(text);
+    return;
+  }
+  let line = '';
+  for (const word of text.split(' ')) {
+    if (width(line.trim()) && width(line) + 1 + width(word) > w) {
+      out(line);
+      line = `${HANG}${word}`;
+    } else {
+      line = line ? `${line} ${word}` : word;
+    }
+  }
+  if (line) out(line);
+}
 
 function tokens(n) {
   if (n == null) return '-';
@@ -59,7 +85,7 @@ export async function runSession(dir, { list = false, home }) {
     out(paint.bold(`${plural(rows.length, 'session')} in ${shortenPath(dir, home)}`));
     for (const r of rows) {
       const mark = r.live ? paint.green('●') : ' ';
-      out(`${mark} ${padEnd(ago(r.card.lastAt), 13)} ${padEnd(plural(r.card.prompts, 'prompt'), 11)} ${elide(r.card.title, 70)}`);
+      out(`${mark} ${padEnd(ago(r.card.lastAt), 13)} ${padEnd(plural(r.card.prompts, 'prompt'), 11)} ${elide(r.card.title, Math.max(20, termWidth() - 29))}`);
     }
     return;
   }
@@ -71,24 +97,24 @@ export async function runSession(dir, { list = false, home }) {
   const label = health.states.find((s) => s.state === health.state)?.label || health.state;
   const c = health.context;
 
-  out(`${paint.bold('Session')}   ${card.title}  ${paint.dim(card.titleSource === 'ai' ? '(title by Claude Code)' : card.titleSource === 'custom' ? '(your title)' : '(first prompt)')}`);
-  out(`${paint.bold('State')}     ${(STATE_PAINT[health.state] || ((s) => s))(label)}  ${paint.dim(health.reasons.join('; '))}`);
-  out(`${paint.bold('Model')}     ${model.modelName || model.modelId || Object.keys(model.models)[0] || '-'}${model.effort ? `, effort ${model.effort}` : ''}${model.permissionMode ? `, ${model.permissionMode} mode` : ''}  ${paint.dim(`Claude Code ${model.version || '?'}`)}`);
+  labelled(`${paint.bold('Session')}   ${card.title}  ${paint.dim(card.titleSource === 'ai' ? '(title by Claude Code)' : card.titleSource === 'custom' ? '(your title)' : '(first prompt)')}`);
+  labelled(`${paint.bold('State')}     ${(STATE_PAINT[health.state] || ((s) => s))(label)}  ${paint.dim(health.reasons.join('; '))}`);
+  labelled(`${paint.bold('Model')}     ${model.modelName || model.modelId || Object.keys(model.models)[0] || '-'}${model.effort ? `, effort ${model.effort}` : ''}${model.permissionMode ? `, ${model.permissionMode} mode` : ''}  ${paint.dim(`Claude Code ${model.version || '?'}`)}`);
   if (c.tokens != null) {
-    out(`${paint.bold('Context')}   ${tokens(c.tokens)} of ${tokens(c.window)} (${Math.round(c.pct * 100)}%)  ${paint.dim('estimated from the last API call')}`);
+    labelled(`${paint.bold('Context')}   ${tokens(c.tokens)} of ${tokens(c.window)} (${Math.round(c.pct * 100)}%)  ${paint.dim('estimated from the last API call')}`);
   }
-  out(
+  labelled(
     `${paint.bold('Activity')}  ${card.prompts} prompts, ${card.tools} tool calls` +
       `${model.toolFailures ? ` (${model.toolFailures} failed)` : ''}, ${card.filesEdited} files edited,` +
       ` ${card.subagents} subagents, ${card.compactions} compactions, ${card.errors} API errors`
   );
-  if (model.mcp.failed.length) out(`${paint.bold('MCP')}       ${paint.yellow(`failed to connect: ${model.mcp.failed.join(', ')}`)}`);
+  if (model.mcp.failed.length) labelled(`${paint.bold('MCP')}       ${paint.yellow(`failed to connect: ${model.mcp.failed.join(', ')}`)}`);
   const atStart = model.instructions.filter((i) => i.reason === 'session_start').map((i) => shortenPath(i.path, home));
   const later = model.instructions.filter((i) => i.reason !== 'session_start').map((i) => shortenPath(i.path, home));
-  out(`${paint.bold('Memory')}    loaded at start: ${atStart.join(', ') || 'none recorded'}`);
-  if (later.length) out(`          loaded later: ${later.join(', ')}`);
+  labelled(`${paint.bold('Memory')}    loaded at start: ${atStart.join(', ') || 'none recorded'}`);
+  if (later.length) labelled(`          loaded later: ${later.join(', ')}`);
   const lastPrompt = [...model.turns].reverse().find((t) => t.kind === 'prompt');
-  if (lastPrompt) out(`${paint.bold('Last')}      ${elide(lastPrompt.text.replace(/\s+/g, ' ').trim(), 90)}  ${paint.dim(ago(lastPrompt.at))}`);
-  if (card.recaps.length) out(`${paint.bold('Recap')}     ${elide(card.recaps[card.recaps.length - 1].text.replace(/\s+/g, ' '), 200)}`);
+  if (lastPrompt) labelled(`${paint.bold('Last')}      ${elide(lastPrompt.text.replace(/\s+/g, ' ').trim(), 90)}  ${paint.dim(ago(lastPrompt.at))}`);
+  if (card.recaps.length) labelled(`${paint.bold('Recap')}     ${elide(card.recaps[card.recaps.length - 1].text.replace(/\s+/g, ' '), 200)}`);
   if (rows.length > 1) out(paint.dim(`\n${plural(rows.length - 1, 'other session')} here: layercake session --list`));
 }
