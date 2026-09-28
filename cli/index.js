@@ -54,22 +54,24 @@ Usage
   layercake <command> [options]
 
 Commands
-  here [dir]                     compact summary of the effective environment
-  tree [dir] [--all]             the full lineage, level by level
-  show <kind> [dir]              one flattened view: ${VIEW_KINDS.join(', ')}
-  backup [dir] [--label text]    snapshot every config file in the lineage
-  snapshots                      list snapshots, newest first
-  diff <snapshotId> [dir]        compare a snapshot against what is on disk now
-  restore <snapshotId> [dir]     restore from a snapshot, dry run by default
-  session [dir] [--list]         the current Claude Code session here: state, context, memory loaded
+  here [dir]                   compact summary of the effective environment
+  tree [dir] [--all]           the full lineage, level by level
+  show <kind> [dir]            one flattened view, where kind is one of
+                               ${VIEW_KINDS.join(', ')}
+  backup [dir] [--label text]  snapshot every config file in the lineage
+  snapshots                    list snapshots, newest first
+  diff <snapshotId> [dir]      compare a snapshot against what is on disk now
+  restore <snapshotId> [dir]   restore from a snapshot, dry run by default
+  session [dir] [--list]       the current Claude Code session here: state,
+                               context, memory loaded
 
   dir defaults to the current directory.
   Run layercake <command> --help for the options of one command.
 
 Environment
-  LAYERCAKE_SNAPSHOT_DIR              where snapshots live
-  CLAUDE_EXPLORER_DIR_TIMEOUT_MS      per-operation filesystem timeout, default 3000
-  NO_COLOR                            disable ANSI color
+  LAYERCAKE_SNAPSHOT_DIR          where snapshots live
+  CLAUDE_EXPLORER_DIR_TIMEOUT_MS  per-operation filesystem timeout, default 3000
+  NO_COLOR                        disable ANSI color
 
 Exit codes
   0  the command ran, including a scan that reported per-level errors
@@ -152,8 +154,8 @@ Options
   restore: `layercake restore <snapshotId> [dir] [--only text]... [--yes]
 
 Restore files from a snapshot. Dry run by default: it prints exactly which files
-would be written and changes nothing. Files already identical to the snapshot are
-never rewritten.
+would be written and changes nothing. Files already identical to the snapshot
+are never rewritten.
 
 Files Claude Code rewrites as it runs (~/.claude.json and the plugin manifests)
 are left out unless named: they nearly always differ, and rolling one back rolls

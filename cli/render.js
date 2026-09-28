@@ -14,17 +14,23 @@
 
 import path from 'node:path';
 
+import { CLAUDE_DIR_TREES } from '../server/paths.js';
 import {
   bytes,
   columns,
+  columnWidths,
   elide,
+  elidePath,
+  fitColumns,
   localTime,
   out,
   padEnd,
+  padStart,
   paint,
   plural,
   shortenPath,
   termWidth,
+  width,
 } from './format.js';
 /** How many extra routes reached the files behind one name (flatten's alsoReachedFrom). */
 function otherRoutes(definitions) {
@@ -39,21 +45,84 @@ function clamp(text, max) {
   return value.length <= max ? value : `${value.slice(0, Math.max(4, max - 3))}...`;
 }
 
-/** Greedy wrap. Rule text is prose, so word boundaries are the only break points. */
+/**
+ * Greedy wrap. Rule text is prose, so word boundaries are the only break points.
+ * Measured by visible width, so text that was painted before it was wrapped
+ * breaks where it looks as if it should (#124). A word longer than `max` is
+ * left whole on a line of its own rather than cut.
+ */
 function wrapText(text, max, indent = '') {
   const words = String(text).split(/\s+/).filter(Boolean);
   const lines = [];
   let line = '';
   for (const word of words) {
-    if (line && line.length + 1 + word.length > max) {
+    // A bare escape code (the tail of a painted run) joins its line unspaced.
+    if (width(word) === 0) {
+      line += word;
+    } else if (width(line) && width(line) + 1 + width(word) > max) {
       lines.push(line);
       line = word;
     } else {
-      line = line ? `${line} ${word}` : word;
+      line = width(line) ? `${line} ${word}` : `${line}${word}`;
     }
   }
   if (line) lines.push(line);
   return lines.map((l) => `${indent}${l}`);
+}
+
+/**
+ * Prints `text` after `lead` on one line when it fits the terminal, else wraps
+ * it at spaces, the first line after `lead` and the rest after `hang` (#124).
+ * A line that fits is printed untouched, which keeps a padded column's spacing.
+ */
+function fitLine(lead, text, hang = lead) {
+  const w = termWidth();
+  if (width(lead) + width(text) <= w) {
+    out(`${lead}${text}`);
+    return;
+  }
+  wrapText(text, w - Math.max(width(lead), width(hang))).forEach((line, i) => out(`${i ? hang : lead}${line}`));
+}
+
+/**
+ * A path, then a short note beside it (#124). The path gives way first, by
+ * middle elision, down to half the line; past that the note goes on the lines
+ * below, after `hang`, and the path keeps the whole line. Either way the note
+ * is printed whole: it is a code, a scope or a reason, not decoration.
+ */
+function pathWithNote(lead, pathText, note, hang, painter = (t) => t) {
+  const w = termWidth();
+  const line = w - width(lead);
+  const room = line - (note ? 2 + width(note) : 0);
+  if (!note || pathText.length <= room || room >= line / 2) {
+    out(`${lead}${painter(elidePath(pathText, Math.max(20, room)))}${note ? `  ${painter(note)}` : ''}`);
+    return;
+  }
+  out(`${lead}${painter(elidePath(pathText, line))}`);
+  for (const l of wrapText(note, w - width(hang))) out(`${hang}${painter(l)}`);
+}
+
+/**
+ * Header fields, `sep` apart, on as few lines as the terminal allows (#124). A
+ * field moves to the next line whole rather than being cut; one wider than the
+ * terminal on its own is wrapped at its spaces.
+ */
+function packFields(fields, sep = '   ') {
+  const w = termWidth();
+  const lines = [];
+  let line = '';
+  for (const field of fields.filter(Boolean)) {
+    if (line && width(line) + sep.length + width(field) <= w) {
+      line = `${line}${sep}${field}`;
+      continue;
+    }
+    if (line) lines.push(line);
+    const parts = width(field) > w ? wrapText(field, w) : [field];
+    lines.push(...parts.slice(0, -1));
+    line = parts[parts.length - 1];
+  }
+  if (line) lines.push(line);
+  return lines;
 }
 
 function printRule(rule) {
@@ -69,11 +138,11 @@ function statusPaint(status) {
 }
 
 function labelled(label, value) {
-  out(`${padEnd(paint.bold(label), LABEL)}${value}`);
+  fitLine(padEnd(paint.bold(label), LABEL), value, ' '.repeat(LABEL));
 }
 
 function continued(value) {
-  out(`${' '.repeat(LABEL)}${value}`);
+  fitLine(' '.repeat(LABEL), value);
 }
 
 /**
@@ -91,13 +160,14 @@ export function renderHere(summary) {
   const w = termWidth();
 
   out(paint.bold(summary.projectDir));
-  out(
-    paint.dim(
-      `${summary.platform}   home ${home}   scanned ${localTime(summary.scannedAt)}   ` +
-        `${plural(summary.fileCount, 'config file')}${reachedTwice(summary.repeatedFileCount)} ` +
-        `across ${plural(summary.levels.total, 'level')}`
-    )
-  );
+  const header = packFields([
+    summary.platform,
+    `home ${home}`,
+    `scanned ${localTime(summary.scannedAt)}`,
+    `${plural(summary.fileCount, 'config file')}${reachedTwice(summary.repeatedFileCount)} ` +
+      `across ${plural(summary.levels.total, 'level')}`,
+  ]);
+  for (const line of header) out(paint.dim(line));
   out();
 
   // Weakest first, which is the order Claude Code reads them and therefore the
@@ -105,8 +175,11 @@ export function renderHere(summary) {
   const shown = summary.instructions.slice(0, 5);
   labelled('Instructions', `${plural(summary.instructions.length, 'file')}, weakest first`);
   shown.forEach((file, i) => {
-    const flag = file.error ? paint.red(`  ${file.error.code}`) : '';
-    continued(`${paint.dim(String(i + 1).padStart(2))} ${elide(shortenPath(file.path, home), w - LABEL - 6)}${flag}`);
+    const flag = file.error ? `  ${file.error.code}` : '';
+    const room = w - LABEL - 3 - flag.length;
+    continued(
+      `${paint.dim(String(i + 1).padStart(2))} ${elidePath(shortenPath(file.path, home), room)}${flag ? paint.red(flag) : ''}`
+    );
   });
   if (summary.instructions.length > shown.length) {
     continued(paint.dim(`   +${summary.instructions.length - shown.length} more, see: layercake show claude-md`));
@@ -175,7 +248,7 @@ export function renderHere(summary) {
           (summary.settings.notRead ? paint.dim(`, ${summary.settings.notRead} found but not read by Claude Code`) : '')
   );
   for (const [key, value] of summary.settings.highlights) {
-    continued(`${paint.dim(padEnd(key, 14))} ${value}`);
+    fitLine(`${' '.repeat(LABEL)}${paint.dim(padEnd(key, 14))} `, value, ' '.repeat(LABEL + 15));
   }
 
   labelled(
@@ -193,25 +266,61 @@ export function renderHere(summary) {
 
 /* ------------------------------------------------------------------ tree -- */
 
+/**
+ * The name cell of a tree row: its path relative to the level, or, for a
+ * plugin's file, the plugin's name and then its path inside the installed
+ * version, as the page labels it (#124). The cache\<marketplace>\<plugin>\
+ * <version> folders above it are the part a narrow terminal elided, and two
+ * plugins' agents\frontend-developer.md then read the same. The name is never
+ * elided, only the path after it, so a plugin row is a function of its room.
+ * The category's own folder (agents\, skills\) is left off too, since the
+ * category heads the group: it is the room a skill's folder name needs to
+ * tell two skills' references\details.md apart.
+ */
+function entryLabel(entry, home) {
+  // relPath is relative to the level's directory, so a target that sits
+  // beside that directory rather than inside it (~/.claude.json against the
+  // ~/.claude level) comes back as `..\name`. Show those absolute instead:
+  // a leading `..` reads as a mistake when the point is where the file is.
+  if (entry.relPath.startsWith('..')) return shortenPath(entry.absPath, home);
+  if (!entry.plugin) return entry.relPath;
+  // scan.js sets `plugin` to <marketplace>/<plugin> for a file under
+  // cache\<marketplace>\<plugin>\<version>\. A path of any other shape is
+  // shown as scanned rather than guessed at.
+  const [market, folder] = entry.plugin.split('/');
+  const parts = entry.relPath.split(/[\\/]/);
+  if (parts.length < 5 || parts[1] !== market || parts[2] !== folder) return entry.relPath;
+  const tree = CLAUDE_DIR_TREES.find((t) => t.category === entry.category);
+  const inside = parts.slice(tree && parts.length > 5 && parts[4] === tree.name ? 5 : 4).join(path.sep);
+  const lead = `${entry.pluginName || folder} > `;
+  return (room) => `${lead}${elidePath(inside, room - lead.length)}`;
+}
+
 export function renderTree(lineage, { all }) {
   const home = lineage.home;
   const w = termWidth();
   out(paint.bold(lineage.projectDir));
-  out(
-    paint.dim(
-      `${plural(lineage.summary.levelCount, 'level')}, ` +
-        `${plural(lineage.summary.fileCount, 'file')}${reachedTwice(lineage.summary.repeatedFileCount)}, ` +
-        `${plural(lineage.summary.errorCount, 'error')}, ${lineage.summary.redactedCount} redacted   ` +
-        `${lineage.platform}   scanned ${localTime(lineage.scannedAt)}`
-    )
-  );
+  const header = packFields([
+    `${plural(lineage.summary.levelCount, 'level')}, ` +
+      `${plural(lineage.summary.fileCount, 'file')}${reachedTwice(lineage.summary.repeatedFileCount)}, ` +
+      `${plural(lineage.summary.errorCount, 'error')}, ${lineage.summary.redactedCount} redacted`,
+    lineage.platform,
+    `scanned ${localTime(lineage.scannedAt)}`,
+  ]);
+  for (const line of header) out(paint.dim(line));
   if (!all) out(paint.dim('probed-but-absent paths hidden, pass --all to show them'));
   out();
 
+  // The label and status columns are as wide as this lineage needs, and the
+  // directory takes the rest of the line (#124); a fixed 34 and 48 let a
+  // header reach 98 characters whatever the terminal.
+  const labelWidth = Math.max(...lineage.levels.map((l) => l.label.length));
+  const statusWidth = Math.max(...lineage.levels.map((l) => l.status.length + 2));
   for (const level of lineage.levels) {
     const index = paint.dim(String(level.precedence).padStart(2, '0'));
-    const dir = level.dir ? paint.dim(elide(shortenPath(level.dir, home), 48)) : '';
-    out(`${index}  ${padEnd(paint.bold(level.label), 34)} ${padEnd(statusPaint(level.status), 10)} ${dir}`);
+    const lead = `${index}  ${padEnd(paint.bold(level.label), labelWidth)}  ${padEnd(statusPaint(level.status), statusWidth)}  `;
+    const dir = level.dir ? paint.dim(elidePath(shortenPath(level.dir, home), Math.max(20, w - width(lead)))) : '';
+    out(`${lead}${dir}`.replace(/\s+$/, ''));
     if (all && level.note) {
       for (const line of wrapText(level.note, Math.max(40, w - 8), '      ')) out(paint.dim(line));
     }
@@ -225,15 +334,8 @@ export function renderTree(lineage, { all }) {
     }
     for (const [category, entries] of groups) {
       out(`    ${paint.cyan(category)} ${paint.dim(`(${entries.length})`)}`);
-      // relPath is relative to the level's directory, so a target that sits
-      // beside that directory rather than inside it (~/.claude.json against the
-      // ~/.claude level) comes back as `..\name`. Show those absolute instead:
-      // a leading `..` reads as a mistake when the point is where the file is.
       const rows = entries.map((entry) => [
-        elide(
-          entry.relPath.startsWith('..') ? shortenPath(entry.absPath, home) : entry.relPath,
-          Math.max(20, w - 26)
-        ),
+        entryLabel(entry, home),
         entry.type === 'dir' ? paint.dim('dir') : paint.dim(bytes(entry.size)),
         entry.error
           ? paint.red(entry.error.code)
@@ -243,7 +345,7 @@ export function renderTree(lineage, { all }) {
               ? paint.yellow('sensitive')
               : '',
       ]);
-      for (const line of columns(rows)) out(`      ${line}`);
+      for (const line of fitColumns(rows, w - 6)) out(`      ${line}`);
     }
 
     // Errors are never hidden. A level that half-scanned is a fact about the
@@ -251,14 +353,37 @@ export function renderTree(lineage, { all }) {
     if (level.errors.length) {
       out(`    ${paint.red('errors')} ${paint.dim(`(${level.errors.length})`)}`);
       for (const e of level.errors) {
-        out(`      ${elide(shortenPath(e.path, home), Math.max(20, w - 30))}  ${paint.red(e.code)} ${paint.dim(e.message)}`);
+        const where = shortenPath(e.path, home);
+        const code = String(e.code ?? '');
+        const message = String(e.message ?? '');
+        if (6 + where.length + 2 + code.length + 1 + message.length <= w) {
+          out(`      ${where}  ${paint.red(code)} ${paint.dim(message)}`);
+          continue;
+        }
+        // A system message often repeats the path, so it gets lines of its own.
+        pathWithNote('      ', where, code, '        ', paint.red);
+        for (const line of wrapText(message, w - 8, '        ')) out(paint.dim(line));
       }
     }
 
     if (level.other.length) {
       out(`    ${paint.dim('other')} ${paint.dim(`(${level.other.length})`)}`);
-      for (const o of level.other) {
-        out(`      ${padEnd(o.name + (o.type === 'dir' ? path.sep : ''), 28)} ${paint.dim(o.note || '')}`);
+      const name = (o) => o.name + (o.type === 'dir' ? path.sep : '');
+      const lines = level.other.map((o) => `      ${padEnd(name(o), 28)} ${paint.dim(o.note || '')}`);
+      if (lines.every((line) => width(line) <= w)) {
+        for (const line of lines) out(line);
+      } else {
+        // Too wide to sit beside the names (a plugin's uninstalled cached
+        // versions carry a sentence each): the names one per line and each
+        // note wrapped under the run of names it applies to, once, as the MCP
+        // view gives a repeated reason once (#121).
+        level.other.forEach((o, i) => {
+          out(`      ${elidePath(name(o), w - 6)}`);
+          const next = level.other[i + 1];
+          if (o.note && next?.note !== o.note) {
+            for (const line of wrapText(o.note, w - 8, '        ')) out(paint.dim(line));
+          }
+        });
       }
     }
 
@@ -266,13 +391,13 @@ export function renderTree(lineage, { all }) {
       if (level.absent.length) {
         out(`    ${paint.dim('absent')} ${paint.dim(`(${level.absent.length})`)}`);
         for (const a of level.absent) {
-          out(paint.dim(`      ${elide(shortenPath(a.absPath, home), Math.max(20, w - 20))}`));
+          out(paint.dim(`      ${elidePath(shortenPath(a.absPath, home), w - 6)}`));
         }
       }
       if (level.redacted.length) {
         out(`    ${paint.yellow('redacted')} ${paint.dim(`(${level.redacted.length})`)}`);
         for (const r of level.redacted) {
-          out(`      ${paint.dim(elide(shortenPath(r.absPath, home), 60))}  ${paint.dim(r.reason)}`);
+          pathWithNote('      ', shortenPath(r.absPath, home), r.reason, '        ', paint.dim);
         }
       }
     }
@@ -296,7 +421,10 @@ function renderMemoryView(view, lineage) {
     // Not a markdown heading: the file bodies below are markdown and routinely
     // contain their own ### headings, so a marker that could be mistaken for
     // one would make the level boundaries invisible in a piped, colorless read.
-    out(paint.cyan(`===== ${shortenTitle(section.title, lineage.home)} =====`));
+    // The closing marker is dropped when it would not fit (#124); the opening
+    // one is what marks the boundary, and the title holds a directory.
+    const marker = `===== ${shortenTitle(section.title, lineage.home)}`;
+    out(paint.cyan(marker.length + 6 <= termWidth() ? `${marker} =====` : marker));
     if (section.repeatedNote) {
       out(paint.dim(`  ${section.repeatedNote}`));
       for (const repeated of section.repeatedPaths || []) {
@@ -325,6 +453,92 @@ function shortenTitle(title, home) {
   return home ? text.replace(home, shortenPath(home, home)) : text;
 }
 
+/** One string value on a line of JSON.stringify(value, null, 2): indent, optional key, the string, a comma. */
+const JSON_STRING_LINE = /^(\s*(?:"(?:[^"\\]|\\.)*": )?)"((?:[^"\\]|\\.)*)"(,?)$/;
+
+/**
+ * One line of the merge dump, cut to `max` when a long string value is what
+ * makes it wide: #124 met a 9,811-character allow rule with a newline in it.
+ * The value keeps its opening, the cut is marked with an ellipsis, and the
+ * note beside it gives the value's real length and, when it holds newlines,
+ * its line count, so a cut value is never taken for the whole one.
+ * JSON.stringify has already escaped every newline, so a line of the dump is
+ * one line on the terminal. A line that is not a string value, or whose width
+ * comes from its key rather than its value, is left as is.
+ */
+function clampJsonLine(line, max) {
+  if (line.length <= max) return line;
+  const match = JSON_STRING_LINE.exec(line);
+  if (!match) return line;
+  const [, lead, body, comma] = match;
+  const value = JSON.parse(`"${body}"`);
+  const lines = value.split(/\r\n|\r|\n/).length;
+  const note = `(${plural(value.length, 'character')}${lines > 1 ? `, ${lines} lines` : ''})`;
+  // Quote, ellipsis, quote, the comma, two spaces, the note.
+  const room = Math.max(8, max - lead.length - 5 - comma.length - 2 - note.length);
+  if (body.length <= room) return line;
+  // Never end inside an escape: half of \" or \u0000 would print as a stray backslash.
+  let head = body.slice(0, room).replace(/\\u[0-9a-fA-F]{0,3}$/, '');
+  if ((/\\+$/.exec(head)?.[0].length ?? 0) % 2) head = head.slice(0, -1);
+  return `${lead}"${head}..."${comma}  ${paint.dim(note)}`;
+}
+
+/**
+ * A dotted key in lines of at most `max`, broken after a dot as the page breaks
+ * it (#129), a part longer than a line cut where it must be. Lines after the
+ * first are indented two, so a continuation does not read as a key of its own.
+ */
+function breakKey(key, max) {
+  if (key.length <= max) return [key];
+  const lines = [];
+  let line = '';
+  const room = () => Math.max(8, lines.length ? max - 2 : max);
+  for (const part of key.split(/(?<=\.)/)) {
+    if (line && line.length + part.length > room()) {
+      lines.push(line);
+      line = '';
+    }
+    line += part;
+    while (line.length > room()) {
+      const cut = room();
+      lines.push(line.slice(0, cut));
+      line = line.slice(cut);
+    }
+  }
+  if (line) lines.push(line);
+  return lines.map((l, i) => (i ? `  ${l}` : l));
+}
+
+/**
+ * The provenance table (#124): each key, how it merged, and the settings level
+ * (user, project, local, managed) it came from, whose file Sources names. A
+ * combined list names every level that added to it with its count, on one line
+ * when they fit and one per line when not, so a count is never elided away. A
+ * key too long for its column breaks after a dot onto the lines below.
+ */
+function provenanceLines(provenance, max) {
+  const mode = (p) =>
+    p.mode === 'concat' ? paint.yellow('combined') : p.mode === 'replace' ? paint.yellow('taken whole') : paint.dim(p.mode);
+  const froms = (p) => p.sources.map((s) => (p.mode === 'concat' ? `${s.source} +${s.added.length}` : s.source));
+  const modeWidth = Math.max(...provenance.map((p) => width(mode(p))));
+  const fromWidth = Math.max(...provenance.flatMap((p) => froms(p).map((f) => f.length)));
+  const keyWidth = Math.min(
+    Math.max(...provenance.map((p) => p.keyPath.length)),
+    Math.max(20, max - modeWidth - fromWidth - 4)
+  );
+  const lines = [];
+  for (const p of provenance) {
+    const keys = breakKey(p.keyPath, keyWidth);
+    const joined = froms(p).join(', ');
+    const from = keyWidth + modeWidth + 4 + joined.length <= max ? [joined] : froms(p);
+    for (let i = 0; i < Math.max(keys.length, from.length); i += 1) {
+      const line = `${padEnd(keys[i] || '', keyWidth)}  ${padEnd(i === 0 ? mode(p) : '', modeWidth)}  ${from[i] || ''}`;
+      lines.push(line.replace(/\s+$/, ''));
+    }
+  }
+  return lines;
+}
+
 function renderSettingsView(view, lineage) {
   const w = termWidth();
   out(paint.bold(view.heading));
@@ -345,40 +559,38 @@ function renderSettingsView(view, lineage) {
       status(file),
     ]);
   if (sourceRows.length === 0) out(paint.dim('  none'));
-  for (const line of columns(sourceRows)) out(`  ${line}`);
+  for (const line of fitColumns(sourceRows, w - 2, { flex: 1, spill: true })) out(`  ${line}`);
 
   const notRead = files.filter((file) => !file.sources.length);
   if (notRead.length) {
     out();
     out(paint.cyan('Found but not read by Claude Code'));
     for (const file of notRead) {
-      out(`  ${shortenPath(file.path, lineage.home)}`);
-      out(paint.dim(`    ${file.notRead}`));
+      out(`  ${elidePath(shortenPath(file.path, lineage.home), w - 2)}`);
+      for (const line of wrapText(file.notRead, w - 4, '    ')) out(paint.dim(line));
     }
   }
   const repeated = view.sections.flatMap((section) => section.repeatedPaths || []);
   if (repeated.length) {
-    out(paint.dim(`  ${plural(repeated.length, 'file')} reached again by the directory walk, listed once above.`));
+    fitLine('  ', paint.dim(`${plural(repeated.length, 'file')} reached again by the directory walk, listed once above.`));
   }
   out();
 
   out(paint.cyan('Effective merge'));
-  out(JSON.stringify(view.merged, null, 2));
+  // Cut only on a terminal, where the reader is a person: redirected to a file
+  // or a pipe the merge is data, and a cut value would silently lose it.
+  for (const line of JSON.stringify(view.merged, null, 2).split('\n')) {
+    out(process.stdout.isTTY ? clampJsonLine(line, w) : line);
+  }
   out();
 
   out(paint.cyan('Which file supplied each key'));
-  const provRows = view.provenance.map((p) => [
-    p.keyPath,
-    p.mode === 'concat' ? paint.yellow('combined') : p.mode === 'replace' ? paint.yellow('taken whole') : paint.dim(p.mode),
-    elide(
-      p.sources.map((s) => (p.mode === 'concat' ? `${s.source} +${s.added.length}` : s.source)).join(', '),
-      Math.max(24, w - 60)
-    ),
-  ]);
-  if (provRows.length === 0) out(paint.dim('  nothing merged'));
-  for (const line of columns(provRows)) out(`  ${line}`);
+  if (view.provenance.length === 0) out(paint.dim('  nothing merged'));
+  else for (const line of provenanceLines(view.provenance, w - 2)) out(`  ${line}`);
   for (const row of view.ignored || []) {
-    out(paint.yellow(`  ${row.keyPath} in ${shortenPath(row.file, lineage.home)}: ${row.reason}`));
+    // The path sized so "key in path:" stays on the first line and the reason wraps below.
+    const where = elidePath(shortenPath(row.file, lineage.home), Math.max(20, w - 9 - row.keyPath.length));
+    fitLine('  ', paint.yellow(`${row.keyPath} in ${where}: ${row.reason}`), '    ');
   }
 }
 
@@ -400,19 +612,20 @@ function renderDefinitionsView(view, lineage) {
     const routes = otherRoutes(group.definitions);
     const flag = group.shadowed ? paint.yellow(`  shadows ${others.length}`) : '';
     const dup = routes ? paint.dim(`  (also reached by ${plural(routes, 'other route')})`) : '';
-    out(`  ${paint.bold(group.name)}${flag}${dup}`);
-    out(paint.dim(`    ${shortenPath(group.winner.path, lineage.home)}`));
+    fitLine('  ', `${paint.bold(group.name)}${flag}${dup}`, '    ');
+    out(paint.dim(`    ${elidePath(shortenPath(group.winner.path, lineage.home), w - 4)}`));
     if (group.winner.description) {
       out(paint.dim(`    ${clamp(group.winner.description, Math.max(30, w - 6))}`));
     }
     for (const def of others) {
-      out(paint.dim(`    shadowed: ${shortenPath(def.path, lineage.home)}`));
+      out(paint.dim(`    shadowed: ${elidePath(shortenPath(def.path, lineage.home), w - 14)}`));
     }
   }
   if (view.groups.length === 0) out(paint.dim('  none found'));
 }
 
 function renderMcpView(view, lineage) {
+  const w = termWidth();
   out(paint.bold(view.heading));
   printRule(view.rule);
   out();
@@ -430,10 +643,12 @@ function renderMcpView(view, lineage) {
           : '',
   ]);
   if (rows.length === 0) out(paint.dim('  none'));
-  for (const line of columns(rows)) out(`  ${line}`);
+  // The path is what a source is, so a long one spills onto its own line
+  // rather than being cut down to the room the status leaves it (#124).
+  for (const line of fitColumns(rows, w - 2, { spill: true })) out(`  ${line}`);
   // The reason once per distinct note, since it is usually the same one (#121).
   for (const note of new Set(view.sources.filter((s) => s.notRead).map((s) => s.notRead))) {
-    for (const line of wrapText(note, Math.max(40, termWidth() - 4), '  ')) out(paint.dim(line));
+    for (const line of wrapText(note, Math.max(40, w - 4), '  ')) out(paint.dim(line));
   }
   out();
 
@@ -445,15 +660,24 @@ function renderMcpView(view, lineage) {
     const others = server.definitions.slice(1);
     const routes = otherRoutes(server.definitions);
     const target = winner.command || winner.url || '';
-    out(
-      `  ${padEnd(paint.bold(server.name), 28)} ${padEnd(winner.transport || paint.dim('unknown'), 10)} ` +
-        `${paint.dim(elide(target, Math.max(20, termWidth() - 60)))}` +
-        (server.shadowed ? paint.yellow(`  shadows ${others.length}`) : '') +
-        (routes ? paint.dim(`  (also reached by ${plural(routes, 'other route')})`) : '')
-    );
-    out(paint.dim(`    ${shortenPath(winner.path, lineage.home)}  (${winner.scope})`));
+    const lead = `  ${padEnd(paint.bold(server.name), 28)} ${padEnd(winner.transport || paint.dim('unknown'), 10)} `;
+    const flags = [
+      server.shadowed ? paint.yellow(`shadows ${others.length}`) : '',
+      routes ? paint.dim(`(also reached by ${plural(routes, 'other route')})`) : '',
+    ]
+      .filter(Boolean)
+      .join('  ');
+    // The flags go below the target when beside it they would leave it under 20.
+    const room = w - width(lead) - (flags ? 2 + width(flags) : 0);
+    if (!flags || room >= 20) {
+      out(`${lead}${paint.dim(elidePath(target, Math.max(20, room)))}${flags ? `  ${flags}` : ''}`);
+    } else {
+      out(`${lead}${paint.dim(elidePath(target, Math.max(20, w - width(lead))))}`);
+      fitLine('    ', flags);
+    }
+    pathWithNote('    ', shortenPath(winner.path, lineage.home), `(${winner.scope})`, '      ', paint.dim);
     for (const def of others) {
-      out(paint.dim(`    shadowed: ${shortenPath(def.path, lineage.home)}  (${def.scope})`));
+      pathWithNote(paint.dim('    shadowed: '), shortenPath(def.path, lineage.home), `(${def.scope})`, '      ', paint.dim);
     }
   }
   if (view.servers.length === 0) out(paint.dim('  none found'));
@@ -521,7 +745,8 @@ export function renderBackup(manifest, root, home) {
 }
 
 export function renderSnapshotList(snapshots, root, retentionDays) {
-  out(paint.dim(retentionDays ? `${root}   kept ${retentionDays} days, then deleted when the next snapshot is taken` : root));
+  const header = packFields([root, retentionDays ? `kept ${retentionDays} days, then deleted when the next snapshot is taken` : '']);
+  for (const line of header) out(paint.dim(line));
   if (snapshots.length === 0) {
     out(paint.dim('No snapshots yet. Create one with: layercake backup'));
     return;
@@ -539,7 +764,13 @@ export function renderSnapshotList(snapshots, root, retentionDays) {
       snap.label || paint.dim('(none)'),
     ]);
   }
-  for (const line of columns(rows, { align: [null, null, 'right'] })) out(line);
+  // A label is free text and an unreadable manifest's message can be long:
+  // either wraps under its own column rather than running off the line (#124).
+  const widths = columnWidths(rows);
+  for (const row of rows) {
+    const lead = `${padEnd(row[0], widths[0])}  ${padEnd(row[1], widths[1])}  ${padStart(row[2], widths[2])}  `;
+    fitLine(lead, row[3], ' '.repeat(width(lead)));
+  }
 }
 
 const DIFF_PAINT = {

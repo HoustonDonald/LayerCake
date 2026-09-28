@@ -42,6 +42,13 @@ layercake restore <id> [dir]      dry run by default; --yes to write, --only to 
 layercake session [dir] [--list]  the current Claude Code session here: state, context, memory loaded
 ```
 
+`here`, `tree`, `show` and `snapshots` lay their output out for the terminal's width, or 100
+columns when piped. A long path is elided in the middle, a plugin's file is shown as
+`<plugin> > <path inside it>` as the page shows it, and on a terminal `show settings` cuts a string
+value too long for its line, with its full length beside it. Redirected or piped, the merged
+settings are printed whole, and the page shows every value whole. File bodies (`show claude-md`)
+are printed as they are.
+
 A terminal UI was considered and rejected. The level tree and the provenance tables are wide,
 high-density comparison surfaces, and they degrade badly at 80 columns.
 
