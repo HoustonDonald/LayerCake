@@ -429,7 +429,12 @@ treats an absolute filename as that report and closes the watcher, except the on
 `\ProgramData`, which is how Node names a child of a drive root: taking that for the root's own deletion
 closed the watch on `C:\` at the first change inside it (#127). Smoke checks both the silence and
 the server's CPU share after a deletion, because a watcher left open and silenced would pass the first,
-and checks that a change inside the drive root leaves it watched.
+and checks that a change inside the drive root leaves it watched. A folder renamed or moved sends no
+such report and its watch follows it, naming its children under the old path (#76), so every event
+from a folder's own watch waits for a check that the folder is still at its path with the file
+identity (dev and ino) read when the watch started, and a watched parent's rename of it runs the
+same check at once. Keep both routes: 31 of 78 watched folders on the owner's machine have no
+watched parent.
 
 **Merge rules are stated, not implied.** The settings precedence model is this tool's own, not
 something read back from Claude Code. Any view that computes an effective value must ship the rule

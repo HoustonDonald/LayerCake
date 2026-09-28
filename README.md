@@ -649,6 +649,14 @@ Implementation notes that matter if you change this:
   handle stays open: over 3 s the server used 3.3 s of CPU and re-lit the bar 14 times, from
   deleting one skill folder. The watcher closes that handle on the first report, reports the folder
   as changed, and lists it as not watched (`Deleted after the watch started`) until the next scan.
+- **A watched folder that is renamed or moved is closed too** (#76). Its own watch reports nothing
+  about the move and follows the folder, so a file changed there would be reported under the path
+  it left. Every event from a folder's watch is therefore taken only while the folder is still at
+  its path with the same identity (a new folder made under the old name is not it). Where the
+  parent folder is watched, its report of the move closes the watch at once; where it is not (a
+  plugin's skill folder, project memory), the next change inside the moved folder does. Either way
+  the folder is reported as changed and listed as not watched (`Moved, renamed or deleted after the
+  watch started`) until the next scan.
 - Events carry a path and a verb, never file content. Reading a body still goes through `/api/file`
   and its allowlist check.
 - The client reads the stream with `fetch` and a stream reader, not `EventSource`, because

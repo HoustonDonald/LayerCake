@@ -428,7 +428,7 @@ export function watchLineage(lineage, onChange, onCoverage) {
    * watched or may not count the folder's name as config (a deleted .claude/),
    * and it stops counting as watched: it no longer exists.
    */
-  function watchedFolderGone(dir, watcher) {
+  function watchedFolderGone(dir, watcher, reason = 'Deleted after the watch started') {
     const at = watched.indexOf(dir);
     // Events already queued behind the first one arrive after this ran.
     if (at === -1) return;
@@ -439,8 +439,53 @@ export function watchLineage(lineage, onChange, onCoverage) {
       /* already gone */
     }
     record(dir, null, 'rename');
-    skipped.push({ absPath: dir, reason: 'Deleted after the watch started' });
+    skipped.push({ absPath: dir, reason });
     sendCoverage();
+  }
+
+  /**
+   * A natively watched folder that is renamed or moved keeps its watch (#76).
+   * Measured on Windows (Node 24.3): the folder's own watch reports nothing
+   * about the move and goes on reporting its children, which would then be
+   * named under the old path. Its parent's watch does see `rename` for its
+   * name, but many watched folders have no watched parent (31 of 78 on the
+   * owner's machine: plugin skill and version folders, project memory, home).
+   *
+   * So an event from a folder's own watch is taken only while that folder is
+   * still the one watched: at the same path, with the same file identity (a
+   * new folder made under the old name, as when Claude Code moves a skill to
+   * .trash and one of that name is created again, is not it). Where the parent
+   * is watched, its rename event runs the same check at once, so the coverage
+   * is right before anything happens inside the moved folder.
+   */
+  const MOVED = 'Moved, renamed or deleted after the watch started';
+  const identityAtStart = new Map();
+  const inFlight = new Map();
+  const byKey = new Map();
+  const identityOf = (dir) =>
+    timedFsCall(dir, () => fs.promises.stat(dir, { bigint: true })).then(
+      (st) => (st.isDirectory() ? `${st.dev}:${st.ino}` : null),
+      () => null
+    );
+  function stillWatched(dir) {
+    const key = samePathKey(dir);
+    if (!inFlight.has(key)) {
+      inFlight.set(
+        key,
+        Promise.all([identityAtStart.get(key), identityOf(dir)])
+          // Unread at the start (a failed stat): judged by presence alone.
+          .then(([was, now]) => now !== null && (was == null || was === now))
+          .finally(() => inFlight.delete(key))
+      );
+    }
+    return inFlight.get(key);
+  }
+  function checkMoved(dir) {
+    const entry = byKey.get(samePathKey(dir));
+    if (!entry) return;
+    stillWatched(dir).then((here) => {
+      if (!here) watchedFolderGone(dir, entry.watcher, MOVED);
+    });
   }
 
   for (const dir of dirs) {
@@ -455,10 +500,17 @@ export function watchLineage(lineage, onChange, onCoverage) {
         // closed the watch on C:\ at the first change inside it. Only a name
         // with a drive or a \\?\ prefix is the folder itself.
         const name = filename && ROOTED_CHILD.test(filename) ? filename.slice(1) : filename;
-        if (name && path.isAbsolute(name)) watchedFolderGone(dir, watcher);
-        else if (eventType === 'change' && name) confirmChange(dir, name);
-        else record(dir, name, eventType);
+        if (name && path.isAbsolute(name)) return watchedFolderGone(dir, watcher);
+        // A watched child folder renamed or moved away: its own watch cannot tell (#76).
+        if (eventType === 'rename' && name) checkMoved(path.join(dir, name));
+        stillWatched(dir).then((here) => {
+          if (!here) watchedFolderGone(dir, watcher, MOVED);
+          else if (eventType === 'change' && name) confirmChange(dir, name);
+          else record(dir, name, eventType);
+        });
       });
+      identityAtStart.set(samePathKey(dir), identityOf(dir));
+      byKey.set(samePathKey(dir), { watcher });
       // An error after start arrives here. (Deleting the folder is not one on
       // Windows, where it arrives as the event above.) Recording and closing
       // that one watcher beats an unhandled 'error' event taking down the

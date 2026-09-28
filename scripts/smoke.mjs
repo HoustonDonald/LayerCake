@@ -1615,6 +1615,14 @@ try {
   await fs.writeFile(path.join(treeSkills, 'first-skill', 'SKILL.md'), '---\nname: first-skill\n---\n');
   await fs.mkdir(treeAgents, { recursive: true });
   await fs.writeFile(path.join(treeProj, '.claude', 'settings.json'), '{}\n');
+  // #76: a skill folder to move away (its parent, skills/, is watched), and a
+  // project memory folder to move (its parent is not watched).
+  const movedSkill = path.join(treeSkills, 'moved-skill');
+  await fs.mkdir(movedSkill);
+  await fs.writeFile(path.join(movedSkill, 'SKILL.md'), '---\nname: moved-skill\n---\n');
+  const treeMemory = path.join(configHome, 'projects', projectSlug(treeProj), 'memory');
+  await fs.mkdir(treeMemory, { recursive: true });
+  await fs.writeFile(path.join(treeMemory, 'MEMORY.md'), '# memory\n');
 
   const trees = await watchScanOf(treeProj);
   // Named, not just "something under .claude moved". On a local disk the
@@ -1691,6 +1699,48 @@ try {
     !changesIn(trees.stream).some((c) => c.absPath.includes('\\?\\') || (c.name && path.isAbsolute(c.name))),
     seenPaths(trees.stream)
   );
+
+  // #76: a watched folder that moves keeps its native watch, which reports
+  // nothing about the move and goes on reporting its children, named under the
+  // OLD path. The skill folder's parent is watched, so its move must show in
+  // the coverage at once; the memory folder's parent is not, so only the next
+  // change inside it can reveal the move. Neither may report a child under the
+  // path it left.
+  const coverageAfter = async (from, match, timeoutMs = 6000) => {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const hit = trees.stream.events.slice(from).find((e) => e.name === 'coverage' && (e.data.skipped || []).some(match));
+      if (hit || Date.now() > deadline) return hit || null;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  };
+  const movedFromThere = (dir) => (s) => sameDir(s.absPath, dir) && /moved/i.test(s.reason || '');
+  const beforeMoves = trees.stream.events.length;
+  await fs.rename(movedSkill, path.join(treeProj, 'moved-away'));
+  check(
+    'a watched folder moved away stops counting as watched at once, and says so (#76)',
+    Boolean(await coverageAfter(beforeMoves, movedFromThere(movedSkill))),
+    JSON.stringify(trees.stream.events.slice(beforeMoves).filter((e) => e.name === 'coverage').map((e) => e.data.skipped))
+  );
+  await fs.rename(treeMemory, `${treeMemory}-moved`);
+  // A new folder under the old name at once: the path alone would pass it as
+  // the watched one, and only the file identity tells them apart.
+  await fs.mkdir(treeMemory);
+  await new Promise((r) => setTimeout(r, 400));
+  await fs.writeFile(path.join(treeProj, 'moved-away', 'SKILL.md'), '---\nname: moved-skill\n---\nedited\n');
+  await fs.writeFile(path.join(`${treeMemory}-moved`, 'MEMORY.md'), '# memory, edited\n');
+  check(
+    'a watched folder with no watched parent is found moved at the next change inside it (#76)',
+    Boolean(await coverageAfter(beforeMoves, movedFromThere(treeMemory))),
+    JSON.stringify(trees.stream.events.slice(beforeMoves).filter((e) => e.name === 'coverage').map((e) => e.data.skipped))
+  );
+  await new Promise((r) => setTimeout(r, 800));
+  const underOldPath = trees.stream.events
+    .slice(beforeMoves)
+    .filter((e) => e.name === 'change')
+    .flatMap((e) => e.data.changes || [])
+    .filter((c) => [movedSkill, treeMemory].some((dir) => c.absPath.toLowerCase().startsWith(`${dir}${path.sep}`.toLowerCase())));
+  check('a moved folder\'s children are never reported under the path it left (#76)', underOldPath.length === 0, JSON.stringify(underOldPath));
   await trees.stream.close();
 
   // The same on a share, where it was worse: the poll of .claude compares a
