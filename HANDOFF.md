@@ -29,6 +29,27 @@ directory symlink this user cannot make without Developer Mode). WSL Ubuntu (Nod
 `/tmp/layercake-linux-smoke`, lockfile unchanged so `rsync` the tree over it and run
 `node scripts/smoke.mjs`): 317 passed, 0 failed, 15 skipped on 2026-09-28 after 2c7a1f0.
 
+### 2026-09-28: triage of the open issues, and the order to take them in
+
+The owner's answers that set it: LayerCake runs on this machine AND on managed work machines;
+macOS and Linux are not required; mapped drives are likely at work. Every issue's triage comment
+holds the detail. Work top down:
+
+1. **#147**, both halves: probe the managed folder's `CLAUDE.md`, `managed-mcp.json` and
+   `managed-settings.d/` (read only; smoke can point `ProgramFiles` at a fixture), and read the
+   registry policy with reg.exe (decision 17). A managed `CLAUDE.md` loads first and is not even
+   listed as looked for today.
+2. **#150**: make the failed row visible in smoke, then reproduce under parallel load. The restore
+   path, cause unknown; it fails closed.
+3. **#75**: a dead mapped drive, (a) at work. Needs the owner: a local share for the fast-failure
+   case, a work machine off VPN for the timeout case (plan on the issue).
+4. **#79 with #95 part 2**: smoke robustness, one batch.
+5. **#76**, then **#54**, then **#64**, then **#95 part 1**: (b), cheap.
+6. **#146** (macOS/Linux, not required), **#74** (needs Developer Mode to test).
+7. Verification only: **#11** (rises if a work machine lacks Git Bash), **#89**.
+
+The owner chose to keep documented (b) limits open (#74, #54, #89, #11).
+
 ### 2026-09-28, morning: the two open owner decisions (#143, #126)
 
 Asked in the terminal; the owner took both recommendations (decisions 15 and 16 below). One commit,
@@ -476,6 +497,9 @@ Made by the owner on 2026-09-28, asked in the terminal, each the recommended opt
 15. **Snapshots takes the full window (#143)**, as Sessions does; Explorer brings the tree back.
 16. **Plugin cache files are read only in LayerCake (#126)**: viewable, never edited or deleted,
     each saying why. Restore and create were extended to match, as the assistant's inference.
+17. **Registry policy is read with reg.exe (#147)**: `System32\reg.exe query` on the two
+    `Policies\ClaudeCode` keys, fixed argv, read only, 5 s timeout, output parsed as data. A new
+    process LayerCake starts, so it needs its line in CLAUDE.md when built.
 
 ---
 
@@ -598,5 +622,5 @@ Windows and tooling specifics, on top of what `C:\dev\CLAUDE.md` already documen
 4. Smoke never runs the exe. After touching `server/app.js`, `desktop/` or `client/`, run
    `npm run build:exe` and launch `dist\LayerCake.exe` with `Start-Process` (as Explorer would),
    with every data folder and `LAYERCAKE_BROWSER_PROFILE_DIR` redirected.
-5. The suggested order in the 2026-09-26 to 27 section is done, and so are #143 and #126. Take what
-   `gh issue list` shows by reachability: (a) first; (b) only if it is cheap.
+5. Take the open issues in the order of the 2026-09-28 triage section above, re-checking it
+   against `gh issue list` for anything filed since.
