@@ -38,11 +38,11 @@ passed, 0 failed, 3 skipped.
 `dist\LayerCake.exe` was rebuilt from 8b79af5 (movement, #161) on 2026-09-30 after the owner closed
 his copy, and launch-checked headful with `exe-lifecycle-castle.ps1` (16 of 16, a Mason walking in
 the app window included). Rebuilt again from 14afc15 (with #165) the same day, launch-checked
-headful (16 of 16) and started for the owner through Explorer. It lacks #167 (73c1055, typed project
-rooms), which was checked in an exe built from a tree copy while his copy ran; rebuild `dist` the
-next time he closes it.
+headful (16 of 16) and started for the owner through Explorer. Rebuilt again from ba743fc (#167
+typed rooms and #162's art, first pass) after he closed it, launch-checked headful (16 of 16) and
+started through Explorer; it is current.
 
-### 2026-09-30, afternoon: rooms are the project's own sections (#167), art next (#162)
+### 2026-09-30, afternoon: rooms are the project's own sections (#167), then the art (#162)
 
 Starting #162 (art), a style board went up. It is private to the owner:
 https://claude.ai/artifact/J7eV32kcDr5AwECkVEQrg2. The owner chose direction A, Night keep. Then he
@@ -64,10 +64,21 @@ walking). Castle room names and furniture go.
   (`art-draft/`). Its unit figures (Mason's hammer, Knight's banner...) and the light pools carry
   over to #162.
 
-**Next: #162 (art),** direction A, re-scoped on the issue. Each room type gets an icon in place of
-castle furniture. The rest is the plan in the issue's first comment: light pools, scaffolding, unit
-silhouettes, and the legend. The walking-cost baseline for it is 2.33% to 2.47% of a core with one
-Mason always walking (`ui-walkcost.mjs`), and `ui-cooling.mjs` measures the idle cost.
+- **#168 (deferred, owner direction):** a process for creating a custom castle for each user's
+  project. It holds the open questions: discovery, who drafts, review first, the read-never-written
+  invariant, keeping the map current, shared or personal, and the quality of the draft.
+- **ba743fc (#162, first pass of the art, issue left open for the owner's review):**
+  `client/components/castleArt.jsx` holds the unit figures, the 17 type icons, the floor, the per-room
+  light pools (stop colours from the state class) and a corner mark per state. It is wired through
+  CastleStage (crenellated wall, arched gate, road, trees, figure tokens) and the legend's figures;
+  the state colours are tokens on `.castle-view`.
+  - Walking costs 3.04% to 3.15% of a core against 2.33% to 2.47% before (`ui-walkcost.mjs`). Idle
+    is unchanged, at 0.07% quiet and 0.17% cooling (`ui-cooling.mjs`).
+  - `ui-motion.mjs` 26/26; the exe 16/16. Scene and colour-vision renders come from
+    `ui-art-demo.mjs`.
+
+**Next:** the owner's review of the art (#162), then #163 (polish), #168 when he picks it up, and the
+(b) queue.
 
 ### 2026-09-30: movement (#161; #165 and #166 found on the way)
 
