@@ -1,0 +1,21 @@
+{
+  "version": 2,
+  "rooms": [
+    { "id": "snapshots", "name": "Snapshots and writes", "type": "storage", "col": 0, "row": 0, "patterns": ["server/snapshot.js", "server/writefile.js", "server/readfile.js", "server/safety.js", "server/appdata.js"] },
+    { "id": "scan", "name": "Scan and lineage", "type": "core", "col": 1, "row": 0, "patterns": ["server/scan.js", "server/paths.js", "server/policy.js", "server/plugins.js", "server/flatten.js", "server/sharegate.js"] },
+    { "id": "sessions", "name": "Sessions", "type": "agent", "col": 2, "row": 0, "patterns": ["server/sessions.js", "server/transcript.js", "server/jsonl.js", "server/history.js", "server/health.js", "server/summaries.js"] },
+    { "id": "launch", "name": "Launch and ingest", "type": "integrations", "col": 3, "row": 0, "patterns": ["server/launch.js", "server/ingest.js", "server/powershell.js"] },
+    { "id": "watch", "name": "File watch", "type": "services", "col": 0, "row": 1, "patterns": ["server/watch.js", "client/useWatch.js", "client/components/WatchBanner.jsx"] },
+    { "id": "castle", "name": "Castle", "type": "ui", "col": 1, "row": 1, "patterns": ["server/castle.js", "server/castlemap.js", "server/castle-routes.js", "client/components/Castle*.jsx", "client/components/castle*.js"] },
+    { "id": "docs", "name": "Docs", "type": "docs", "col": 2, "row": 1, "patterns": ["**/*.md"] },
+    { "id": "smoke", "name": "Smoke", "type": "tests", "col": 3, "row": 1, "patterns": ["scripts/smoke*.mjs"] },
+    { "id": "build", "name": "Exe and build", "type": "build", "col": 0, "row": 2, "patterns": ["desktop/**", "scripts/build-if-stale.js", "scripts/launch.js", "scripts/start.js", "scripts/install-shortcut.ps1", "scripts/make-icon.mjs", "layercake.cmd", "vite.config.js", "package.json", "package-lock.json", ".gitignore", "castle.json"] },
+    { "id": "security", "name": "Security", "type": "auth", "col": 1, "row": 2, "patterns": ["server/security.js"] },
+    { "id": "web-ui", "name": "Web UI", "type": "ui", "col": 2, "row": 2, "patterns": ["client/**"] },
+    { "id": "cli", "name": "CLI", "type": "cli", "col": 3, "row": 2, "patterns": ["cli/**"] },
+    { "id": "api", "name": "HTTP API", "type": "api", "col": 1, "row": 3, "patterns": ["server/app.js", "server/index.js", "server/session-routes.js", "server/castle-routes.js"] }
+  ],
+  "gate": 1,
+  "commands": [{ "words": "npm run smoke", "kind": "test" }, { "words": "npm run build:exe", "kind": "build" }],
+  "proof": ["test"]
+}
