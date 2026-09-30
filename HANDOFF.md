@@ -35,9 +35,9 @@ Smoke writes and deletes a throwaway `HKCU\Software\LayerCakeSmoke-*` key on Win
 same three skips), the castle checks taking about 21 s of it. 2026-09-30, with movement (#161): 482
 passed, 0 failed, 3 skipped.
 
-`dist\LayerCake.exe` is from abd1a61 (the Castle, rebuilt 2026-09-30 morning) and is **not current**:
-#161 changed the client. The #161 tree was built into an exe from a copy and launch-checked (section
-below). Rebuild `dist` once the owner says his copy is closed.
+`dist\LayerCake.exe` was rebuilt from 8b79af5 (movement, #161) on 2026-09-30 after the owner closed
+his copy, and launch-checked headful with `exe-lifecycle-castle.ps1` (16 of 16, a Mason walking in
+the app window included); it is current.
 
 ### 2026-09-30: movement (#161; #165 and #166 found on the way)
 
@@ -65,7 +65,8 @@ trail as part of the fold. The commit message lists the ripple and every check.
   `exe-lifecycle-castle.ps1`: all 16 checks passed with `EXE_CHECK_HEADLESS=1`, including a Mason
   walking in the exe's embedded client. The headful in-window check timed out in Puppeteer (a 180 s
   protocol call) on an idle desktop, and the abd1a61 build, which passed it that morning, timed out
-  the same way: inconclusive, the window rendered no frames. Rerun it headful at the desk.
+  the same way. Rerun headful at the desk on `dist` built from 8b79af5: 16 of 16, so the timeout was
+  the idle desktop (a window that renders no frames), not the build.
 
 Tooling, in this session's scratchpad (`%TEMP%\claude\c--dev-layercake\f3eeffcb-...\scratchpad`):
 `ui-motion.mjs` (headless Edge, hook-driven; positions read from the rendered circle every frame;
