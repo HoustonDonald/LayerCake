@@ -67,9 +67,14 @@ non-stop 29.0% / 31.8%; a hop every 5 s 5.7% / 15.7%; six rooms cooling 4.7% / 5
 the table and method are on #169. The owner asked whether the Castle needs a GPU: it does not (SVG and
 CSS; with the GPU off Edge composites in software and draws the same, at more CPU). The first run was
 void: the script counted frames with a `requestAnimationFrame` loop inside the measured windows,
-which made the page draw every frame (quiet read 14.5%). Levers, not built: cooling costs about 5%
-for minutes after work (the heat fade restarted by the 10 s cooling render), and walking is drawn at
-the display's rate.
+which made the page draw every frame (quiet read 14.5%). The owner then chose to cut cooling only
+(#171, below); walking stays drawn at the display's rate, to revisit with #163's flip-book work.
+
+**#171, fixed:** each 10 s cooling step now snaps (a group around `.room-heat` carries the Embers fade
+in and out). Six rooms cooling: 4.7% to 0.28% with the GPU, 5.8% to 0.26% with it off; no animation
+runs while rooms cool, and the fade into Embers was still seen (`ui-cost.mjs`). `ui-motion.mjs` 26
+of 26; the exe built from a tree copy 16 of 16. **dist\LayerCake.exe does not have #171 yet**: the
+owner's copy was running.
 
 **For a new session, in one paragraph:** the Castle is mid-#162 (art). The first pass, hover card and
 Citadel are committed and in the owner's hands for review; #162 stays open for his changes. His

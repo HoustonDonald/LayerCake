@@ -2466,6 +2466,7 @@ pre.code {
 /* The pool of light. Its stop colours come from the state class, so a change fades. */
 .room-glow,
 .room-moon,
+.room-heat-fade,
 .room-heat,
 .room-scaffolding,
 .room-edge,
@@ -2500,15 +2501,19 @@ pre.code {
 .moon-core { stop-color: #9fb4d8; stop-opacity: 0.08; }
 .moon-edge { stop-color: #9fb4d8; stop-opacity: 0; }
 
-/* Embers: brightness follows heat (the inline opacity CastleStage sets). */
-.room-heat {
-  fill: url(#castle-heat);
+/* Embers: brightness follows heat (the inline opacity CastleStage sets). A
+   cooling step snaps: a 1.5 s fade per 10 s step kept the castle repainting
+   for minutes after work, 4.7% of a core (#171, owner decision). The group
+   around it fades the heat in and out with Embers, as other states fade. */
+.room-heat { fill: url(#castle-heat); }
+.room-heat-fade {
+  opacity: 0;
   transition: opacity 1.5s ease;
 }
+.castle-room.st-embers .room-heat-fade { opacity: 1; }
 
 .heat-core { stop-color: var(--castle-embers-heat); stop-opacity: 0.5; }
 .heat-edge { stop-color: var(--castle-embers-heat); stop-opacity: 0; }
-.castle-room:not(.st-embers) .room-heat { opacity: 0 !important; }
 
 /* Scaffolding: unverified work, whatever the light. */
 .room-scaffold { fill: url(#castle-hatch); }
@@ -2641,7 +2646,7 @@ pre.code {
 /* The pulse is off with reduced motion (usePulse); the fades go too. */
 @media (prefers-reduced-motion: reduce) {
   .room-edge,
-  .room-heat,
+  .room-heat-fade,
   .room-moon,
   .glow-core,
   .glow-edge {

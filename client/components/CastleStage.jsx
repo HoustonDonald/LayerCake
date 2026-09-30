@@ -116,12 +116,12 @@ function usePulse(active, reduce) {
 
 /**
  * Re-renders every 10 s while anything is still cooling, and not at all once
- * all is cold (#165). Each render fades every warm room's glow over 1.5 s
- * (light never snaps, spec), and SVG is not composited, so what the cooling
- * costs is the share of time a fade runs. Every 2 s, that was about 75%: six
- * rooms cooling in Embers cost 0.64% of a core against 0.05% quiet. Every
- * 10 s, 0.16% and 0.19% in two runs. Stepping the glow as well measured 0.17%,
- * so it was left out (ui-cooling.mjs, headless Edge, 2026-09-30).
+ * all is cold (#165). Each render sets every warm room's glow, and the step
+ * snaps (#171, owner decision 2026-09-30): SVG is not composited, so a fade
+ * per step repainted the castle at the display's rate for minutes after work.
+ * With a 1.5 s fade per step, six rooms cooling cost 4.7% of a core, renderer
+ * and GPU process (ui-cost.mjs, headful; #165's 0.16% to 0.19% counted the
+ * main thread only, #169). Entering and leaving Embers still fades.
  */
 const COOL_MS = 10_000;
 function useCooling(rooms, halfLife) {
@@ -571,7 +571,10 @@ export default function CastleStage({ map, state, generation, selected, onSelect
             {/* Floor, the type's icon, then the light over them; the edge last so light never dims it. */}
             <rect x={box.x} y={box.y} width={box.w} height={box.h} rx={6} className="room-fill" />
             <TypeIcon type={room.type} x={box.x + box.w - 74} y={box.y + 78} size={56} className="room-icon" />
-            <rect x={box.x} y={box.y} width={box.w} height={box.h} rx={6} className="room-heat" style={{ opacity: glow }} />
+            {/* A cooling step snaps (#171); the group fades the heat in and out with Embers. */}
+            <g className="room-heat-fade">
+              <rect x={box.x} y={box.y} width={box.w} height={box.h} rx={6} className="room-heat" style={{ opacity: glow }} />
+            </g>
             <RoomLight id={room.id} box={box} state={st} scaffolding={Boolean(r?.scaffolding)} />
             <rect x={box.x} y={box.y} width={box.w} height={box.h} rx={6} className="room-edge" />
             {/* The type over the name, the whole width to itself: the project names the room, the type says what kind of part it is. */}

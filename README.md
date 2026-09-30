@@ -935,7 +935,8 @@ the legend, or click a room); the rules come from the server with the data.
 - **Session end:** Construction, Survey and Proven fall to Embers; Alarm and scaffolding stay until
   their rule clears them, because they describe the code, not the session.
 - A room holds what it shows for 3 s before changing, except to Alarm, which shows at once; light
-  fades over 1.5 s. With reduced motion set, nothing pulses.
+  fades over 1.5 s. A room cooling in Embers dims in a small step every 10 s, without a fade: a fade
+  per step kept the castle redrawing for minutes after work. With reduced motion set, nothing pulses.
 
 **Units** (a figure on a dark disc ringed in its session's colour, or a Knight's own): a **Mason**
 (with a hammer) is a session, in the room of its latest call, resting once 60 s pass with no call running (dimmed,
