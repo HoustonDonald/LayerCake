@@ -58,7 +58,18 @@ castle.json now counts `node scripts/smoke.mjs` as a test run. The commit messag
 checks. This session's scratchpad (`%TEMP%\claude\c--dev-layercake\476797d3-...\scratchpad`) holds
 `docs-alarm.mjs` (read-only: a room's state and alarms from a running LayerCake; `ROOM`, `PORT`,
 `DIR`), `classify-smoke.mjs`, `mutate-170.mjs`, and `ui-cost.mjs` for #169 (written, not yet run:
-renderer plus GPU process cost of quiet, walking and cooling, headful).
+renderer plus GPU process cost of quiet, walking and cooling, headful; `NOGPU=1` for software
+compositing).
+
+**#169, re-measured and closed.** Renderer plus GPU process, share of one core, headful on this
+machine (RTX 3070, display at 165.7 Hz), real GPU / GPU off: quiet 0.12% / 0.68%; one Mason walking
+non-stop 29.0% / 31.8%; a hop every 5 s 5.7% / 15.7%; six rooms cooling 4.7% / 5.8%. One run each;
+the table and method are on #169. The owner asked whether the Castle needs a GPU: it does not (SVG and
+CSS; with the GPU off Edge composites in software and draws the same, at more CPU). The first run was
+void: the script counted frames with a `requestAnimationFrame` loop inside the measured windows,
+which made the page draw every frame (quiet read 14.5%). Levers, not built: cooling costs about 5%
+for minutes after work (the heat fade restarted by the 10 s cooling render), and walking is drawn at
+the display's rate.
 
 **For a new session, in one paragraph:** the Castle is mid-#162 (art). The first pass, hover card and
 Citadel are committed and in the owner's hands for review; #162 stays open for his changes. His
@@ -100,7 +111,9 @@ walking). Castle room names and furniture go.
   CastleStage (crenellated wall, arched gate, road, trees, figure tokens) and the legend's figures;
   the state colours are tokens on `.castle-view`.
   - Walking costs 3.04% to 3.15% of a core against 2.33% to 2.47% before (`ui-walkcost.mjs`). Idle
-    is unchanged, at 0.07% quiet and 0.17% cooling (`ui-cooling.mjs`).
+    is unchanged, at 0.07% quiet and 0.17% cooling (`ui-cooling.mjs`). **Main thread only (#169).**
+    With the GPU process: walking non-stop 29%, a hop every 5 s 5.7%, quiet 0.12%, six rooms
+    cooling 4.7% (see the night section).
   - `ui-motion.mjs` 26/26; the exe 16/16. Scene and colour-vision renders come from
     `ui-art-demo.mjs`.
 
@@ -114,16 +127,17 @@ walking). Castle room names and furniture go.
   east wall at the end of a road. Its windows light once a file outside the project is touched. The
   internal id stays `outside`.
 - **Animation budget, measured headful** (`bench-anim.mjs`; #169 and the comment on #163): smooth
-  60 fps animation costs 28% to 38% of a core however it is built, while a 6 fps flip-book on one
-  shared timer costs 3.7% to 5.9%, flat in unit count. **#169:** the earlier cost figures (walking,
-  cooling, idle) counted the renderer's main thread only; the GPU process dominates while anything
-  animates.
+  animation costs 28% to 38% of a core however it is built, while a 6 fps flip-book on one shared
+  timer costs 3.7% to 5.9%, flat in unit count. "Smooth" here is at this display's 165 Hz, not the
+  60 fps first written (#169). **#169:** the earlier cost figures (walking, cooling, idle) counted
+  the renderer's main thread only; the GPU process dominates while anything animates. Re-measured:
+  see the night section.
 
 `dist\LayerCake.exe` was rebuilt from 86de474 (hover card and Citadel included) after the owner
 closed it, launch-checked headful (16 of 16) and started through Explorer; it is current.
 
-**Next:** the owner's review of the art (#162), then #163 (polish, flip-book verb animations), #169
-(re-measure with the GPU process), #168 when he picks it up, and the (b) queue.
+**Next:** the owner's review of the art (#162), then #163 (polish, flip-book verb animations), #168
+when he picks it up, and the (b) queue. (#169 was re-measured and closed that night.)
 
 ### 2026-09-30: movement (#161; #165 and #166 found on the way)
 
@@ -145,7 +159,8 @@ trail as part of the fold. The commit message lists the ripple and every check.
   1.5 s opacity transition restarted by the 2 s cooling render). Phase 2, not movement: sampled over
   19 s idle, only room-light CSS transitions ran, no unit animation. Fixed the same day in 8f6ab71
   (a 10 s cooling render; six cooling rooms 0.64% of a core before, 0.16% to 0.19% after, 0.05%
-  quiet, `ui-cooling.mjs`).
+  quiet, `ui-cooling.mjs`). Main thread only (#169): with the GPU process, six cooling rooms cost
+  4.7% of a core after the fix.
 - **Mutants** (`mutate-motion.mjs`, final tree): 19 of 20 caught, both controls clean. The survivor
   ("a ghost is cancelled before removal") is equivalent on this code: a finished walk out is no
   longer referenced, so the added cancel acts on nothing.
