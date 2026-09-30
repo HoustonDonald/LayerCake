@@ -175,7 +175,15 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     check('a read lights its room as Survey and moves the session\'s Mason there',
       await s1.untilState((st) => st.rooms.docs.state === 'survey' && st.units.find((u) => u.key === `M:${sid}`)?.room === 'docs'),
       JSON.stringify(s1.last('state')?.rooms?.docs));
+    // What the hover card says it is doing (#162): the call, as the log's one line, where, still running.
+    const lastOf = (st, key) => st?.units?.find((u) => u.key === key)?.last;
+    check("the Mason carries the call it is on now: its tool, its one-line summary, where, and no end yet",
+      await s1.untilState((st) => {
+        const l = lastOf(st, `M:${sid}`);
+        return l && l.id === 'toolu_c_read' && l.tool === 'Read' && l.summary === P('docs', 'guide.md') && l.where === 'Docs' && l.endAt === null;
+      }), JSON.stringify(lastOf(s1.last('state'), `M:${sid}`)));
     await hook({ hook_event_name: 'PostToolUse', tool_name: 'Read', tool_use_id: 'toolu_c_read', tool_input: { file_path: P('docs', 'guide.md') }, tool_response: { type: 'text', file: { content: S.readBody } } });
+    check('and when the call ends it says when', await s1.untilState((st) => typeof lastOf(st, `M:${sid}`)?.endAt === 'number'), JSON.stringify(lastOf(s1.last('state'), `M:${sid}`)));
 
     // --- change, scaffolding, a failing and a passing run -------------------------
     await call('toolu_c_edit', 'Edit', { file_path: P('db', 'schema.sql'), old_string: S.oldString, new_string: S.newString }, { response: { filePath: P('db', 'schema.sql'), oldString: S.oldString, newString: S.newString } });
@@ -288,6 +296,10 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     await hook({ hook_event_name: 'PreToolUse', tool_name: 'WebFetch', tool_use_id: 'toolu_c_web', tool_input: { url: 'https://example.invalid/' } });
     check('an MCP call is a Raven on its perch, and a web fetch a Scout beyond the gate, while they run',
       await s1.untilState((st) => st.units.some((u) => u.key === 'R:toolu_c_mcp' && u.room === 'perch') && st.units.some((u) => u.key === 'S:toolu_c_web' && u.room === 'beyond-gate')));
+    check('each says what it calls: the Raven its MCP tool, the Scout its tool and URL',
+      s1.last('state')?.units?.some((u) => u.key === 'R:toolu_c_mcp' && u.tool === 'mcp__smoke__lookup' && u.label === 'smoke') &&
+        s1.last('state')?.units?.some((u) => u.key === 'S:toolu_c_web' && u.tool === 'WebFetch' && u.label === 'https://example.invalid/'),
+      JSON.stringify(s1.last('state')?.units?.filter((u) => u.kind === 'raven' || u.kind === 'scout')));
     await hook({ hook_event_name: 'PostToolUse', tool_name: 'mcp__smoke__lookup', tool_use_id: 'toolu_c_mcp', tool_input: {}, tool_response: {} });
     await hook({ hook_event_name: 'PostToolUse', tool_name: 'WebFetch', tool_use_id: 'toolu_c_web', tool_input: { url: 'https://example.invalid/' }, tool_response: {} });
     check('they return when the call does', await s1.untilState((st) => !st.units.some((u) => u.kind === 'raven' || u.kind === 'scout')));
@@ -306,6 +318,16 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     const kept = [...walked.slice(1), { room: 'docs', key: 's:toolu_c_after' }, { room: 'tests', key: 's:toolu_c_bg' }];
     check("a Mason's trail is bounded: the latest 12 visits, still in order",
       JSON.stringify(trailOf(s1.last('state'), `M:${sid}`)) === JSON.stringify(kept), JSON.stringify(trailOf(s1.last('state'), `M:${sid}`)));
+
+    // Resting (#162's hover card showed "resting" beside "working"): a call
+    // still running past the rest window (3 s here) is work; once it ends, the
+    // window counts from its end.
+    await hook({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_use_id: 'toolu_c_long', tool_input: { file_path: P('docs', 'long.md') } });
+    await sleep(3800);
+    const masonNow = () => s1.last('state')?.units?.find((u) => u.key === `M:${sid}`);
+    check('a worker whose call is still running past the rest window is not resting', masonNow()?.resting === false && masonNow()?.last?.id === 'toolu_c_long', JSON.stringify(masonNow()));
+    await hook({ hook_event_name: 'PostToolUse', tool_name: 'Read', tool_use_id: 'toolu_c_long', tool_input: { file_path: P('docs', 'long.md') }, tool_response: {} });
+    check('and rests once the window passes after that call ends', await s1.untilState((st) => st.units.find((u) => u.key === `M:${sid}`)?.resting === true, 6000), JSON.stringify(masonNow()));
 
     // --- the transcript source --------------------------------------------------------
     const slugDir = path.join(claudeData, 'projects', projectSlug(proj));
@@ -342,6 +364,7 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     check("its subagent's own transcript puts a Knight in the room of its call (a relative path resolved against the record's cwd), with scaffolding",
       await s1.untilState((st) => st.units.some((u) => u.key === `K:${agent2}` && u.room === 'jobs' && u.agentType === 'general-purpose') && st.rooms.jobs.scaffolding === true),
       JSON.stringify({ units: s1.last('state')?.units, jobs: s1.last('state')?.rooms?.jobs }));
+    check("the Knight carries its task, from the subagent's own meta file", s1.last('state')?.units?.find((u) => u.key === `K:${agent2}`)?.task === 'nightly', JSON.stringify(s1.last('state')?.units?.find((u) => u.key === `K:${agent2}`)));
     await fs.appendFile(
       path.join(slugDir, `${sid2}.jsonl`),
       `${rec(sid2, proj, Date.now(), toolUse('toolu_t_late', 'Read', { file_path: P('docs', 'late.md') }))}\n`

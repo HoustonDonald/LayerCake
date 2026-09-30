@@ -930,7 +930,7 @@ the legend, or click a room); the rules come from the server with the data.
   fades over 1.5 s. With reduced motion set, nothing pulses.
 
 **Units** (a figure on a dark disc ringed in its session's colour, or a Knight's own): a **Mason**
-(with a hammer) is a session, in the room of its latest call, resting after 60 s without one (dimmed,
+(with a hammer) is a session, in the room of its latest call, resting once 60 s pass with no call running (dimmed,
 with a "z"); a **Knight** (a helm and a banner in its own colour) is a subagent, from its start to its
 stop; a **Wizard** (hat and robe) is a skill Claude invoked, beside its caller until the caller's turn
 ends (a skill you type as `/name` is not seen); a **Raven** (a bird, no disc) is an MCP call, on the

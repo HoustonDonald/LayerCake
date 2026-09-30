@@ -2285,6 +2285,68 @@ pre.code {
   background: var(--castle-line);
 }
 
+/* What a unit stands for (#162): the hover card over the stage. It never takes the pointer, so it
+   cannot hide the unit it describes or stop the next hover. */
+.castle-unit-card {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--castle-line);
+  border-radius: 6px;
+  background: #0f1319f2;
+  color: var(--castle-text);
+  font-size: 12px;
+  line-height: 1.45;
+  box-shadow: 0 4px 16px #0008;
+}
+
+.unit-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+
+.unit-card-tag {
+  padding: 0 6px;
+  border-radius: 8px;
+  background: #232b36;
+  color: var(--castle-dim);
+  font-size: 11px;
+}
+
+.castle-unit-card dl,
+.drawer-units dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 1px 8px;
+  margin: 0;
+}
+
+.castle-unit-card dt,
+.drawer-units dt { color: var(--castle-dim); }
+
+.castle-unit-card dd,
+.drawer-units dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.drawer-units {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.drawer-units li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--castle-line);
+  font-size: 12px;
+}
+
 /* A unit's figure on its dark disc, as the castle draws it (#162). */
 .legend-figure {
   display: inline-flex;

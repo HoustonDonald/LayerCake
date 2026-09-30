@@ -102,7 +102,7 @@ export const ROOM_STATES = [
 ];
 
 export const UNIT_KINDS = [
-  { kind: 'mason', letter: 'M', label: 'Mason', rule: `A session. Walks the corridors to the room of its latest tool call, through each room it worked in on the way, in order; rests after ${secs(WINDOWS.restMs)} without one; walks out of the gate when the session ends.` },
+  { kind: 'mason', letter: 'M', label: 'Mason', rule: `A session. Walks the corridors to the room of its latest tool call, through each room it worked in on the way, in order; rests once ${secs(WINDOWS.restMs)} pass with no call running; walks out of the gate when the session ends.` },
   { kind: 'knight', letter: 'K', label: 'Knight', rule: 'A subagent, from its start to its stop: enters by the gate, walks to the room of each tool call as a Mason does, and walks out of the gate when it stops.' },
   { kind: 'wizard', letter: 'W', label: 'Wizard', rule: "A skill Claude invoked, beside the unit that called it, following it, until that unit's turn ends or it calls another skill. A skill you type as /name is not seen." },
   { kind: 'raven', letter: 'R', label: 'Raven', rule: 'An MCP tool call: flies up to the wall above the first Integrations room (above the gate when there is none), and back when the call returns.' },
@@ -313,8 +313,8 @@ export function fold(events, map, locateCall) {
     let u = units.get(key);
     if (!u) {
       u = e.agentId
-        ? { key, kind: 'knight', sessionId: e.sessionId, agentId: e.agentId, agentType: e.agentType || null, room: 'gate', trail: [], since: e.at, lastCallAt: null }
-        : { key, kind: 'mason', sessionId: e.sessionId, agentId: null, room: 'gate', trail: [], since: e.at, lastCallAt: null };
+        ? { key, kind: 'knight', sessionId: e.sessionId, agentId: e.agentId, agentType: e.agentType || null, room: 'gate', trail: [], since: e.at, lastCallAt: null, last: null }
+        : { key, kind: 'mason', sessionId: e.sessionId, agentId: null, room: 'gate', trail: [], since: e.at, lastCallAt: null, last: null };
       units.set(key, u);
     }
     if (e.agentType && !u.agentType) u.agentType = e.agentType;
@@ -376,6 +376,8 @@ export function fold(events, map, locateCall) {
       logByCall.set(e.toolUseId, entry);
       const caller = ensureCaller(e);
       caller.lastCallAt = e.at;
+      // What it is doing, for the page's hover card: its latest call, in the one line the log shows.
+      caller.last = { id: e.toolUseId || e.key, tool: e.tool || null, summary: e.summary || '', where: loc.label || null, at: e.at, endAt: null };
       const to = loc.rooms.length ? loc.rooms[0] : loc.wilds.length ? 'wilds' : loc.outside.length ? 'outside' : null;
       // The trail (#161): each room change, keyed by the call that caused it
       // (the same key from either source, so a refold gives the same ids).
@@ -399,9 +401,9 @@ export function fold(events, map, locateCall) {
         dropWizardsOf(caller.key);
         units.set(`W:${e.toolUseId}`, { key: `W:${e.toolUseId}`, kind: 'wizard', sessionId: e.sessionId, caller: caller.key, label: e.summary || 'skill', since: e.at });
       } else if (verb === 'mcp') {
-        units.set(`R:${e.toolUseId}`, { key: `R:${e.toolUseId}`, kind: 'raven', sessionId: e.sessionId, caller: caller.key, room: 'perch', label: e.summary || e.tool, since: e.at });
+        units.set(`R:${e.toolUseId}`, { key: `R:${e.toolUseId}`, kind: 'raven', sessionId: e.sessionId, caller: caller.key, room: 'perch', label: e.summary || e.tool, tool: e.tool || null, since: e.at });
       } else if (verb === 'web') {
-        units.set(`S:${e.toolUseId}`, { key: `S:${e.toolUseId}`, kind: 'scout', sessionId: e.sessionId, caller: caller.key, room: 'beyond-gate', label: e.summary || e.tool, since: e.at });
+        units.set(`S:${e.toolUseId}`, { key: `S:${e.toolUseId}`, kind: 'scout', sessionId: e.sessionId, caller: caller.key, room: 'beyond-gate', label: e.summary || e.tool, tool: e.tool || null, since: e.at });
       }
       if (loc.command?.kind === 'test' || loc.command?.kind === 'build') {
         runs.push({ id: e.toolUseId, kind: loc.command.kind, rule: loc.command.rule, room: loc.command.room, summary: e.summary, at: e.at, endAt: null, ok: null, exitCode: null, sessionId: e.sessionId, background: Boolean(e.targets?.background), judged: [] });
@@ -414,6 +416,8 @@ export function fold(events, map, locateCall) {
       calls.delete(e.toolUseId);
       units.delete(`R:${e.toolUseId}`);
       units.delete(`S:${e.toolUseId}`);
+      const doer = units.get(callerKey(e));
+      if (doer?.last && doer.last.id === e.toolUseId && doer.last.endAt === null) doer.last = { ...doer.last, endAt: e.at };
       entry.where = loc.label;
       entry.verdict = verdictText(e.verdict);
       const v = e.verdict;
@@ -480,6 +484,8 @@ export function fold(events, map, locateCall) {
       }
     } else if (e.kind === 'turn' || e.kind === 'stop') {
       dropWizardsOf(`M:${e.sessionId}`);
+      const mason = units.get(`M:${e.sessionId}`);
+      if (mason?.last && mason.last.endAt === null) mason.last = { ...mason.last, endAt: e.at };
       // Esc on a running tool fires no end (docs: hooks): a new turn or a stop
       // means every open call of this session is over, with no verdict.
       for (const [id, c] of calls) {
@@ -909,13 +915,25 @@ class Castle {
         out.caller = u.caller;
       } else out.room = u.room;
       if (u.trail) out.trail = u.trail;
-      out.resting = (u.kind === 'mason' || u.kind === 'knight') && (u.lastCallAt === null ? now - u.since > WINDOWS.restMs : now - u.lastCallAt > WINDOWS.restMs);
+      // For the hover card: a worker's latest call, an MCP or web call's tool, a subagent's task.
+      if (u.last !== undefined) out.last = u.last;
+      if (u.tool) out.tool = u.tool;
+      if (u.kind === 'knight') {
+        const sub = this.entries.get(u.sessionId)?.subs.get(u.agentId);
+        out.task = sub?.meta?.description || sub?.parent?.description || null;
+      }
+      // Resting: no call running, and none for a while, counted from when the
+      // last one ended (or, with none yet, from its arrival). A worker whose
+      // call is still running (a long build) is working, not resting.
+      const quietSince = u.last ? u.last.endAt : u.since;
+      out.resting = (u.kind === 'mason' || u.kind === 'knight') && quietSince !== null && now - quietSince > WINDOWS.restMs;
+      if (u.caller) out.caller = u.caller;
       units.push(out);
     }
     for (const s of sessions) {
       if (s.live && !folded.units.has(`M:${s.sessionId}`)) {
         // Running, and nothing it did is known yet: it stands inside the gate.
-        units.push({ key: `M:${s.sessionId}`, kind: 'mason', sessionId: s.sessionId, agentId: null, room: 'gate', trail: [], resting: false, since: null });
+        units.push({ key: `M:${s.sessionId}`, kind: 'mason', sessionId: s.sessionId, agentId: null, room: 'gate', trail: [], last: null, resting: false, since: null });
       }
       if (s.live && s.waiting) units.push({ key: `H:${s.sessionId}`, kind: 'herald', sessionId: s.sessionId, room: 'gate', label: s.waiting });
     }

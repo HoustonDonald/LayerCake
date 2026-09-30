@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { followCastle, getCastleRoom, reloadCastleMap } from '../api.js';
 import { duration } from '../sessionFormat.js';
 import { FigureIcon } from './castleArt.jsx';
+import { describeUnit } from './castleDescribe.js';
 import CastleStage, { SESSION_COLOURS } from './CastleStage.jsx';
 
 /**
@@ -158,6 +159,48 @@ function causeText(cause, map) {
   }
 }
 
+/**
+ * Who stands in this place now and what each is working on: the hover card's
+ * lines (castleDescribe), here for keyboard and touch too, where hover is not.
+ */
+function HereNow({ state, map, place }) {
+  const here = (state?.units || []).filter((u) => u.room === place);
+  if (!here.length) return null;
+  return (
+    <>
+      <h4>Here now</h4>
+      <ul className="drawer-units">
+        {here.map((u) => {
+          const d = describeUnit(u, { state, map });
+          return (
+            <li key={u.key}>
+              <div className="unit-card-head">
+                <span className="legend-figure">
+                  <FigureIcon kind={u.kind} size={14} />
+                </span>
+                <strong>{d.title}</strong>
+                {d.tags.map((t) => (
+                  <span key={t} className="unit-card-tag">
+                    {t}
+                  </span>
+                ))}
+              </div>
+              <dl>
+                {d.rows.map(([k, v]) => (
+                  <React.Fragment key={k}>
+                    <dt>{k}</dt>
+                    <dd>{v}</dd>
+                  </React.Fragment>
+                ))}
+              </dl>
+            </li>
+          );
+        })}
+      </ul>
+    </>
+  );
+}
+
 function Drawer({ scanId, map, state, selected, onClose }) {
   const [detail, setDetail] = useState(null);
   const [error, setError] = useState(null);
@@ -188,6 +231,7 @@ function Drawer({ scanId, map, state, selected, onClose }) {
             ? 'Files in the project that no room claims. Activity here means the map needs a pattern: add one to castle.json (Copy prompt for Claude drafts it).'
             : 'Files outside the project folder. No pattern can claim these; they are counted so nothing is silently dropped.'}
         </p>
+        <HereNow state={state} map={map} place={selected} />
         {error && <div className="castle-error">{error}</div>}
         <ul className="drawer-files">
           {(detail?.recent || []).map((f) => (
@@ -235,6 +279,7 @@ function Drawer({ scanId, map, state, selected, onClose }) {
         <dt>Last change</dt>
         <dd>{ago(r?.lastChange)}</dd>
       </dl>
+      <HereNow state={state} map={map} place={selected} />
       <h4>Recent files</h4>
       {error && <div className="castle-error">{error}</div>}
       <ul className="drawer-files">

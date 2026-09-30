@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-import { ArtDefs, Figure, RoomLight, TypeIcon, WildsTrees } from './castleArt.jsx';
+import { ArtDefs, Figure, FigureIcon, RoomLight, TypeIcon, WildsTrees } from './castleArt.jsx';
+import { describeUnit } from './castleDescribe.js';
 import { BAND, DOT, FADE_MS, HOP_MS, SLIDE_MS, W, keyframes, lastTrailKey, layout, newPlaces, placeUnits, planWalk, positionAt, replan, totalMs, waypoint } from './castleMotion.js';
 
 /**
@@ -147,13 +148,10 @@ function unitColour(u, sessionIndex) {
  * hit area). The disc is the unit's first circle: the page checks find units
  * by it.
  */
-function Unit({ u, x, y, colour, kinds, riders = [], colourOf, onClick, small = false }) {
-  const label = kinds?.find((k) => k.kind === u.kind)?.label || u.kind;
-  const title = [label, u.agentType, u.label, u.resting ? 'resting' : null].filter(Boolean).join(' · ');
+function Unit({ u, x, y, colour, kinds, riders = [], colourOf, onClick, small = false, hover = true }) {
   const bird = u.kind === 'raven';
   return (
-    <g className={`castle-unit unit-${u.kind}${u.resting ? ' resting' : ''}`} data-unit={x === undefined ? undefined : u.key} transform={x === undefined ? undefined : `translate(${x} ${y})`} onClick={onClick}>
-      <title>{title}</title>
+    <g className={`castle-unit unit-${u.kind}${u.resting ? ' resting' : ''}`} data-unit={x === undefined ? undefined : u.key} data-hover={hover ? u.key : undefined} transform={x === undefined ? undefined : `translate(${x} ${y})`} onClick={onClick}>
       {u.kind === 'herald' && <circle className="herald-ring" r={DOT + 9} />}
       <circle className={`unit-disc${bird ? ' bare' : ''}`} r={small ? DOT - 3 : DOT + 2} style={bird ? undefined : { stroke: colour }} />
       <g className="unit-figure">
@@ -222,7 +220,7 @@ const samePoint = (a, b) => Math.abs(a.x - b.x) < 0.01 && Math.abs(a.y - b.y) < 
  * Scout walks out of the gate and back. With reduced motion nothing walks: a
  * unit that moves fades in at its new spot.
  */
-function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf, kinds, onSelect }) {
+function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf, kinds, onSelect, onHover }) {
   // key -> { key, unit, place, point, lastKey, legs, anim, fade, leaving, exit }
   const motion = useRef(new Map());
   const frame = useRef({ generation: null, state: undefined, awaiting: false, mapVersion: undefined });
@@ -395,7 +393,7 @@ function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf
   });
 
   return (
-    <g className="castle-units" ref={layerRef}>
+    <g className="castle-units" ref={layerRef} onMouseOver={(e) => onHover(hoverAt(e.target))} onMouseLeave={() => onHover(null)}>
       {shown.map(({ u, p, ghost }) => {
         const selectable = !ghost && (rooms.has(p.place) || p.place === 'wilds' || p.place === 'outside');
         return (
@@ -409,6 +407,7 @@ function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf
             riders={ghost ? [] : riders.get(u.key)}
             colourOf={colourOf}
             onClick={selectable ? () => onSelect(p.place) : undefined}
+            hover={!ghost}
           />
         );
       })}
@@ -416,7 +415,55 @@ function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf
   );
 }
 
+/**
+ * Where the hover card goes for the unit under the pointer: beside the unit's
+ * figure, inside the stage, flipped to its left near the right edge.
+ */
+function hoverAt(target) {
+  const el = target?.closest?.('[data-hover]');
+  const stage = el?.closest('.castle-stage');
+  if (!el || !stage) return null;
+  const r = el.querySelector('.unit-disc')?.getBoundingClientRect() || el.getBoundingClientRect();
+  const s = stage.getBoundingClientRect();
+  const right = r.right - s.left + 10;
+  const flip = right + CARD_W > s.width - 8;
+  return { key: el.dataset.hover, x: flip ? r.left - s.left - CARD_W - 10 : right, y: Math.max(8, Math.min(r.top - s.top - 12, s.height - 200)) };
+}
+
+const CARD_W = 300;
+
+/** What the unit under the pointer stands for, and what it is working on (castleDescribe). */
+function UnitCard({ card, state, map }) {
+  const u = (state?.units || []).find((x) => x.key === card.key);
+  if (!u) return null;
+  const d = describeUnit(u, { state, map });
+  return (
+    <div className="castle-unit-card" role="tooltip" style={{ left: card.x, top: card.y, width: CARD_W }}>
+      <div className="unit-card-head">
+        <span className="legend-figure">
+          <FigureIcon kind={u.kind} size={14} />
+        </span>
+        <strong>{d.title}</strong>
+        {d.tags.map((t) => (
+          <span key={t} className="unit-card-tag">
+            {t}
+          </span>
+        ))}
+      </div>
+      <dl>
+        {d.rows.map(([k, v]) => (
+          <React.Fragment key={k}>
+            <dt>{k}</dt>
+            <dd>{v}</dd>
+          </React.Fragment>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
 export default function CastleStage({ map, state, generation, selected, onSelect }) {
+  const [card, setCard] = useState(null);
   const L = layout(map?.floor);
   const halfLife = map?.windows?.heatHalfLifeMs || 45_000;
   const shown = useHeldStates(state?.rooms, generation);
@@ -444,6 +491,7 @@ export default function CastleStage({ map, state, generation, selected, onSelect
   const sideGate = 48;
 
   return (
+    <>
     <svg className={`castle-svg${pulse ? ' pulse-on' : ''}`} viewBox={`0 0 ${W} ${L.H}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="The castle: rooms by what Claude is doing in them">
       <ArtDefs />
 
@@ -549,7 +597,9 @@ export default function CastleStage({ map, state, generation, selected, onSelect
         );
       })}
 
-      <UnitLayer L={L} rooms={rooms} perch={map?.perch || null} units={state?.units || []} generation={generation} state={state} reduce={reduce} colourOf={colourOf} kinds={map?.units} onSelect={select} />
+      <UnitLayer L={L} rooms={rooms} perch={map?.perch || null} units={state?.units || []} generation={generation} state={state} reduce={reduce} colourOf={colourOf} kinds={map?.units} onSelect={select} onHover={setCard} />
     </svg>
+    {card && <UnitCard card={card} state={state} map={map} />}
+    </>
   );
 }
