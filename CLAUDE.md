@@ -79,9 +79,11 @@ without it (`smoke-confighome.mjs`). More exist for smoke only:
 `LAYERCAKE_CLAUDE_CMD` (a JSON array replacing `claude` for AI summaries, pointed at
 `scripts/smoke-claude-stub.mjs`, so no usage is ever spent testing),
 `LAYERCAKE_REPORT_WINDOW_MS` (how long a launched session counts as running after its last report;
-45 s in use, a few seconds in smoke so "stopped reporting" can be tested), and two for managed
-policy (#147): `LAYERCAKE_MANAGED_DIR` replaces this platform's managed folder (`C:\Program
-Files\ClaudeCode`, which needs elevation to write), and `LAYERCAKE_POLICY_KEYS` (JSON
+45 s in use, a few seconds in smoke so "stopped reporting" can be tested),
+`LAYERCAKE_CASTLE_TIME_SCALE` (the Castle's windows, 1/20 in smoke so a 60 s window lapses in 3 s;
+clamped to 0.01 to 1), and two for managed policy (#147): `LAYERCAKE_MANAGED_DIR` replaces this
+platform's managed folder (`C:\Program Files\ClaudeCode`, which needs elevation to write), and
+`LAYERCAKE_POLICY_KEYS` (JSON
 `{"hklm": key, "hkcu": key}`) names registry keys to read in place of the two policy keys, refused
 unless both sit under `HKCU\Software\LayerCakeSmoke`. Smoke sets both, and `ProgramData`, in its
 own environment before it starts anything, so what it starts inherits them rather than reading the
@@ -129,6 +131,9 @@ server/session-routes.js /api/sessions, /api/session/:id[/turn/:n|/stream|/summa
 server/launch.js    "Start Claude here": wt.exe + claude --session-id --settings <file>; fixed argv; console window without wt
 server/powershell.js Windows PowerShell 5.1's path and the quoting for starting it; no imports, nothing at load
 server/ingest.js    /ingest/<launch>/<secret>/{statusline,hook} from launched sessions; state per session
+server/castle.js    the Castle (#159, #160): picks sessions, merges hook and transcript events, the fold, the state
+server/castlemap.js the Castle's floor plan, castle.json (read only), the glob matcher, command rules
+server/castle-routes.js /api/castle/stream, /room, /reload: a scan id in, never a path
 client/             React 18 + Vite, two-pane explorer plus editor, snapshots and watch bar
 cli/                layercake CLI, imports server modules directly
 scripts/launch.js   build, serve, then open an app-mode browser window
@@ -272,7 +277,12 @@ the UI ("Transcript read"); never silence that counter, because it is how a form
 visible instead of becoming empty panels. It keeps prompts and replies and drops CLAUDE.md bodies
 from instruction attachments, the system prompt snapshot, the account email and tool I/O bodies.
 A tool call keeps a one-line summary: its description, or for a shell call with none (151 of 3,866
-here), the first 160 characters of the command line, which can therefore reach the page.
+here), the first 160 characters of the command line, which can therefore reach the page. For the
+Castle it also keeps the file paths the call names and the first four words of each segment of a
+shell command ("command heads", `toolTargets`), which are matched against test and build rules and
+never sent to the page; smoke plants a command word and searches every castle frame for it.
+Subagent transcripts are read for their tool calls only (`SubagentReader`), found by listing the
+folder and pattern-checking each name, never from a record field.
 
 **Secrets beside the session data are never read or sent.** `history.jsonl`'s `pastedContents`
 never leaves `history.js`; `sessions/<pid>.<hash>.key` files are never opened (only `<digits>.json`
@@ -284,6 +294,27 @@ an action, which turns an observer into a participant. Smoke asserts every hook 
 a mutant returning `{}` is caught; the zero-token claim was also measured end to end (the same
 prompt with and without a launch's settings: identical input, full cache hit). The status line's
 answer is the line to print and is never sent to the model.
+
+**The Castle is a viewer: it reads, it never writes or starts anything** (#159, #160). Its hook
+records are a bounded ring per session inside ingest.js (`keepForCastle`), appended after the post
+is applied, in a try/catch, with no matching or await, so the empty 204 is unaffected; the ring is
+read by castle.js only and never served whole. Castle state exists only while a stream is open for
+that project, and castle routes take a scan id, never a path. `<project>/castle.json` is read, never
+written (the page's "Copy prompt for Claude" has the user's own session draft it), at a path the
+server builds from the scan store, through `readForDisplay`. It can come from a cloned repository,
+so it is data only: **the glob matcher in castlemap.js is hand-written and must stay free of
+backtracking**. picomatch 4.0.7 ran over a minute on `'*a'` twelve times plus `'b'` against forty
+`a`s (review, 2026-09-29), `path.matchesGlob` is super-linear too; this one agreed with picomatch on
+200,000 random cases (scratch `diff-glob.mjs`) and smoke asserts its hostile/benign time RATIO.
+Command rules are word prefixes, never regular expressions. **The fold is the specification**: room
+states are recomputed from all events under the current map each time (no incremental path to drift
+from it), and smoke's fold oracle closes every stream, reopens, and requires the fresh fold to equal
+the long-running one. It caught a real defect on its first run (a session joining later never had its
+subagent files listed). Denied, rejected, interrupted and refused calls have no verdict and never
+raise an Alarm (`toolVerdict`): a hook's PostToolUseFailure fires only for a tool that ran, but a
+transcript also records as an error a call Claude Code refused before running it, so a transcript
+error is a failure only with an exit code or a system error code (#164, found by the real-session
+probe), and a run with no exit code has no verdict. Its rules ship with its data (`ROOM_STATES`, `UNIT_KINDS`, `CASTLE_RULES`), as health.js does.
 
 **Ingest is outside `/api` and guards itself.** Callers are Claude Code processes, so there is no
 page token: a per-launch secret in the path (constant-time compare), no `Origin` header allowed,
@@ -582,6 +613,13 @@ partially. A truncated file restored is silent data loss.
   fallback opened it (#157). Map only scratch folders in, never a config or credential. A Claude Code
   that was never signed in exits at once without a network, even started directly, so a test of a
   launch needs the Sandbox's networking on.
+- **The Castle sees less for a session LayerCake did not launch.** It reads that session's
+  transcript, which Claude Code writes when each model response completes, so it has no "waiting
+  for you" (no Herald) and runs a measured few seconds behind (shown per session). A skill typed as
+  `/name` fires no PreToolUse (docs), so it brings no Wizard. A file a shell command changes is not
+  seen, only the files a tool call names. Searches light rooms by their `path` only; the matched
+  files are not read. Each castle folds its latest 20,000 events (a refold of that many measured a
+  median 18 ms under load) and says when older ones are left out.
 - **The context window is inferred from the model id** (`contextWindow` in `health.js`, rule shipped
   with the payload): `[1m]` or a documented native-1M family is 1M, else 200K. A new model family
   needs adding there.

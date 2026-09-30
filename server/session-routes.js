@@ -132,7 +132,7 @@ function sessionDetail(model) {
  * is in flight. Silence past the window, whether from a crash, a closed tab or
  * a LayerCake restart, reads as not running, never as running forever (#4, #31).
  */
-function liveFrom(pidLive, wrapped, sessionId) {
+export function liveFrom(pidLive, wrapped, sessionId) {
   if (pidLive) return pidLive;
   if (!wrapped || !wrapped.reporting) return null;
   return { pid: null, sessionId, status: wrapped.running.length ? 'busy' : null, source: 'hooks' };

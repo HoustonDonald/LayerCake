@@ -19,11 +19,12 @@ import { claudeDataDir } from './paths.js';
 import { WINDOWS_POWERSHELL } from './powershell.js';
 import { readForDisplay } from './readfile.js';
 import { DIR_TIMEOUT_MS, withTimeout } from './safety.js';
-import { TranscriptReader } from './transcript.js';
+import { TranscriptReader, subagentMeta } from './transcript.js';
 
 export const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const LIVE_FILE_RE = /^\d+\.json$/;
-const AGENT_ID_RE = /^a[0-9a-f]{16}$/;
+export const AGENT_ID_RE = /^a[0-9a-f]{16}$/;
+const AGENT_FILE_RE = /^agent-(a[0-9a-f]{16})\.jsonl$/;
 
 /** Claude Code's default when cleanupPeriodDays is unset. */
 export const DEFAULT_RETENTION_DAYS = 30;
@@ -255,6 +256,31 @@ export async function getReader(sessionId) {
 
   await reader.refresh();
   return reader;
+}
+
+/**
+ * Every subagent transcript beside a session's, for the Castle (#159): its id,
+ * file and meta file. Found by listing the folder rather than from the parent's
+ * records, because a subagent started in the foreground only gets its id in
+ * the parent transcript when it finishes, and the Castle needs its Knight while
+ * it works. A name must match agent-a<16 hex>.jsonl, so the id that becomes part
+ * of a path is pattern-checked, as in subagentActivity.
+ */
+export async function subagentFiles(reader) {
+  const dir = path.join(path.dirname(reader.file), reader.sessionId, 'subagents');
+  const out = [];
+  for (const entry of await listDir(dir)) {
+    const m = AGENT_FILE_RE.exec(entry.name);
+    if (!entry.isFile() || !m) continue;
+    out.push({ agentId: m[1], file: path.join(dir, entry.name), metaFile: path.join(dir, `agent-${m[1]}.meta.json`) });
+  }
+  return out;
+}
+
+/** A subagent's meta file (type, the Agent call that started it), or empty values when it has none. */
+export async function readSubagentMeta(metaFile) {
+  const result = await readForDisplay(metaFile);
+  return subagentMeta(result.parsed);
 }
 
 /**

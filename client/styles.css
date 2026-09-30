@@ -2056,3 +2056,515 @@ pre.code {
   color: var(--text-faint);
   font-size: 11px;
 }
+
+/* ---------- castle (#159, #160) ----------
+   Its own dark palette, whatever the rest of the app uses: the lighting states
+   read as light on stone. Each state also has its own luminance step, a glyph
+   and a text label, so colour is never the only signal. Knight and session
+   colours stay out of the red, orange, amber, gold and blue the states use.
+   The tokens live on the view, not :root, so nothing else inherits them. */
+
+.castle-view {
+  --castle-bg: #0e1116;
+  --castle-panel: #151a21;
+  --castle-line: #2a313b;
+  --castle-text: #d7dce4;
+  --castle-dim: #8b93a1;
+  --castle-bad: #ff7b72;
+  --castle-dark-fill: #1b1f26;
+  --castle-dark-line: #2f3640;
+  --castle-embers-fill: #2a1d17;
+  --castle-embers-line: #6a4128;
+  --castle-embers-heat: #e07b2e;
+  --castle-survey-fill: #173049;
+  --castle-survey-line: #4a8ccc;
+  --castle-construction-fill: #7a5410;
+  --castle-construction-line: #f2b632;
+  --castle-proven-fill: #3a3417;
+  --castle-proven-line: #cfae4c;
+  --castle-alarm-fill: #5e1713;
+  --castle-alarm-line: #ff5a4f;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--castle-bg);
+  color: var(--castle-text);
+  color-scheme: dark;
+}
+
+.castle-view:fullscreen {
+  width: 100vw;
+  height: 100vh;
+}
+
+.castle-view .btn {
+  background: var(--castle-panel);
+  border-color: var(--castle-line);
+  color: var(--castle-text);
+}
+
+.castle-view .btn:hover:not(:disabled),
+.castle-view .btn.active {
+  border-color: #6c7686;
+  background: #1f2630;
+}
+
+.castle-view .dim {
+  color: var(--castle-dim);
+}
+
+.castle-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--castle-line);
+  font-size: 13px;
+}
+
+.castle-summary {
+  font-size: 15px;
+  flex: 1;
+  min-width: 260px;
+}
+
+.castle-toolbar.is-stale .castle-sessions,
+.castle-toolbar.is-stale .castle-summary > :not(.castle-error) {
+  opacity: 0.5;
+}
+
+.summary-alarm {
+  color: var(--castle-bad);
+}
+
+.castle-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.castle-sessions,
+.castle-mapbar {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  color: var(--castle-dim);
+}
+
+.castle-session {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--castle-text);
+}
+
+.castle-session.gone {
+  color: var(--castle-dim);
+}
+
+.session-waiting {
+  color: #f4f6fa;
+}
+
+.log-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: -1px;
+  box-shadow: 0 0 0 1px #0008;
+}
+
+.castle-error {
+  color: var(--castle-bad);
+}
+
+.castle-prompt {
+  flex-basis: 100%;
+  height: 140px;
+  background: var(--castle-panel);
+  color: var(--castle-text);
+  border: 1px solid var(--castle-line);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.castle-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.castle-stage {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.castle-svg {
+  display: block;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.castle-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--castle-dim);
+}
+
+/* Never fades: a dead stream must not pass for a quiet castle. */
+.castle-notlive {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: rgba(8, 10, 14, 0.78);
+  font-size: 15px;
+  line-height: 1.6;
+  z-index: 2;
+}
+
+.castle-reconnecting {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--castle-panel);
+  border: 1px solid var(--castle-line);
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--castle-dim);
+}
+
+.castle-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding: 6px 14px;
+  border-top: 1px solid var(--castle-line);
+  font-size: 12px;
+  color: var(--castle-dim);
+}
+
+.legend-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.legend-state .swatch {
+  width: 14px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1px solid;
+}
+
+.legend-sep {
+  width: 1px;
+  background: var(--castle-line);
+}
+
+.legend-unit b {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  line-height: 16px;
+  text-align: center;
+  border-radius: 50%;
+  background: #3a424e;
+  color: #fff;
+  font-size: 10px;
+}
+
+.legend-state.st-dark .swatch { background: var(--castle-dark-fill); border-color: var(--castle-dark-line); }
+.legend-state.st-embers .swatch { background: var(--castle-embers-fill); border-color: var(--castle-embers-line); }
+.legend-state.st-survey .swatch { background: var(--castle-survey-fill); border-color: var(--castle-survey-line); }
+.legend-state.st-construction .swatch { background: var(--castle-construction-fill); border-color: var(--castle-construction-line); }
+.legend-state.st-proven .swatch { background: var(--castle-proven-fill); border-color: var(--castle-proven-line); }
+.legend-state.st-alarm .swatch { background: var(--castle-alarm-fill); border-color: var(--castle-alarm-line); }
+.legend-state.scaffold .swatch {
+  background: repeating-linear-gradient(45deg, #ffffff55 0 2px, transparent 2px 6px), var(--castle-dark-fill);
+  border-color: var(--castle-dark-line);
+}
+
+/* The SVG. Fills and strokes transition over 1.5 s (spec: light fades, never
+   snaps); the 3 s hold is in CastleStage. */
+.castle-band .band-fill {
+  fill: #0b0d11;
+}
+
+.castle-band:hover .band-fill,
+.castle-band.selected .band-fill {
+  fill: #131820;
+}
+
+.castle-band .band-label {
+  fill: var(--castle-dim);
+  font-size: 13px;
+  text-anchor: middle;
+}
+
+.castle-band,
+.castle-room {
+  cursor: pointer;
+  outline: none;
+}
+
+.castle-wall {
+  fill: none;
+  stroke: #3a414c;
+  stroke-width: 6;
+}
+
+.castle-gate {
+  fill: var(--castle-bg);
+  stroke: #6c7686;
+  stroke-width: 2;
+}
+
+.gate-label {
+  fill: var(--castle-dim);
+  font-size: 13px;
+}
+
+.room-fill {
+  fill: var(--castle-dark-fill);
+  stroke: var(--castle-dark-line);
+  stroke-width: 2;
+  transition: fill 1.5s ease, stroke 1.5s ease, stroke-width 1.5s ease;
+}
+
+.room-heat {
+  fill: var(--castle-embers-heat);
+  pointer-events: none;
+  transition: opacity 1.5s ease;
+}
+
+.room-scaffold {
+  fill: url(#castle-hatch);
+  pointer-events: none;
+}
+
+.hatch-line {
+  stroke: #ffffff40;
+  stroke-width: 3;
+}
+
+.room-name {
+  fill: var(--castle-text);
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.room-state {
+  fill: var(--castle-dim);
+  font-size: 16px;
+}
+
+.room-tag {
+  fill: #ffffffb0;
+  font-size: 12px;
+  text-anchor: end;
+}
+
+.castle-room:focus-visible .room-fill,
+.castle-room.selected .room-fill {
+  stroke: #f4f6fa;
+  stroke-width: 3;
+}
+
+.castle-room.st-dark .room-heat { opacity: 0 !important; }
+.castle-room.st-embers .room-fill { fill: var(--castle-embers-fill); stroke: var(--castle-embers-line); }
+.castle-room.st-embers .room-state { fill: #d9b8a0; }
+.castle-room.st-survey .room-fill { fill: var(--castle-survey-fill); stroke: var(--castle-survey-line); }
+.castle-room.st-survey .room-state { fill: #d6e8ff; }
+.castle-room.st-survey .room-heat,
+.castle-room.st-construction .room-heat,
+.castle-room.st-proven .room-heat,
+.castle-room.st-alarm .room-heat { opacity: 0 !important; }
+.castle-room.st-construction .room-fill { fill: var(--castle-construction-fill); stroke: var(--castle-construction-line); stroke-width: 3; }
+.castle-room.st-construction .room-name,
+.castle-room.st-construction .room-state { fill: #fff6df; }
+.castle-room.st-proven .room-fill { fill: var(--castle-proven-fill); stroke: var(--castle-proven-line); }
+.castle-room.st-proven .room-state { fill: #f3e7b8; }
+.castle-room.st-alarm .room-fill {
+  fill: var(--castle-alarm-fill);
+  stroke: var(--castle-alarm-line);
+  stroke-width: 5;
+}
+/* The slow pulse: CastleStage toggles pulse-on every 1.2 s (no CSS animation,
+   which cost a sixth of a core; see usePulse). No transition on stroke-opacity. */
+.castle-svg.pulse-on .castle-room.st-alarm .room-fill { stroke-opacity: 0.35; }
+.castle-room.st-alarm .room-name,
+.castle-room.st-alarm .room-state { fill: #ffe3e0; }
+.castle-room.dropped { cursor: default; }
+.castle-room.dropped .room-fill { fill: none; stroke-dasharray: 8 6; }
+.castle-room.dropped .room-name { fill: var(--castle-dim); text-decoration: line-through; }
+
+.castle-unit circle {
+  stroke: #ffffff;
+  stroke-width: 2;
+}
+
+.castle-unit.resting {
+  opacity: 0.55;
+}
+
+.unit-letter {
+  fill: #0b0d11;
+  font-size: 14px;
+  font-weight: 700;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.unit-rest {
+  fill: var(--castle-dim);
+  font-size: 12px;
+}
+
+/* The Herald is the one unit allowed to demand attention. */
+.herald-ring {
+  fill: none;
+  stroke: #f4f6fa;
+  stroke-width: 3;
+}
+
+.castle-svg.pulse-on .herald-ring { opacity: 0.1; }
+
+/* The pulse is off with reduced motion (usePulse); the fades go too. */
+@media (prefers-reduced-motion: reduce) {
+  .room-fill,
+  .room-heat {
+    transition: none !important;
+  }
+}
+
+.castle-drawer {
+  width: 340px;
+  flex: none;
+  overflow: auto;
+  padding: 12px 14px;
+  border-left: 1px solid var(--castle-line);
+  background: var(--castle-panel);
+  font-size: 13px;
+}
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.drawer-head h3 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.castle-drawer h4 {
+  margin: 14px 0 4px;
+  font-size: 13px;
+  color: var(--castle-dim);
+}
+
+.drawer-state {
+  margin: 10px 0;
+  padding: 8px 10px;
+  border-left: 4px solid var(--castle-dark-line);
+  background: #0f1318;
+}
+
+.drawer-state.st-alarm { border-color: var(--castle-alarm-line); }
+.drawer-state.st-construction { border-color: var(--castle-construction-line); }
+.drawer-state.st-survey { border-color: var(--castle-survey-line); }
+.drawer-state.st-proven { border-color: var(--castle-proven-line); }
+.drawer-state.st-embers { border-color: var(--castle-embers-line); }
+
+.drawer-rule {
+  color: var(--castle-dim);
+  margin-top: 4px;
+}
+
+.drawer-note,
+.drawer-scaffold {
+  color: var(--castle-dim);
+}
+
+.drawer-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  margin: 8px 0;
+}
+
+.drawer-facts dt {
+  color: var(--castle-dim);
+}
+
+.drawer-facts dd {
+  margin: 0;
+}
+
+.drawer-files,
+.drawer-patterns {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.drawer-files li,
+.drawer-patterns li {
+  padding: 2px 0;
+  overflow-wrap: anywhere;
+}
+
+.castle-view code {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: #e6edf3;
+}
+
+.castle-log {
+  flex: 0 0 32%;
+  overflow: auto;
+  border-top: 1px solid var(--castle-line);
+  background: var(--castle-panel);
+  font-size: 12px;
+}
+
+.castle-log table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.castle-log td {
+  padding: 2px 10px;
+  white-space: nowrap;
+  border-bottom: 1px solid #1d232b;
+}
+
+.castle-log td.log-summary {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  width: 45%;
+}
+
+.log-bad {
+  color: var(--castle-bad);
+}

@@ -126,15 +126,19 @@ function openEventStream(url, { onEvent, onError, label, endedMessage }) {
     }
 
     if (!res.ok) {
-      // A refusal is an ordinary JSON body, not a stream.
+      // A refusal is an ordinary JSON body, not a stream. Its status and code
+      // ride along as a second argument, so a caller can tell a restarted
+      // server (403) from an expired scan (ESCANGONE).
       let message = `${label} failed (${res.status})`;
+      let code = null;
       try {
         const payload = await res.json();
         if (payload?.message) message = payload.message;
+        code = payload?.code || null;
       } catch {
         /* keep the status-based message */
       }
-      onError?.(message);
+      onError?.(message, { status: res.status, code });
       return;
     }
 
@@ -244,6 +248,38 @@ export function launchClaude(scanId) {
 
 export function getLaunches() {
   return request('/api/launches');
+}
+
+/* ------------------------------------------------------------------ castle */
+
+/**
+ * The Castle's live stream (#159): a "map" frame on connect and whenever the
+ * map changes, "state" frames when a room or unit changes, "log" frames with
+ * the latest events, and a "ping" every 30 s so a quiet castle can be told
+ * from a dead stream.
+ */
+export function followCastle(scanId, { onMap, onState, onLog, onPing, onError } = {}) {
+  return openEventStream(`/api/castle/stream?scanId=${encodeURIComponent(scanId)}`, {
+    label: 'Castle stream',
+    endedMessage: 'The castle stream ended.',
+    onError,
+    onEvent: (event, payload) => {
+      if (event === 'map') onMap?.(payload);
+      else if (event === 'state') onState?.(payload);
+      else if (event === 'log') onLog?.(payload);
+      else if (event === 'ping') onPing?.(payload);
+      else if (event === 'error') onError?.(payload?.message || 'Castle stream error', { status: null, code: null });
+    },
+  });
+}
+
+/** A room's recent files (paths only), for the detail drawer. */
+export function getCastleRoom(scanId, room) {
+  return request(`/api/castle/room?scanId=${encodeURIComponent(scanId)}&room=${encodeURIComponent(room)}`);
+}
+
+export function reloadCastleMap(scanId) {
+  return post('/api/castle/reload', { scanId });
 }
 
 /** Live state for one session: small updates, never content. */

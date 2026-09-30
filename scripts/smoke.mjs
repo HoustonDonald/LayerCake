@@ -32,6 +32,7 @@ import { projectSlug, samePathKey } from '../server/paths.js';
 import { buildClientIfStale } from './build-if-stale.js';
 import { makeSessionFixture, runLaunchChecks, runSessionChecks, runSummaryChecks, stopFixtureProcesses } from './smoke-sessions.mjs';
 import { runCreateChecks } from './smoke-create.mjs';
+import { runCastleChecks } from './smoke-castle.mjs';
 import { runManagedChecks, runManagedDefaultsChecks, runManagedWatchCheck } from './smoke-managed.mjs';
 import { runConfigHomeChecks } from './smoke-confighome.mjs';
 
@@ -58,6 +59,7 @@ function freePort() {
 // its checks run against the winner's server, fixture and code (#28).
 const PORT = Number(process.env.SMOKE_PORT || (await freePort()));
 const REPORT_WINDOW_MS = 4000;
+const CASTLE_TIME_SCALE = 0.05;
 const BASE = `http://127.0.0.1:${PORT}`;
 
 let pass = 0;
@@ -373,6 +375,9 @@ const server = spawn(process.execPath, [path.join(ROOT, 'server', 'index.js')], 
     // A launched session counts as running for this long after its last
     // report. 45 s in use; short here so "stopped reporting" can be tested.
     LAYERCAKE_REPORT_WINDOW_MS: String(REPORT_WINDOW_MS),
+    // The Castle's windows (60 s active, 45 s heat half-life, 10 min thrash)
+    // at 1/20, so their lapses can be tested in seconds (#160).
+    LAYERCAKE_CASTLE_TIME_SCALE: String(CASTLE_TIME_SCALE),
     // AI summaries run a stand-in for claude: no usage is ever spent here.
     LAYERCAKE_CLAUDE_CMD: JSON.stringify([
       process.execPath,
@@ -1875,6 +1880,14 @@ try {
 
   // --- AI summaries, against a stand-in claude --------------------------------
   await runSummaryChecks({ base: BASE, token, check, skip, proj, smokeDir, appData });
+
+  // --- the Castle (#159, #160): hooks, transcripts, map, fold, stream ---------
+  // A project folder of its own: the main one already holds live sessions.
+  // It ends by scanning 8 times to test eviction, so it runs just before the
+  // create checks, which re-scan for themselves.
+  const castleStarted = Date.now();
+  await runCastleChecks({ base: BASE, token, check, smokeDir, claudeData });
+  process.stdout.write(`  (castle checks took ${((Date.now() - castleStarted) / 1000).toFixed(1)} s)\n`);
 
   // --- create and delete (#15), restoring a file gone from disk (#92) --------
   // Last, because it scans more often than the server keeps scans (8), which

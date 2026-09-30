@@ -4,7 +4,7 @@ Working state for picking this up in a new session. **Disposable.** Durable rule
 `CLAUDE.md`, user-facing spec in `README.md`. If something here contradicts those, they win and this
 file is stale.
 
-Last verified: **2026-09-28**. Write/snapshot work was done 2026-09-05; file watching 2026-09-15;
+Last verified: **2026-09-29** (the Castle, section below). Write/snapshot work was done 2026-09-05; file watching 2026-09-15;
 the single executable and the app-window isolation fix 2026-09-25; session history (Phase 1 of the
 session-wrap plan) 2026-09-26; testing against a copy of a real project, 2026-09-26 to 27 (see
 those sections below).
@@ -31,8 +31,62 @@ at `/tmp/layercake-linux-smoke`, lockfile unchanged so `rsync` the tree over it 
 `node scripts/smoke.mjs`): 341 passed, 0 failed, 17 skipped on 2026-09-28 with 42df32a.
 Smoke writes and deletes a throwaway `HKCU\Software\LayerCakeSmoke-*` key on Windows (#147).
 
-`dist\LayerCake.exe` was rebuilt from e439593 at 17:39 on 2026-09-28 and launch-checked; it is
-current. Older "not rebuilt" notes below are history.
+2026-09-29, with the Castle: `node scripts/smoke.mjs` gave 477 passed, 0 failed, 3 skipped (the
+same three skips), the castle checks taking about 21 s of it.
+
+**`dist\LayerCake.exe` is STALE: built from e439593, before the Castle.** The owner's copy was open,
+so the Castle exe was built and launch-checked in a tree copy instead
+(`exe-lifecycle-castle.ps1`, all passed). Rebuild `dist` once the owner has closed LayerCake.
+Older "not rebuilt" notes below are history.
+
+### 2026-09-29: the Castle view (#159, #160; #164 found on the way)
+
+The owner's spec `VisualizerSpec.md` ("The Castle": a live, passive picture of a project, rooms lit
+by what Claude does in them, units for the session, subagents, skills, MCP and web calls, a Herald
+when Claude waits). The plan, reviewed by two design agents against the code, is at
+`C:\Users\donal\.claude\plans\review-the-contents-of-glimmering-shamir.md`. Owner decisions 18 to 20
+below. Built: the spec's Phase 1 (wiring, event log) and Phase 2 (the plain castle), one commit.
+Phases 3 to 5 are #161 to #163 (#162, art, needs the owner's direction first). The README
+"Castle" section is the user-facing spec; CLAUDE.md has the invariants (the Castle paragraph, the
+transcript and ingest lines, the known limit).
+
+What it is, in the code: `server/castle.js` (sessions, the merge of hook and transcript events by
+tool_use_id, the fold, the state), `server/castlemap.js` (floor plan, built-in patterns, castle.json
+read only, a hand-written glob matcher, command rules, the Copy-prompt text),
+`server/castle-routes.js`, a per-session ring of reduced records in `ingest.js`, `toolTargets` /
+`toolVerdict` / `SubagentReader` in `transcript.js`, and `client/components/CastleView.jsx` and
+`CastleStage.jsx` (SVG). Full Screen is element full screen of the Castle view.
+
+**Mutants** (`mutate-castle.mjs`, the final tree): all 24 caught, control 477/0. One ("hooks push
+only on the 1 s tick") is caught by timing, not firmly. Another, "units of stopped sessions kept",
+survived the first round and was class (a) (a terminal session ends with no SessionEnd), so smoke
+gained the check that now catches it.
+
+Measured and found, each in the commit message:
+- **Real-session probe** (`probe-castle.mjs`, `claude -p` on Haiku, $0.10): 11 of 11 tool calls in
+  the castle log, none doubled; hook to castle 89 to 265 ms; the transcript shows each call a median
+  205 ms after its hook, so the spec's "transcripts lag" does not hold for tool calls. Hook
+  `agent_id` has the transcript file's format (`a` + 16 hex). This session, read from its own
+  transcript: 1.8 to 2.8 s behind (parallel calls land when the whole response does).
+- **#164, found by that probe and fixed:** a command Claude Code refused before running it was a
+  failed test run (the transcript records a refusal as an error; no hook failure fires).
+- **The fold oracle** (smoke: close every stream, reopen, the fresh fold must equal the old) caught a
+  real defect on its first run: a session joining a castle later never had its subagent files read.
+- **Idle cost:** a smooth CSS pulse on an Alarm cost 15.9% of a core in the renderer, a stepped one
+  still 5.6%; a class toggled every 1.2 s costs 0.19% (`ui-idle.mjs`).
+- **picomatch rejected:** a review agent measured it running over a minute on one hostile pattern;
+  the hand-written matcher agreed with it on 200,000 random cases (`diff-glob.mjs`) and smoke asserts
+  its hostile/benign time ratio.
+
+Tooling, in this session's scratchpad (`%TEMP%\claude\c--dev-layercake\f49f6395-...\scratchpad`):
+`mutate-castle.mjs` (every Castle mutant; engine from `mutate-64.mjs`), `probe-castle.mjs`,
+`castle-live.mjs` (a castle stream on real sessions, frames summarised), `ui-castle.mjs` and
+`ui-castle-2.mjs` (headless Edge: render, drawer, full screen, the 3 s hold, Alarm skipping it,
+rescan, clipboard, reduced motion, not-live layer, colour-vision screenshots), `ui-idle.mjs`,
+`diff-glob.mjs`, `bench-fold.mjs`, `build-exe-copy.mjs`, `exe-lifecycle-castle.ps1` with
+`castle-exe-check.mjs` (the exe from a tree copy: castle stream, Castle tab, full screen in an
+app-mode window with the exe's flags, window close ends it), `survey-shapes.mjs` (key names and
+counts of real transcripts, no content).
 
 ### 2026-09-28, night: the (b) queue (#76, #54, #64; #95 part 1 left open)
 
@@ -596,6 +650,18 @@ Made by the owner on 2026-09-28, asked in the terminal, each the recommended opt
     `Policies\ClaudeCode` keys, fixed argv, read only, 5 s timeout, output parsed as data. Built
     2026-09-28 (`server/policy.js`), with its line in CLAUDE.md. The note's "server-managed
     settings cannot be read from disk" was wrong: see the #147 section above.
+
+Made by the owner on 2026-09-29, asked in the terminal while planning the Castle, each the
+recommended option:
+
+18. **The Castle draws sessions LayerCake did not launch from their transcripts**, labelled "from
+    its transcript, about N s behind; no waiting signal". Overrides the spec's "transcripts never
+    drive the live view"; launched sessions stay hook-driven.
+19. **The floor plan is the proposed 3 by 4 grid.** The spec's own diagram did not come through in
+    the file; Keep, Great Hall and Barracks are the assistant's additions to the nine rooms its text
+    names. It is one table (`ROOMS` in castlemap.js), replaceable while nobody has learned it.
+20. **Full Screen is for the Castle view only** (element full screen: the header, tabs and watch bar
+    go). The hook is inside CastleView.jsx; moving it to its own file is the cost of reuse.
 
 ---
 

@@ -820,6 +820,138 @@ LayerCake's own data (summary cards, AI summaries, the usage ledger) lives in
 `%LOCALAPPDATA%\LayerCake\data`, never under `~/.claude`. Override it with `LAYERCAKE_APPDATA_DIR`,
 and the Claude data folder read for sessions with `LAYERCAKE_CLAUDE_DATA_DIR`.
 
+## Castle
+
+The **Castle** tab (after a scan) is a live picture of the Claude Code sessions working in the
+scanned project, meant to be read from across the desk: the project's functional areas are rooms
+that light up with what Claude does in them, and each session, subagent, skill, MCP call and web call
+is a lettered dot standing where it works. The spec is `VisualizerSpec.md`; this build is its Phase 1
+(the wiring and an event log) and Phase 2 (the plain castle: labelled boxes and dots). Movement, art
+and polish are issues #161 to #163. Everything shown comes from a real event: when LayerCake knows
+nothing, the castle shows less, never something invented.
+
+**Full screen.** The Castle's **Full screen** button fills the screen with the Castle view alone:
+the header, the tabs and the watch bar go, and Esc or **Exit full screen** brings them back. (F11 is
+the browser's own full screen for the whole window, header included.)
+
+**Where it comes from.**
+
+- **Sessions started with Start Claude here** report through their hooks, as they already do for the
+  Sessions tab. A tool call reaches the castle within a second, and only these sessions can say that
+  Claude is **waiting for you** (the Herald).
+- **Any other running session in the project** (started in a terminal, an IDE, anywhere) is drawn
+  from its transcript, which Claude Code writes when each model response completes: a tool call
+  appears when the response that makes it lands, and its result when the tool finishes. Each is
+  labelled "from its transcript, about N s behind; no waiting signal", N measured live from the
+  session's own new calls. Subagents are read from their own transcripts.
+- A launched session is also backfilled from its transcript, so opening the castle mid-session, or
+  after LayerCake restarts, shows what happened before. A call both sources report counts once,
+  keyed by its tool_use id.
+- The castle includes every session running now whose start folder is the project or inside it, and,
+  if none is running, the most recent one, so it shows how that session left things. At most 6.
+
+**The floor plan** is fixed: twelve rooms in a 3 by 4 grid, the gate under the Gatehouse, the Wilds
+outside the wall. Rooms never move. Built-in patterns assign files by folder and file names that
+usually mean the job:
+
+| Room | Job | Built-in examples |
+|---|---|---|
+| Vault | database, schema, migrations | `**/db/**`, `**/migrations/**`, `**/*.sql` |
+| Keep | core logic, shared libraries | `**/lib/**`, `**/core/**`, `**/utils/**` |
+| Rookery | MCP servers, integrations | `**/integrations/**`, `**/.mcp.json` |
+| Scriptorium | logs | `**/logs/**`, `**/*.log` |
+| Library | documentation | `**/docs/**`, `**/*.md` |
+| Barracks | jobs, workers, queues | `**/jobs/**`, `**/workers/**` |
+| Workshop | configuration, scripts, CI | `**/scripts/**`, `**/.github/**`, `**/package.json` |
+| Great Hall | user interface | `**/client/**`, `**/components/**`, `**/*.css`, `**/*.jsx` |
+| Proving Grounds | tests | `**/tests/**`, `**/*.test.*`, `**/*smoke*` |
+| Watchtower | auth and security | `**/auth/**`, `**/*auth*`, `**/*security*` |
+| Gatehouse | routes, API, entry points | `**/routes/**`, `**/api/**`, `**/app.*` |
+| Steward's Hall | services, request handling | `**/services/**`, `**/middleware/**` |
+
+The full lists are on the page (click a room). A file several rooms claim lights all of them. A file
+in the project that no room claims is counted in **the Wilds**, which is the sign the map needs a
+pattern; a file outside the project is counted apart, since no pattern could claim it.
+
+**Room states**, highest priority first. The page shows each rule beside the state (hover a state in
+the legend, or click a room); the rules come from the server with the data.
+
+| State | When |
+|---|---|
+| Alarm | A change to a file here failed; a test or build run failed while this room had unproven changes; or one file here was edited 4 or more times in 10 minutes with no passing test or build between (thrash) |
+| Construction | A file here was edited or created in the last 60 s |
+| Survey | Read, searched, or worked on by a shell command in the last 60 s, with no change |
+| Proven | Changed, then a proof run passed, and not changed since; ends with the session that ran it |
+| Embers | Touched by the current sessions, quiet now; brightness follows recent activity |
+| Dark | Not touched by the current sessions |
+
+- **Scaffolding** (a hatch and "unproven") marks a room changed since the last passing proof run,
+  whatever its lighting: unverified work at a glance.
+- **Runs.** A shell call is a test, build or migration run when a segment of its command starts with a
+  rule's words (`npm test`, `npm run smoke`, `pytest`, `dotnet build`, ...; castle.json adds the
+  project's own). It passes or fails by its exit code, so `npm test | tail` reads as `tail`'s. A run
+  started in the background has no verdict. A run judges every scaffolded room: a pass takes their
+  scaffolding down, a failure raises their Alarm (a heuristic: the failing test may have nothing to
+  do with that room, and the room's detail says which run caused it). **Proof** is a passing test
+  run by default; a project with no tests sets `"proof": ["test", "build"]`.
+- **No verdict is not a failure.** A call you deny, one Claude Code rejects or refuses before it
+  runs, and one you interrupt never raise an Alarm, and a run with no exit code (refused, timed out)
+  proves and fails nothing. A transcript records a refused call as an error, so from a transcript an
+  error counts as a failure only with evidence the tool ran: an exit code, or a system error code
+  such as EACCES.
+- **Alarm clears by cause:** a failed change on a later successful call in that room, a failed run
+  on a passing proof run (a failed build also on a passing build), thrash on any passing test or build.
+- **Session end:** Construction, Survey and Proven fall to Embers; Alarm and scaffolding stay until
+  their rule clears them, because they describe the code, not the session.
+- A room holds what it shows for 3 s before changing, except to Alarm, which shows at once; light
+  fades over 1.5 s. With reduced motion set, nothing pulses.
+
+**Units** (dots with a letter): **M** a session, in the room of its latest call, resting after 60 s
+without one; **K** a subagent (Knight), from its start to its stop; **W** a skill Claude invoked
+(Wizard), beside its caller until the caller's turn ends (a skill you type as `/name` is not seen);
+**R** an MCP call (Raven) at the Rookery; **S** a web fetch or search (Scout) beyond the gate; **H**
+the Herald at the gate while a launched session waits for you, the one unit that pulses.
+
+**castle.json.** A project can adjust its map with `castle.json` at its root. LayerCake reads it and
+never writes it. **Copy prompt for Claude** copies a prompt to paste into a Claude session in the
+project, so Claude drafts the file from the project's real layout; the prompt is built by the server
+from the same rules the file is checked against. **Reload map** re-reads it, and so does an edit to
+it that the castle sees.
+
+```json
+{
+  "version": 1,
+  "rooms": { "vault": { "name": "Treasury", "patterns": ["src/data/**"] }, "barracks": { "drop": true } },
+  "commands": [{ "words": "npm run smoke", "kind": "test" }],
+  "proof": ["test"]
+}
+```
+
+- Room ids are fixed; a room can be renamed or dropped, not added or moved. Giving a room `patterns`
+  replaces its built-in ones.
+- Patterns are relative to the project root with `/`; only `*`, `?` and whole-segment `**` are
+  wildcards (no braces, classes, `!` or backslashes); a pattern without a slash matches at the root
+  only. At most 50 patterns a room, 200 characters each, 100 command rules, 64 KB.
+- A file that cannot be used leaves the built-in map in force AND the page says why.
+- castle.json can arrive in a cloned repository, so it is data only: the matcher is LayerCake's own
+  and cannot be made to backtrack (a pattern that kept a regular-expression matcher busy for over a
+  minute costs microseconds), and command rules are word prefixes, never regular expressions.
+
+**Things to know.**
+
+- The castle exists only while a Castle tab is open: nothing is followed or kept for a project nobody
+  is looking at. A hidden tab pauses its stream (each open stream holds one of the browser's six
+  connections to LayerCake) and catches up when shown.
+- When the stream stops, a "Not live since ..." layer says so and does not fade: a dead stream never
+  passes for a quiet castle. After a LayerCake restart the page must be reloaded.
+- Hook history is kept in memory, so a restart loses what only the hooks saw (the Herald's history);
+  the transcript backfills the rest.
+- At most 4 castle streams at once, 6 sessions per castle, and the latest 20,000 events per castle
+  (the page says when older ones are left out).
+- Searches light a room only when scoped to a folder that room claims; their matched files are not
+  used. A shell command's changes to files are not seen (only the files a tool names), so a room a
+  script rewrote stays as it was.
+
 ## Network posture
 
 - Binds `127.0.0.1` only, never `0.0.0.0`.
@@ -831,7 +963,11 @@ and the Claude data folder read for sessions with `LAYERCAKE_CLAUDE_DATA_DIR`.
   page token it needs that launch's secret (compared in constant time), refuses any request
   carrying an `Origin` header (a browser always sends one; Claude Code does not), and is behind the
   Host guard like everything else. What arrives is kept in memory, reduced to tool names and
-  one-line summaries.
+  one-line summaries, plus, for the Castle, the file paths a call names, the first words of a shell
+  command (to recognise a test or build run; never sent to the page) and whether the call succeeded.
+  No tool input or output body is kept.
+- Castle routes (`/api/castle/*`) take a scan id, never a path, and serve paths, tool names, one-line
+  summaries and room states.
 - Session routes serve prompts and replies, so they accept only a session id the server itself
   discovered on disk, never a path, the same way file routes accept only what a scan found.
 - `/api/file` and `/api/write` only touch a path the preceding scan discovered. The scan result *is*
@@ -911,7 +1047,10 @@ server/
   session-routes.js  /api/sessions, /api/session/*, /api/history, /api/usage
   launch.js      Start Claude here: Windows Terminal + per-session --settings
   ingest.js      status line and hook posts from launched sessions
-client/          React UI: explorer, viewers, editor, snapshots, watch bar, sessions
+  castle.js      the Castle: sessions, events from hooks and transcripts, the fold, the state
+  castlemap.js   the Castle's floor plan, castle.json, the glob matcher, command rules
+  castle-routes.js  /api/castle/stream, /api/castle/room, /api/castle/reload
+client/          React UI: explorer, viewers, editor, snapshots, watch bar, sessions, castle
 cli/             the layercake CLI, importing server modules directly
 scripts/
   start.js            build-if-stale, then serve
@@ -920,6 +1059,7 @@ scripts/
   install-shortcut.ps1  per-user Start Menu shortcut (-Desktop, -Uninstall)
   smoke.mjs           end to end test over the real HTTP API
   smoke-sessions.mjs  its session part: a synthetic Claude data folder and checks
+  smoke-castle.mjs    its Castle part: hooks, transcripts, castle.json, the fold
   make-icon.mjs       draws desktop/layercake.ico; run by hand, the .ico is committed
 desktop/
   window.js      the app window: browser, profile, isolation flags, error page

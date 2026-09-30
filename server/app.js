@@ -52,6 +52,7 @@ import {
 import { MAX_FILE_BYTES, isSecret, describeError, writePolicy } from './safety.js';
 import { hostGuard, injectToken, originGuard, requireToken } from './security.js';
 import { registerSessionRoutes } from './session-routes.js';
+import { closeCastleStreamsFor, registerCastleRoutes } from './castle-routes.js';
 import { listLaunches, registerIngestRoutes } from './ingest.js';
 import { launchClaude } from './launch.js';
 import {
@@ -99,6 +100,9 @@ function closeStreamsFor(scanId) {
   for (const stream of [...watchStreams]) {
     if (stream.scanId === scanId) stream.close();
   }
+  // The Castle takes its project from the scan too (#159), so an evicted scan
+  // ends its streams; the page reconnects under its current scan.
+  closeCastleStreamsFor(scanId);
 }
 
 /** Windows paths are case insensitive, so allowlist lookups are normalized. */
@@ -547,6 +551,10 @@ export function createApp({ port, staticFiles }) {
   // Session history and live sessions. Registered here, after the /api guards,
   // so every one of them is behind the Host, origin and token checks.
   registerSessionRoutes(app);
+
+  // The Castle view (#159, #160), behind the same guards. Its project comes from
+  // the scan store, never the request, as for /api/launch below.
+  registerCastleRoutes(app, { projectFor: (scanId) => scans.get(scanId)?.lineage.projectDir || null });
 
   // "Start Claude here". The directory comes from the scan store, never from the
   // request body, the same way a write takes its target from the scan.

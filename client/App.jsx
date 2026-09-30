@@ -31,6 +31,7 @@ import FlattenView from './components/FlattenView.jsx';
 import FileEditor from './components/FileEditor.jsx';
 import SnapshotPanel from './components/SnapshotPanel.jsx';
 import SessionsView from './components/SessionsView.jsx';
+import CastleView from './components/CastleView.jsx';
 import WatchBanner from './components/WatchBanner.jsx';
 
 /**
@@ -376,6 +377,9 @@ export default function App() {
           <button className={mode === 'sessions' ? 'active' : ''} onClick={() => switchMode('sessions')}>
             Sessions
           </button>
+          <button className={mode === 'castle' ? 'active' : ''} onClick={() => switchMode('castle')} disabled={!lineage}>
+            Castle
+          </button>
         </div>
 
         {recent.length > 1 && (
@@ -423,6 +427,13 @@ export default function App() {
       {mode === 'sessions' ? (
         <div className="panes single">
           <SessionsView key={lineage?.projectDir || 'none'} projectDir={lineage?.projectDir || null} scanId={lineage?.scanId || null} />
+        </div>
+      ) : mode === 'castle' && lineage ? (
+        // Keyed on the project, not the scan (#159): a rescan (the watch bar,
+        // a create, a delete) gives a new scan id, and the castle reconnects
+        // under it instead of starting over.
+        <div className="panes single">
+          <CastleView key={pathKey(lineage.projectDir)} scanId={lineage.scanId} projectDir={lineage.projectDir} />
         </div>
       ) : mode === 'snapshots' && lineage ? (
         // Full width, as Sessions is (#143; owner decision 2026-09-28): the

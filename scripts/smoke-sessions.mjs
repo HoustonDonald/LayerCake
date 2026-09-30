@@ -59,7 +59,7 @@ function cimStart(pid, form) {
 
 /** Idle processes standing in for running sessions; stopFixtureProcesses ends them. */
 const fixtureChildren = [];
-function idleProcess() {
+export function idleProcess() {
   const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 600000)'], { stdio: 'ignore', windowsHide: true });
   fixtureChildren.push(child);
   return child;
@@ -341,7 +341,7 @@ export async function makeSessionFixture(smokeDir, proj) {
   return { claudeData, appData };
 }
 
-function get(base, pathname, headers) {
+export function get(base, pathname, headers) {
   return new Promise((resolve, reject) => {
     http
       .get(`${base}${pathname}`, { headers }, (res) => {
@@ -550,7 +550,7 @@ export async function runSessionChecks({ base, token, check, skip, proj, appData
 }
 
 /** A POST with a JSON body and headers of our choosing (Host and Origin included). */
-function postRaw(base, pathname, body, headers = {}) {
+export function postRaw(base, pathname, body, headers = {}) {
   return new Promise((resolve, reject) => {
     const data = Buffer.from(JSON.stringify(body));
     const req = http.request(

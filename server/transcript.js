@@ -17,11 +17,17 @@
  * deliberately drops what the product neither needs nor should hold: CLAUDE.md
  * bodies from instruction attachments (paths only), the system prompt
  * snapshot, the account email, and tool input and output bodies (a one-line
- * summary per tool call instead).
+ * summary per tool call instead). For the Castle (#159) a tool call also keeps
+ * the file paths it names and the first words of a shell command's segments
+ * (toolTargets), and its verdict; the words are for matching test and build
+ * rules and are never sent to the page. Subagent transcripts are read for their
+ * tool calls only (SubagentReader).
  *
  * Field meanings were established from a survey of 44 real sessions written by
  * Claude Code 2.1.197 to 2.1.282 on 2026-09-26.
  */
+
+import path from 'node:path';
 
 import { JsonlTail } from './jsonl.js';
 
@@ -198,6 +204,107 @@ export function classifyUser(r) {
   return { kind: 'prompt', text, images, source: r.promptSource || null };
 }
 
+/** Tools whose input names a command line (the Castle's shell verb). */
+export const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
+const MAX_TARGET_PATHS = 4;
+const MAX_HEAD_SEGMENTS = 8;
+const HEAD_WORDS = 4;
+
+/**
+ * What a tool call points at, for the Castle (#159): the files it names and,
+ * for a shell call, the first words of each command segment ("heads"), which
+ * is all a test or build rule needs to recognise `npm test` or `dotnet build`.
+ * Shared by ingest (hooks), the main transcript and subagent transcripts, so
+ * the three sources cannot classify one call differently.
+ *
+ * Paths come from `file_path`, `notebook_path` and `path` (Grep and Glob), as
+ * strings only (#33). A relative one resolves against the caller's own cwd,
+ * never against LayerCake's: without a cwd it is dropped. Heads are held in
+ * memory to match against rules and never sent to the page; the page gets the
+ * one-line summary, as it always has.
+ */
+export function toolTargets(name, input, cwd) {
+  const str = (v) => (typeof v === 'string' ? v : '');
+  const i = input && typeof input === 'object' ? input : {};
+  const base = str(cwd);
+  const paths = [];
+  for (const raw of [str(i.file_path), str(i.notebook_path), str(i.path)]) {
+    if (!raw || paths.length >= MAX_TARGET_PATHS) continue;
+    let p = null;
+    if (path.isAbsolute(raw)) p = path.normalize(raw);
+    else if (base && path.isAbsolute(base)) p = path.resolve(base, raw);
+    if (p && !paths.includes(p)) paths.push(p);
+  }
+  const heads = SHELL_TOOLS.has(str(name)) ? commandHeads(str(i.command)) : [];
+  return { paths, heads, background: i.run_in_background === true };
+}
+
+/**
+ * The first words of each segment of a command line, lowercased, split on
+ * `&&`, `||`, `;`, `|` and newlines. Leading environment assignments
+ * (`CI=1 npm test`) and a leading `(` are skipped, so the words are the
+ * program and its first arguments.
+ */
+export function commandHeads(command) {
+  if (typeof command !== 'string' || !command) return [];
+  const out = [];
+  for (const segment of command.slice(0, 4000).split(/&&|\|\||[;|\r\n]/)) {
+    const words = segment.trim().replace(/^\(+/, '').split(/\s+/).filter(Boolean);
+    while (words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) words.shift();
+    if (words.length) out.push(words.slice(0, HEAD_WORDS).map((w) => w.replace(/^["']|["']$/g, '').toLowerCase()));
+    if (out.length >= MAX_HEAD_SEGMENTS) break;
+  }
+  return out;
+}
+
+const DENIED_RE = /Permission for this action was denied|doesn't want to proceed/;
+
+/**
+ * What a finished tool call says, the same way for a hook and a transcript:
+ *   { ok: true }                          it ran and succeeded
+ *   { ok: false, exitCode: n | null }     it ran and failed ("Exit code N" is
+ *                                          how a shell reports it, docs: hooks)
+ *   { ok: null, reason }                  no verdict: denied, rejected before
+ *                                          it ran (<tool_use_error>, which
+ *                                          fires no failure hook), interrupted,
+ *                                          or not shown to have run
+ * A denial or an interrupt must never read as a failure: saying "No" to Claude
+ * is not trouble in the code (#160).
+ *
+ * `ran` is true for a hook's PostToolUseFailure, which fires only for a tool
+ * that started executing (docs: hooks). A transcript error carries no such
+ * guarantee: Claude Code also records a call its own checks refused before it
+ * ran, in words that change between versions ("Compound command changes
+ * working directory ... require manual approval", measured 2026-09-29, #164).
+ * So without `ran`, an error is a failure only on evidence the tool ran: an
+ * exit code, or a system error code such as EACCES or ENOENT.
+ */
+export function toolVerdict({ isError, text, interrupted, ran = false }) {
+  if (interrupted) return { ok: null, reason: 'interrupted' };
+  if (!isError) return { ok: true };
+  const t = typeof text === 'string' ? text : '';
+  const first = t.split('\n', 1)[0].trim();
+  const exit = /^(?:Error: )?Exit code (\d+)/.exec(first);
+  if (exit) return { ok: false, exitCode: Number(exit[1]) };
+  if (DENIED_RE.test(t)) return { ok: null, reason: 'denied' };
+  if (/^\s*<tool_use_error>/.test(t)) return { ok: null, reason: 'rejected' };
+  if (/^\[Request interrupted/.test(first)) return { ok: null, reason: 'interrupted' };
+  if (ran || /\bE[A-Z]{3,}\b/.test(first)) return { ok: false, exitCode: null };
+  return { ok: null, reason: 'not run' };
+}
+
+/** A transcript tool_result block's verdict (toolVerdict), with its record's toolUseResult. */
+function resultVerdict(block, result) {
+  const interrupted = Boolean(result && typeof result === 'object' && !Array.isArray(result) && result.interrupted === true);
+  return toolVerdict({ isError: Boolean(block.is_error), text: textOf(block.content), interrupted });
+}
+
+/** A Write's own word for what it did, when it says: 'create' or 'update'. */
+export function writeTypeOf(result) {
+  const t = result && typeof result === 'object' && !Array.isArray(result) ? result.type : null;
+  return t === 'create' || t === 'update' ? t : null;
+}
+
 /** One line describing a tool call, from its input. Never the input body itself. */
 export function toolSummary(name, input) {
   // Strings only: ingest passes hook bodies straight in, and String() on an
@@ -358,6 +465,8 @@ function applyUser(model, r, at, state) {
     if (!tool) continue;
     tool.done = true;
     tool.endAt = at;
+    tool.verdict = resultVerdict(block, r.toolUseResult);
+    tool.writeType = writeTypeOf(r.toolUseResult);
     if (block.is_error) {
       tool.error = true;
       model.toolFailures += 1;
@@ -494,10 +603,14 @@ function applyAssistant(model, r, at, state) {
         id: block.id,
         name: block.name,
         summary: toolSummary(block.name || '', block.input),
+        // For the Castle (#159): paths and command heads, never the input body.
+        targets: toolTargets(block.name, block.input, r.cwd),
         at,
         endAt: null,
         done: false,
         error: false,
+        verdict: null,
+        writeType: null,
       };
       turn.tools.push(tool);
       if (block.id) state.toolsById.set(block.id, tool);
@@ -660,6 +773,99 @@ export class TranscriptReader {
   get mtimeMs() {
     return this.tail.mtimeMs;
   }
+}
+
+/**
+ * Tool calls from one subagent's own transcript, for the Castle (#159):
+ * <session>/subagents/agent-<id>.jsonl, where every record carries isSidechain,
+ * its agentId and its own cwd (surveyed 2026-09-29: 705 files, 115,828
+ * records, all three on every one). Keeps tool calls only (name, summary,
+ * targets, times, verdict), nothing the subagent said. The caller passes a file
+ * sessions.js found by a pattern-checked name; no path comes from a record.
+ *
+ * Record types it does not recognise are counted in `unknown`, which the
+ * Castle reports on its own, so the session view's "Transcript read" figure
+ * does not depend on whether a Castle tab is open.
+ */
+export class SubagentReader {
+  constructor(agentId, file) {
+    this.agentId = agentId;
+    this.file = file;
+    this.tail = new JsonlTail(file, (record) => this.apply(record), () => this.reset());
+    this.reset();
+  }
+
+  reset() {
+    this.tools = [];
+    this.toolsById = new Map();
+    this.uuids = new Set();
+    this.firstAt = null;
+    this.lastAt = null;
+    this.unknown = {};
+  }
+
+  apply(r) {
+    if (!r || typeof r !== 'object') return;
+    if (r.uuid) {
+      if (this.uuids.has(r.uuid)) return;
+      this.uuids.add(r.uuid);
+    }
+    const at = typeof r.timestamp === 'string' ? r.timestamp : null;
+    if (at) {
+      if (!this.firstAt) this.firstAt = at;
+      this.lastAt = at;
+    }
+    if (r.type === 'assistant') {
+      for (const block of Array.isArray(r.message?.content) ? r.message.content : []) {
+        if (block?.type !== 'tool_use' || !block.id || this.toolsById.has(block.id)) continue;
+        const tool = {
+          id: block.id,
+          name: block.name,
+          summary: toolSummary(block.name || '', block.input),
+          targets: toolTargets(block.name, block.input, r.cwd),
+          at,
+          endAt: null,
+          done: false,
+          error: false,
+          verdict: null,
+          writeType: null,
+        };
+        this.tools.push(tool);
+        this.toolsById.set(block.id, tool);
+      }
+    } else if (r.type === 'user') {
+      if (!Array.isArray(r.message?.content)) return;
+      for (const block of r.message.content) {
+        if (block?.type !== 'tool_result') continue;
+        const tool = this.toolsById.get(block.tool_use_id);
+        if (!tool) continue;
+        tool.done = true;
+        tool.endAt = at;
+        tool.error = Boolean(block.is_error);
+        tool.verdict = resultVerdict(block, r.toolUseResult);
+        tool.writeType = writeTypeOf(r.toolUseResult);
+      }
+    } else if (r.type !== 'attachment' && r.type !== 'system' && !IGNORED_TYPES.has(r.type)) {
+      const key = r.type || '(none)';
+      this.unknown[key] = (this.unknown[key] || 0) + 1;
+    }
+  }
+
+  /** Reads anything appended since the last call. Returns true if anything was read. */
+  refresh() {
+    return this.tail.refresh();
+  }
+}
+
+/** A subagent's `.meta.json`, reduced to what the Castle shows. Strings only. */
+export function subagentMeta(parsed) {
+  const s = (v) => (typeof v === 'string' && v ? v : null);
+  const p = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  return {
+    agentType: s(p.agentType),
+    toolUseId: s(p.toolUseId),
+    description: clip(s(p.description) || '', SUMMARY_CHARS) || null,
+  };
 }
 
 /** Parses a whole transcript in one go. Used by the CLI and the fixture checks. */

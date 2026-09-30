@@ -19,9 +19,13 @@
  *    Code's HTTP client does not, so a web page cannot use these routes even
  *    with the secret.
  * What arrives is held in memory only, reduced to what the UI shows: tool
- * names and one-line summaries, never tool input or output bodies. The one
- * thing written down is which session ids a launch carried, since when, and
- * which ended, so a restart does not forget them (#24).
+ * names and one-line summaries, never tool input or output bodies. For the
+ * Castle (#159) each session also keeps a bounded ring of reduced records: the
+ * file paths a call names, the first words of a shell command (for test and
+ * build rules; never sent to the page), agent ids, and a verdict. The ring is
+ * read only by castle.js and never served whole. The one thing written down is
+ * which session ids a launch carried, since when, and which ended, so a
+ * restart does not forget them (#24).
  *
  * State is kept per SESSION within a launch, not per launch (#22). One
  * terminal carries several session ids over its life: /clear starts a new
@@ -43,7 +47,7 @@ import crypto from 'node:crypto';
 
 import { listLaunchRecords, readLaunch, updateLaunchRecord } from './appdata.js';
 import { SESSION_ID_RE } from './sessions.js';
-import { toolSummary } from './transcript.js';
+import { toolSummary, toolTargets, toolVerdict, writeTypeOf } from './transcript.js';
 
 /** How often a launched session's status line re-runs, in seconds; launch.js puts it in the settings. */
 export const STATUS_REFRESH_S = 15;
@@ -95,7 +99,93 @@ function blankSession(since = null) {
     ended: false,
     endReason: null,
     endedAt: null,
+    // Reduced records for the Castle (#159), oldest first, at most MAX_CASTLE_RECORDS.
+    castle: [],
   };
+}
+
+/** Records kept per session for the Castle; past this the oldest go (the transcript backfills them). */
+const MAX_CASTLE_RECORDS = 2000;
+/** The hook events the Castle reads. Everything else stays out of the ring. */
+const CASTLE_EVENTS = new Set([
+  'PreToolUse',
+  'PostToolUse',
+  'PostToolUseFailure',
+  'PermissionDenied',
+  'UserPromptSubmit',
+  'Stop',
+  'StopFailure',
+  'SubagentStart',
+  'SubagentStop',
+  'PreCompact',
+  'PostCompact',
+  'SessionEnd',
+]);
+/**
+ * An agent id from a hook is only ever a key, never part of a path, so any
+ * short token is kept. Its format is not documented (#159 measures it).
+ */
+const AGENT_REF_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const castleListeners = new Set();
+
+/** Called with a session id each time a Castle record is kept; castle.js schedules its push. */
+export function onCastleRecord(listener) {
+  castleListeners.add(listener);
+  return () => castleListeners.delete(listener);
+}
+
+/**
+ * Reduces one hook post to what the Castle needs and appends it to the
+ * session's ring. Strings only (#33); no input or output body is kept. No
+ * matching and no await: this runs before the hook is answered.
+ */
+function keepForCastle(s, sessionId, h, at) {
+  const event = str(h.hook_event_name);
+  if (!CASTLE_EVENTS.has(event)) return;
+  const tool = str(h.tool_name);
+  const record = {
+    at,
+    event,
+    tool: clip(tool, 120) || null,
+    toolUseId: clip(str(h.tool_use_id), 80) || null,
+    agentId: AGENT_REF_RE.test(str(h.agent_id)) ? h.agent_id : null,
+    agentType: clip(str(h.agent_type), 80) || null,
+    summary: tool ? toolSummary(tool, h.tool_input) : '',
+    targets: tool ? toolTargets(tool, h.tool_input, str(h.cwd)) : null,
+    verdict: null,
+    writeType: null,
+  };
+  if (event === 'PostToolUse') {
+    const response = h.tool_response && typeof h.tool_response === 'object' ? h.tool_response : {};
+    record.verdict = toolVerdict({ isError: false, interrupted: response.interrupted === true });
+    record.writeType = writeTypeOf(response);
+  } else if (event === 'PostToolUseFailure') {
+    // PostToolUseFailure fires only for a tool that started executing (docs: hooks).
+    record.verdict = toolVerdict({ isError: true, text: str(h.error), interrupted: h.is_interrupt === true, ran: true });
+  } else if (event === 'PermissionDenied') {
+    record.verdict = { ok: null, reason: 'denied' };
+  }
+  s.castle.push(record);
+  if (s.castle.length > MAX_CASTLE_RECORDS) s.castle.shift();
+  for (const listener of castleListeners) {
+    try {
+      listener(sessionId);
+    } catch {
+      /* a viewer's failure never reaches the hook */
+    }
+  }
+}
+
+/**
+ * A session's Castle records and the folder its launch runs in, from the
+ * launch that holds it now. Null when no launch carries it. Liveness and a
+ * pending wait come from wrappedFor, as for the session view.
+ */
+export function castleFeed(sessionId) {
+  const found = sessionFor(sessionId);
+  if (!found) return null;
+  const { l, s } = found;
+  return { launchDir: l.dir, records: s.castle.slice(), ended: s.ended };
 }
 
 function blank(record, restored) {
@@ -465,6 +555,14 @@ function applyPost(l, kind, body, at) {
     }
   }
   if (changed || l.persistError) persist(l);
+  if (kind === 'hook') {
+    try {
+      keepForCastle(s, id, body, at);
+    } catch {
+      // The Castle is a viewer: a record it could not keep must never cost the
+      // session's own state above, or the empty answer below.
+    }
+  }
 }
 
 export function registerIngestRoutes(app) {
