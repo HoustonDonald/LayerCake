@@ -38,11 +38,11 @@ same three skips), the castle checks taking about 21 s of it. 2026-09-30: 482 wi
 failed, 3 skipped** with #170 (113 s; HEAD before it 109 s), the same three skips throughout. `ui-motion.mjs` (the walking checks, scratchpad below)
 26 of 26 at every step.
 
-`dist\LayerCake.exe` is **current**: rebuilt from a0444f3 (#170) on 2026-09-30 night after the owner
-closed his copy, launch-checked headful with `exe-lifecycle-castle.ps1` (16 of 16, a Mason walking in
+`dist\LayerCake.exe` is **current**: rebuilt from 95a3763 (#170 and #171) on 2026-09-30 night after the
+owner closed his copy, launch-checked headful with `exe-lifecycle-castle.ps1` (16 of 16, a Mason walking in
 the app window included) and started for him through Explorer; his Docs room then read Embers, no
 scaffolding, no alarms (`docs-alarm.mjs`). (It was rebuilt five times that day: after #161, #165, #167
-with the art, the hover card with the Citadel, and #170.)
+with the art, the hover card with the Citadel, #170, and #171.)
 
 ### 2026-09-30, night: Docs was always in Alarm (#170, fixed)
 
@@ -75,8 +75,8 @@ which made the page draw every frame (quiet read 14.5%). The owner then chose to
 **#171, fixed:** each 10 s cooling step now snaps (a group around `.room-heat` carries the Embers fade
 in and out). Six rooms cooling: 4.7% to 0.28% with the GPU, 5.8% to 0.26% with it off; no animation
 runs while rooms cool, and the fade into Embers was still seen (`ui-cost.mjs`). `ui-motion.mjs` 26
-of 26; the exe built from a tree copy 16 of 16. **dist\LayerCake.exe does not have #171 yet**: the
-owner's copy was running.
+of 26; the exe built from a tree copy 16 of 16. dist was rebuilt with it once the owner closed his
+copy (16 of 16) and started for him.
 
 **For a new session, in one paragraph:** the Castle is mid-#162 (art). The first pass, hover card and
 Citadel are committed and in the owner's hands for review; #162 stays open for his changes. His
