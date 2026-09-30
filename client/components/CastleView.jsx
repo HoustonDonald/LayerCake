@@ -5,7 +5,7 @@ import { duration } from '../sessionFormat.js';
 import CastleStage, { SESSION_COLOURS } from './CastleStage.jsx';
 
 /**
- * The Castle view (#159, #160; spec VisualizerSpec.md): the running sessions in
+ * The Castle view (#159, #160; README "Castle"): the running sessions in
  * the scanned project as rooms and units. Keyed on the project by App, so a
  * rescan hands it a new scan id and it reconnects without losing the picture.
  *

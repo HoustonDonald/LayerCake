@@ -40,7 +40,8 @@ his copy, and launch-checked with `exe-lifecycle-castle.ps1` (all passed); it is
 
 ### 2026-09-29: the Castle view (#159, #160; #164 found on the way)
 
-The owner's spec `VisualizerSpec.md` ("The Castle": a live, passive picture of a project, rooms lit
+The owner's Castle spec, kept outside the repository at his request (untracked 2026-09-30; it is
+in the history of abd1a61) ("The Castle": a live, passive picture of a project, rooms lit
 by what Claude does in them, units for the session, subagents, skills, MCP and web calls, a Herald
 when Claude waits). The plan, reviewed by two design agents against the code, is at
 `C:\Users\donal\.claude\plans\review-the-contents-of-glimmering-shamir.md`. Owner decisions 18 to 20

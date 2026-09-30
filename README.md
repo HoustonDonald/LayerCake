@@ -825,8 +825,9 @@ and the Claude data folder read for sessions with `LAYERCAKE_CLAUDE_DATA_DIR`.
 The **Castle** tab (after a scan) is a live picture of the Claude Code sessions working in the
 scanned project, meant to be read from across the desk: the project's functional areas are rooms
 that light up with what Claude does in them, and each session, subagent, skill, MCP call and web call
-is a lettered dot standing where it works. The spec is `VisualizerSpec.md`; this build is its Phase 1
-(the wiring and an event log) and Phase 2 (the plain castle: labelled boxes and dots). Movement, art
+is a lettered dot standing where it works. It follows the owner's Castle spec, which is kept outside
+this repository; this section is the spec for what is built. This build is the spec's Phase 1 (the
+wiring and an event log) and Phase 2 (the plain castle: labelled boxes and dots). Movement, art
 and polish are issues #161 to #163. Everything shown comes from a real event: when LayerCake knows
 nothing, the castle shows less, never something invented.
 

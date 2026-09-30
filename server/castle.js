@@ -1,7 +1,8 @@
 /**
  * The Castle (#159, #160): a live picture of the Claude Code sessions working
- * in one project, as rooms that light up and units that stand in them. Spec:
- * VisualizerSpec.md. Its first principle is "nothing lies": every room state
+ * in one project, as rooms that light up and units that stand in them. The
+ * owner's spec is kept outside the repository; README "Castle" is the spec
+ * for what is built. Its first principle is "nothing lies": every room state
  * and every unit here comes from a real event, and when the data is missing
  * the Castle shows less, not more.
  *
