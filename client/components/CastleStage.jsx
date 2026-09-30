@@ -112,13 +112,22 @@ function usePulse(active, reduce) {
   return on;
 }
 
-/** Re-renders every 2 s while anything is still cooling, and not at all once all is cold. */
+/**
+ * Re-renders every 10 s while anything is still cooling, and not at all once
+ * all is cold (#165). Each render fades every warm room's glow over 1.5 s
+ * (light never snaps, spec), and SVG is not composited, so what the cooling
+ * costs is the share of time a fade runs. Every 2 s, that was about 75%: six
+ * rooms cooling in Embers cost 0.64% of a core against 0.05% quiet. Every
+ * 10 s, 0.16% and 0.19% in two runs. Stepping the glow as well measured 0.17%,
+ * so it was left out (ui-cooling.mjs, headless Edge, 2026-09-30).
+ */
+const COOL_MS = 10_000;
 function useCooling(rooms, halfLife) {
   const [, tick] = useState(0);
   const warm = Object.values(rooms || {}).some((r) => heatNow(r.heat, halfLife, Date.now()) > 0.05);
   useEffect(() => {
     if (!warm) return undefined;
-    const timer = setInterval(() => tick((n) => n + 1), 2000);
+    const timer = setInterval(() => tick((n) => n + 1), COOL_MS);
     return () => clearInterval(timer);
   }, [warm]);
 }
