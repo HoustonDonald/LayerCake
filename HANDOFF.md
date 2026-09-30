@@ -88,6 +88,15 @@ rescan, clipboard, reduced motion, not-live layer, colour-vision screenshots), `
 app-mode window with the exe's flags, window close ends it), `survey-shapes.mjs` (key names and
 counts of real transcripts, no content).
 
+**Next: #161, movement.** Its plan is the issue's comment of 2026-09-30
+(https://github.com/HoustonDonald/LayerCake/issues/161#issuecomment-5913405122); no code for it has
+been written. Start in `fold()` in castle.js (a `trail` per Mason and Knight: `ensureCaller` and
+the call-start branch where `caller.room` is set; `stateFrame` passes it on), then
+`client/components/castleMotion.js` and the Web Animations driver in CastleStage.jsx. Extend
+`ui-castle-2.mjs` (hook-driven headless Edge) for the walking checks, and `mutate-castle.mjs` for
+its mutants. The owner's spec is at `C:\dev\_notes\layercake\VisualizerSpec.md` ("Motion and
+behavior", "The inhabitants").
+
 ### 2026-09-28, night: the (b) queue (#76, #54, #64; #95 part 1 left open)
 
 Each commit message lists its measurements, checks and mutants:
