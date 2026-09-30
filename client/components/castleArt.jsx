@@ -48,6 +48,27 @@ const FIGURES = {
       <rect x="11" y="1.4" width="2" height="2.6" rx="1" />
     </>
   ),
+  // #172: a raider, hooded, a bow drawn; three make a band.
+  raiders: (
+    <>
+      <path d="M6.6 22 L8.2 11.8 Q10.8 9.8 13.4 11.8 L15 22 Z" />
+      <path d="M8.2 11 Q10.8 1.8 13.4 11 Z" />
+      <path d="M16.6 3.6 Q22.2 12 16.6 20.4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M16.6 3.6 V20.4" stroke="currentColor" strokeWidth="0.7" />
+    </>
+  ),
+  // #172: a siege engine, a trebuchet with a stone in its sling.
+  siege: (
+    <>
+      <path d="M3.6 20.6 H20.4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M7 20.6 L12 9 L17 20.6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="M4.6 14 L20.2 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <rect x="2.8" y="13.4" width="4.2" height="4.2" rx="0.6" />
+      <circle cx="20.2" cy="5" r="1.9" />
+      <circle cx="6.4" cy="21" r="1.7" />
+      <circle cx="17.6" cy="21" r="1.7" />
+    </>
+  ),
 };
 
 /**

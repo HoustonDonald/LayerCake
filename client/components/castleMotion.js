@@ -132,6 +132,8 @@ export function placeUnits(L, rooms, units, perch = null) {
   const at = new Map();
   for (const u of units) {
     if (u.kind === 'wizard' && keys.has(u.caller)) continue;
+    // Raiders and siege engines are not walked: siegeSpot places them.
+    if (SIEGE_KINDS.has(u.kind)) continue;
     let place = u.kind === 'raven' ? 'perch' : u.room || 'gate';
     if (!rooms.has(place) && !['perch', 'village', 'wilds', 'outside', 'gate', 'beyond-gate'].includes(place)) place = 'gate';
     if (!at.has(place)) at.set(place, []);
@@ -143,6 +145,42 @@ export function placeUnits(L, rooms, units, perch = null) {
     list.forEach((u, i) => out.set(u.key, { place, point: pts[i] }));
   }
   return out;
+}
+
+/** Units that stand outside the walls for a run and are not walked (#172). */
+export const SIEGE_KINDS = new Set(['raiders', 'siege']);
+
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+/**
+ * Where Raiders stand or a siege engine sits (#172), and the point in each
+ * target room its volleys land on. Raiders come out of the Wilds when their
+ * targets lie in the back half of the keep, else they shoot from the front,
+ * out past Hollowmere; either way over the wall nearer the targets. A siege
+ * engine sits before the gate, on the side away from Hollowmere.
+ */
+export function siegeSpot(L, rooms, u) {
+  const targets = (u.targets || []).map((id) => rooms.get(id)).filter(Boolean);
+  const cells = targets.map((r) => L.cell(r.col, r.row));
+  const cx = cells.length ? cells.reduce((n, b) => n + b.x + b.w / 2, 0) / cells.length : L.gate.x;
+  let at;
+  let north = false;
+  if (u.kind === 'siege') {
+    const side = L.villageBox.x > L.gate.x ? -1 : 1;
+    at = { x: L.gate.x + side * 130, y: L.wallBottom + 50 };
+  } else {
+    const meanRow = targets.length ? targets.reduce((n, r) => n + r.row, 0) / targets.length : 0;
+    north = meanRow <= (L.rows - 1) / 2;
+    if (north) at = { x: clamp(cx, BAND + 50, W - BAND - 50), y: WILDS_H - 24 };
+    else {
+      // Clear of the road, where Scouts ride.
+      const x = Math.abs(cx - L.gate.x) < 90 ? L.gate.x + (cx >= L.gate.x ? 90 : -90) : cx;
+      at = { x: clamp(x, BAND + 30, W - BAND - 30), y: L.H - 34 };
+    }
+  }
+  // Volleys land in the half of a room facing the side they come from.
+  const hits = cells.map((b) => ({ x: b.x + b.w / 2, y: north ? b.y + b.h * 0.34 : b.y + b.h * 0.66 }));
+  return { at, north, hits };
 }
 
 /** A room's centre, where a unit passes through it on the way somewhere else; elsewhere, the place's first spot. */

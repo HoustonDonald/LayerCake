@@ -193,7 +193,15 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     const testCmd = { command: `${S.commandHead} --flag && npm test`, description: 'Run the tests' };
     await hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'toolu_c_t1', tool_input: testCmd });
     check('a running test run lights the Tests room', await s1.untilState((st) => st.rooms.tests.state === 'survey'));
+    const unitOf = (st, key) => st?.units?.find((u) => u.key === key);
+    check('a running test run brings Raiders out of the Wilds, aimed at the room with unproven changes, the one it will judge (#172)',
+      await s1.untilState((st) => {
+        const u = unitOf(st, 'X:toolu_c_t1');
+        return u?.kind === 'raiders' && u.room === 'wilds' && JSON.stringify(u.targets) === JSON.stringify(['database']);
+      }),
+      JSON.stringify(unitOf(s1.last('state'), 'X:toolu_c_t1')));
     await hook({ hook_event_name: 'PostToolUseFailure', tool_name: 'Bash', tool_use_id: 'toolu_c_t1', tool_input: testCmd, error: `Exit code 1\n${S.errorTail}` });
+    check('the Raiders leave when the run ends', await s1.untilState((st) => !unitOf(st, 'X:toolu_c_t1')), JSON.stringify(unitOf(s1.last('state'), 'X:toolu_c_t1')));
     check('a failing test run raises Alarm in the room with unproven changes, naming the run and its exit code',
       await s1.untilState((st) => st.rooms.database.state === 'alarm' && st.rooms.database.cause?.kind === 'run' && st.rooms.database.cause.exitCode === 1 && st.rooms.database.cause.summary === 'Run the tests'),
       JSON.stringify(s1.last('state')?.rooms?.database));
@@ -210,7 +218,16 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     check('four edits of one file with no passing run between raise a thrash Alarm naming the file',
       await s1.untilState((st) => st.rooms.api.state === 'alarm' && st.rooms.api.cause?.kind === 'thrash' && st.rooms.api.cause.path === 'src/app.js'),
       JSON.stringify(s1.last('state')?.rooms?.api));
-    await call('toolu_c_build', 'Bash', { command: 'npm run build', description: 'Build' }, { response: { stdout: '', stderr: '' } });
+    const buildCmd = { command: 'npm run build', description: 'Build' };
+    await hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'toolu_c_build', tool_input: buildCmd });
+    check('a running build brings a siege engine to the gate, aimed at the room with unproven changes (#172)',
+      await s1.untilState((st) => {
+        const u = unitOf(st, 'X:toolu_c_build');
+        return u?.kind === 'siege' && u.room === 'gate' && JSON.stringify(u.targets) === JSON.stringify(['api']);
+      }),
+      JSON.stringify(unitOf(s1.last('state'), 'X:toolu_c_build')));
+    await hook({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'toolu_c_build', tool_input: buildCmd, tool_response: { stdout: '', stderr: '' } });
+    check('and it leaves when the build ends', await s1.untilState((st) => !unitOf(st, 'X:toolu_c_build')));
     check('a passing build ends the thrash Alarm (spec: "no passing test or build in between")', await s1.untilState((st) => st.rooms.api.state !== 'alarm'));
     check('a passing build is not proof by default: the scaffolding stays up', s1.last('state')?.rooms?.api?.scaffolding === true);
     // A thrash nothing will clear, in the room the Mason already stands in (so
@@ -336,6 +353,12 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     check('a worker whose call is still running past the rest window is not resting', masonNow()?.resting === false && masonNow()?.last?.id === 'toolu_c_long', JSON.stringify(masonNow()));
     await hook({ hook_event_name: 'PostToolUse', tool_name: 'Read', tool_use_id: 'toolu_c_long', tool_input: { file_path: P('docs', 'long.md') }, tool_response: {} });
     check('and rests once the window passes after that call ends', await s1.untilState((st) => st.units.find((u) => u.key === `M:${sid}`)?.resting === true, 6000), JSON.stringify(masonNow()));
+
+    // A run interrupted mid-way fires no end: the stop ends it, and its Raiders go with it (#172).
+    await hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'toolu_c_tstop', tool_input: { command: 'npm test', description: 'Tests, then Esc' } });
+    check('Raiders stand while a test run runs', await s1.untilState((st) => unitOf(st, 'X:toolu_c_tstop')?.kind === 'raiders'), JSON.stringify(s1.last('state')?.units));
+    await hook({ hook_event_name: 'Stop' });
+    check('and leave when the turn stops with the run still open (#172)', await s1.untilState((st) => !unitOf(st, 'X:toolu_c_tstop')), JSON.stringify(unitOf(s1.last('state'), 'X:toolu_c_tstop')));
 
     // --- the transcript source --------------------------------------------------------
     const slugDir = path.join(claudeData, 'projects', projectSlug(proj));

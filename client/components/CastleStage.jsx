@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { ArtDefs, Citadel, Figure, FigureIcon, Hollowmere, RoomLight, TypeIcon, WildsForest } from './castleArt.jsx';
 import { describeUnit } from './castleDescribe.js';
-import { BAND, DOT, FADE_MS, FROST_H, HOP_MS, SLIDE_MS, W, WILDS_H, keyframes, lastTrailKey, layout, newPlaces, placeUnits, planWalk, positionAt, replan, totalMs, waypoint } from './castleMotion.js';
+import { BAND, DOT, FADE_MS, FROST_H, HOP_MS, SIEGE_KINDS, SLIDE_MS, W, WILDS_H, keyframes, siegeSpot, lastTrailKey, layout, newPlaces, placeUnits, planWalk, positionAt, replan, totalMs, waypoint } from './castleMotion.js';
 
 /**
  * The castle itself (#160): one SVG with a fixed viewBox width, so full screen
@@ -416,6 +416,85 @@ function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf
 }
 
 /**
+ * One shared flip-book timer (#163's budget, #172): 8 frames a second, and
+ * only while `active`. SVG is not composited, so each frame repaints the
+ * castle; a 6 fps flip-book measured 3.7% to 5.9% of a core, flat in how much
+ * moves, against 28% to 38% for smooth animation (#169). Idle, it costs nothing.
+ */
+const FLIP_MS = 125;
+function useFlipbook(active) {
+  const [frame, setFrame] = useState(0);
+  useEffect(() => {
+    if (!active) return undefined;
+    const timer = setInterval(() => setFrame((f) => f + 1), FLIP_MS);
+    return () => clearInterval(timer);
+  }, [active]);
+  return frame;
+}
+
+/** Where along a volley's arc projectile `k` of `n` is at `frame`: one flight a second, spaced along it. */
+function volleyPoint(from, to, frame, k, n) {
+  const t = ((frame * FLIP_MS) / 1000 + k / n) % 1;
+  const peak = { x: (from.x + to.x) / 2, y: Math.min(from.y, to.y) - 70 };
+  const at = (a, c, b) => (1 - t) * (1 - t) * a + 2 * (1 - t) * t * c + t * t * b;
+  const dx = 2 * (1 - t) * (peak.x - from.x) + 2 * t * (to.x - peak.x);
+  const dy = 2 * (1 - t) * (peak.y - from.y) + 2 * t * (to.y - peak.y);
+  return { x: at(from.x, peak.x, to.x), y: at(from.y, peak.y, to.y), deg: (Math.atan2(dy, dx) * 180) / Math.PI };
+}
+
+/**
+ * Raiders and siege engines (#172): a test or build run while it runs, aimed
+ * at the rooms it will judge. They stand still (they are not walked) and their
+ * volleys are a flip-book on the one shared timer. With reduced motion the
+ * volleys hold still, mid-flight.
+ */
+function SiegeLayer({ L, rooms, units, reduce, onHover }) {
+  const list = units.filter((u) => SIEGE_KINDS.has(u.kind));
+  const frame = useFlipbook(list.length > 0 && !reduce);
+  if (!list.length) return null;
+  return (
+    <g className="castle-siege" onMouseOver={(e) => onHover(hoverAt(e.target))} onMouseLeave={() => onHover(null)}>
+      {list.map((u) => {
+        const { at, hits } = siegeSpot(L, rooms, u);
+        const raiders = u.kind === 'raiders';
+        const per = raiders ? 3 : 2;
+        const shots = hits.flatMap((hit, i) => Array.from({ length: per }, (_, k) => ({ key: `${i}-${k}`, p: volleyPoint(at, hit, reduce ? 3 : frame, k + i * 0.37, per) })));
+        return (
+          <g key={u.key} className={`castle-${u.kind}`}>
+            {shots.map(({ key, p }) =>
+              raiders ? (
+                <g key={key} className="volley-arrow" transform={`translate(${p.x} ${p.y}) rotate(${p.deg}) scale(1.6)`}>
+                  <line x1={-10} y1={0} x2={7} y2={0} />
+                  <path d="M8 0 l-5 -3 v6 Z" />
+                </g>
+              ) : (
+                <circle key={key} className="volley-stone" cx={p.x} cy={p.y} r={6.5} />
+              )
+            )}
+            {/* Like every unit: a figure on a dark disc, here ringed in ice (Raiders) or wood (the engine). */}
+            <g className="siege-unit" data-hover={u.key} transform={`translate(${at.x} ${at.y})`}>
+              {raiders ? (
+                [-38, 0, 38].map((dx, i) => (
+                  <g key={dx} className="raider-figure" transform={`translate(${dx} ${i === 1 ? -6 : 4})`}>
+                    <circle className="unit-disc raider-disc" r={DOT + 2} />
+                    <Figure kind="raiders" size={26} />
+                  </g>
+                ))
+              ) : (
+                <g className="siege-figure">
+                  <circle className="unit-disc siege-disc" r={DOT + 14} />
+                  <Figure kind="siege" size={42} />
+                </g>
+              )}
+            </g>
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
+/**
  * Where the hover card goes for the unit under the pointer: beside the unit's
  * figure, inside the stage, flipped to its left near the right edge.
  */
@@ -618,7 +697,8 @@ export default function CastleStage({ map, state, generation, selected, onSelect
         );
       })}
 
-      <UnitLayer L={L} rooms={rooms} perch={map?.perch || null} units={state?.units || []} generation={generation} state={state} reduce={reduce} colourOf={colourOf} kinds={map?.units} onSelect={select} onHover={setCard} />
+      <SiegeLayer L={L} rooms={rooms} units={state?.units || []} reduce={reduce} onHover={setCard} />
+      <UnitLayer L={L} rooms={rooms} perch={map?.perch || null} units={(state?.units || []).filter((u) => !SIEGE_KINDS.has(u.kind))} generation={generation} state={state} reduce={reduce} colourOf={colourOf} kinds={map?.units} onSelect={select} onHover={setCard} />
     </svg>
     {card && <UnitCard card={card} state={state} map={map} />}
     </>

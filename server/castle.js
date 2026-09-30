@@ -112,6 +112,8 @@ export const UNIT_KINDS = [
   { kind: 'raven', letter: 'R', label: 'Raven', rule: 'An MCP tool call: flies up to the wall above the first Integrations room (above the gate when there is none), and back when the call returns.' },
   { kind: 'scout', letter: 'S', label: 'Scout', rule: 'A web fetch or search: walks out of the gate, and back when the call returns.' },
   { kind: 'herald', letter: 'H', label: 'Herald', rule: 'Claude is waiting for you (a permission or input prompt). Only sessions started from LayerCake can report this.' },
+  { kind: 'raiders', letter: 'A', label: 'Raiders', rule: "A test run, while it runs: a band out of the Wilds, or at the front, whichever is nearer, shooting over the wall at the rooms the run will judge (those with unproven changes, else the run's own room). Leaves when the run ends or its turn is interrupted." },
+  { kind: 'siege', letter: 'E', label: 'Siege engine', rule: "A build run, while it runs: an engine before the gate lobbing stones at the rooms the build will judge (those with unproven changes, else the run's own room). Leaves when the run ends or its turn is interrupted." },
 ];
 
 export const CASTLE_RULES = [
@@ -414,6 +416,10 @@ export function fold(events, map, locateCall) {
         units.set(`S:${e.toolUseId}`, { key: `S:${e.toolUseId}`, kind: 'scout', sessionId: e.sessionId, caller: caller.key, room: 'beyond-gate', label: e.summary || e.tool, tool: e.tool || null, since: e.at });
       }
       if (loc.command?.kind === 'test' || loc.command?.kind === 'build') {
+        // #172: Raiders for a test run, a siege engine for a build, while it
+        // runs. Their targets are set once the fold is done (below).
+        const kind = loc.command.kind === 'test' ? 'raiders' : 'siege';
+        units.set(`X:${e.toolUseId}`, { key: `X:${e.toolUseId}`, kind, sessionId: e.sessionId, caller: caller.key, room: kind === 'raiders' ? 'wilds' : 'gate', label: e.summary || loc.command.rule, tool: e.tool || null, runRoom: loc.command.room, since: e.at });
         runs.push({ id: e.toolUseId, kind: loc.command.kind, rule: loc.command.rule, room: loc.command.room, summary: e.summary, at: e.at, endAt: null, ok: null, exitCode: null, sessionId: e.sessionId, background: Boolean(e.targets?.background), judged: [] });
         if (runs.length > MAX_RUNS) runs.shift();
       }
@@ -424,6 +430,7 @@ export function fold(events, map, locateCall) {
       calls.delete(e.toolUseId);
       units.delete(`R:${e.toolUseId}`);
       units.delete(`S:${e.toolUseId}`);
+      units.delete(`X:${e.toolUseId}`);
       const doer = units.get(callerKey(e));
       if (doer?.last && doer.last.id === e.toolUseId && doer.last.endAt === null) doer.last = { ...doer.last, endAt: e.at };
       entry.where = loc.label;
@@ -491,6 +498,8 @@ export function fold(events, map, locateCall) {
       if (units.has(key)) {
         units.delete(key);
         dropWizardsOf(key);
+        // A run the subagent left open ends with it: its Raiders or engine go too.
+        for (const [k, u] of units) if ((u.kind === 'raiders' || u.kind === 'siege') && u.caller === key) units.delete(k);
         entry.summary = 'Subagent finished';
       } else {
         // An internal agent (a prompt suggestion, /btw) stops without having
@@ -508,6 +517,7 @@ export function fold(events, map, locateCall) {
         calls.delete(id);
         units.delete(`R:${id}`);
         units.delete(`S:${id}`);
+        units.delete(`X:${id}`);
       }
       if (e.kind === 'turn') entry.summary = 'Prompt';
       else entry.summary = 'Claude stopped and is waiting for the next prompt';
@@ -518,6 +528,14 @@ export function fold(events, map, locateCall) {
     }
     log.push(entry);
     if (log.length > MAX_LOG) log.shift();
+  }
+
+  // What a running test or build would judge if it ended now, which is what
+  // finishRun will judge: every room with unproven changes, else the run's
+  // own room (#172). Raiders and siege engines aim there.
+  const unprovenNow = [...rooms.entries()].filter(([, r]) => r.unproven).map(([id]) => id);
+  for (const u of units.values()) {
+    if (u.kind === 'raiders' || u.kind === 'siege') u.targets = unprovenNow.length ? unprovenNow : u.runRoom && rooms.has(u.runRoom) ? [u.runRoom] : [];
   }
 
   // Trim Hollowmere to the most recent, keeping the count honest.
@@ -944,6 +962,8 @@ class Castle {
       // For the hover card: a worker's latest call, an MCP or web call's tool, a subagent's task.
       if (u.last !== undefined) out.last = u.last;
       if (u.tool) out.tool = u.tool;
+      // Raiders and siege engines: the rooms the run would judge now (#172).
+      if (u.targets) out.targets = u.targets;
       if (u.kind === 'knight') {
         const sub = this.entries.get(u.sessionId)?.subs.get(u.agentId);
         out.task = sub?.meta?.description || sub?.parent?.description || null;

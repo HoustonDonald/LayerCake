@@ -94,6 +94,14 @@ export function describeUnit(u, { state, map }) {
       add('For', caller(u.caller));
       add('Since', ago(u.since));
       break;
+    case 'raiders':
+    case 'siege':
+      tags.push('running');
+      add(u.kind === 'raiders' ? 'Test run' : 'Build', u.label);
+      add(u.kind === 'raiders' ? 'Testing' : 'Aimed at', (u.targets || []).map((id) => placeName(map, id)).join(', ') || 'no room');
+      add('For', caller(u.caller));
+      add('Since', ago(u.since));
+      break;
     case 'herald':
       tags.push('waiting');
       add('Waiting for', WAITING[u.label] || u.label || 'you');
