@@ -4,7 +4,7 @@ Working state for picking this up in a new session. **Disposable.** Durable rule
 `CLAUDE.md`, user-facing spec in `README.md`. If something here contradicts those, they win and this
 file is stale.
 
-Last verified: **2026-09-29** (the Castle, section below). Write/snapshot work was done 2026-09-05; file watching 2026-09-15;
+Last verified: **2026-09-30** (Castle movement, #161, section below). Write/snapshot work was done 2026-09-05; file watching 2026-09-15;
 the single executable and the app-window isolation fix 2026-09-25; session history (Phase 1 of the
 session-wrap plan) 2026-09-26; testing against a copy of a real project, 2026-09-26 to 27 (see
 those sections below).
@@ -32,11 +32,49 @@ at `/tmp/layercake-linux-smoke`, lockfile unchanged so `rsync` the tree over it 
 Smoke writes and deletes a throwaway `HKCU\Software\LayerCakeSmoke-*` key on Windows (#147).
 
 2026-09-29, with the Castle: `node scripts/smoke.mjs` gave 477 passed, 0 failed, 3 skipped (the
-same three skips), the castle checks taking about 21 s of it.
+same three skips), the castle checks taking about 21 s of it. 2026-09-30, with movement (#161): 482
+passed, 0 failed, 3 skipped.
 
-`dist\LayerCake.exe` was rebuilt from abd1a61 (the Castle) on 2026-09-30, after the owner closed
-his copy, and launch-checked with `exe-lifecycle-castle.ps1` (all passed); it is current. Older
-"not rebuilt" notes below are history.
+`dist\LayerCake.exe` is from abd1a61 (the Castle, rebuilt 2026-09-30 morning) and is **not current**:
+#161 changed the client. The #161 tree was built into an exe from a copy and launch-checked (section
+below). Rebuild `dist` once the owner says his copy is closed.
+
+### 2026-09-30: movement (#161; #165 and #166 found on the way)
+
+Units walk. The README "Movement" paragraph is the spec; CLAUDE.md's Castle paragraph now names the
+trail as part of the fold. The commit message lists the ripple and every check.
+
+- **Server:** `fold()` keeps a `trail` per Mason and Knight (last 12 room changes, keyed by the
+  causing call, one entry per visit). `mergeEvents` gives a call both sources report the earlier
+  time, so the order no longer depends on which source was read first.
+- **Client:** `client/components/castleMotion.js` (pure: layout, spots, corridor routes, pacing of
+  1/n s per hop floored at 0.25 s, keyframes, `positionAt`, `replan`) and `UnitLayer` in
+  CastleStage.jsx (one layer of units; each walk is one Web Animations API animation ending on the
+  unit's spot; ghosts until they are out; the first frame of a connection, and a new map version,
+  place without walking; a first sighting walks from the gate straight to where it is).
+- **Review** (an agent, read-only): three (a) findings, all fixed in the commit (a first sighting
+  replayed its trail, a map reload replayed trails, the trail order flipped between the hook and
+  transcript copies of a call). The (b) remainder is #166.
+- **#165, found measuring idle cost:** cooling Embers rooms keep the renderer about 2% busy for
+  minutes (a 1.5 s opacity transition restarted by the 2 s cooling render). Phase 2, not movement:
+  sampled over 19 s idle, only room-light CSS transitions ran, no unit animation. (a); not fixed.
+- **Mutants** (`mutate-motion.mjs`, final tree): 19 of 20 caught, both controls clean. The survivor
+  ("a ghost is cancelled before removal") is equivalent on this code: a finished walk out is no
+  longer referenced, so the added cancel acts on nothing.
+- **Exe:** built from a tree copy (`build-exe-copy.mjs`) and launched with `Start-Process` by
+  `exe-lifecycle-castle.ps1`: all 16 checks passed with `EXE_CHECK_HEADLESS=1`, including a Mason
+  walking in the exe's embedded client. The headful in-window check timed out in Puppeteer (a 180 s
+  protocol call) on an idle desktop, and the abd1a61 build, which passed it that morning, timed out
+  the same way: inconclusive, the window rendered no frames. Rerun it headful at the desk.
+
+Tooling, in this session's scratchpad (`%TEMP%\claude\c--dev-layercake\f3eeffcb-...\scratchpad`):
+`ui-motion.mjs` (headless Edge, hook-driven; positions read from the rendered circle every frame;
+`TREE`, `PORT`, `IDLE=0`), `mutate-motion.mjs` (client mutants rebuilt in their copy and judged by
+ui-motion, server mutants by smoke), `route-check.mjs` (no route crosses a third room),
+`build-exe-copy.mjs`, `exe-lifecycle-castle.ps1` with `castle-exe-check.mjs`.
+
+**Next:** #162 (art) needs the owner's direction first. #165 is a small (a) fix with a ready
+measurement (`ui-motion.mjs` prints the idle figures). Then #163, and the (b) queue.
 
 ### 2026-09-29: the Castle view (#159, #160; #164 found on the way)
 
@@ -88,14 +126,7 @@ rescan, clipboard, reduced motion, not-live layer, colour-vision screenshots), `
 app-mode window with the exe's flags, window close ends it), `survey-shapes.mjs` (key names and
 counts of real transcripts, no content).
 
-**Next: #161, movement.** Its plan is the issue's comment of 2026-09-30
-(https://github.com/HoustonDonald/LayerCake/issues/161#issuecomment-5913405122); no code for it has
-been written. Start in `fold()` in castle.js (a `trail` per Mason and Knight: `ensureCaller` and
-the call-start branch where `caller.room` is set; `stateFrame` passes it on), then
-`client/components/castleMotion.js` and the Web Animations driver in CastleStage.jsx. Extend
-`ui-castle-2.mjs` (hook-driven headless Edge) for the walking checks, and `mutate-castle.mjs` for
-its mutants. The owner's spec is at `C:\dev\_notes\layercake\VisualizerSpec.md` ("Motion and
-behavior", "The inhabitants").
+#161 (movement) was built 2026-09-30; see the section above.
 
 ### 2026-09-28, night: the (b) queue (#76, #54, #64; #95 part 1 left open)
 
