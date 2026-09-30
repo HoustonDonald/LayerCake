@@ -33,7 +33,7 @@ import { isInsideDir, projectSlug, samePathKey } from './paths.js';
 import { liveFrom } from './session-routes.js';
 import { discoverSessions, getReader, liveSessions, readSubagentMeta, subagentFiles } from './sessions.js';
 import { SHELL_TOOLS, SubagentReader } from './transcript.js';
-import { FLOOR, ROOMS, classifyCommand, draftPrompt, loadMap, locate, locateFolder } from './castlemap.js';
+import { ROOM_TYPES, classifyCommand, draftPrompt, loadMap, locate, locateFolder } from './castlemap.js';
 
 /**
  * Every time window, scaled for the smoke test only (LAYERCAKE_CASTLE_TIME_SCALE,
@@ -105,7 +105,7 @@ export const UNIT_KINDS = [
   { kind: 'mason', letter: 'M', label: 'Mason', rule: `A session. Walks the corridors to the room of its latest tool call, through each room it worked in on the way, in order; rests after ${secs(WINDOWS.restMs)} without one; walks out of the gate when the session ends.` },
   { kind: 'knight', letter: 'K', label: 'Knight', rule: 'A subagent, from its start to its stop: enters by the gate, walks to the room of each tool call as a Mason does, and walks out of the gate when it stops.' },
   { kind: 'wizard', letter: 'W', label: 'Wizard', rule: "A skill Claude invoked, beside the unit that called it, following it, until that unit's turn ends or it calls another skill. A skill you type as /name is not seen." },
-  { kind: 'raven', letter: 'R', label: 'Raven', rule: 'An MCP tool call: flies from the Rookery to the wall above it, and back when the call returns.' },
+  { kind: 'raven', letter: 'R', label: 'Raven', rule: 'An MCP tool call: flies up to the wall above the first Integrations room (above the gate when there is none), and back when the call returns.' },
   { kind: 'scout', letter: 'S', label: 'Scout', rule: 'A web fetch or search: walks out of the gate, and back when the call returns.' },
   { kind: 'herald', letter: 'H', label: 'Herald', rule: 'Claude is waiting for you (a permission or input prompt). Only sessions started from LayerCake can report this.' },
 ];
@@ -113,7 +113,7 @@ export const UNIT_KINDS = [
 export const CASTLE_RULES = [
   'Only real events move anything: hooks from sessions LayerCake started, and the transcripts of the others. When nothing is known, the castle shows less.',
   "A file's room comes from castle.json's patterns, else the built-in ones; a file no room claims is in the Wilds, and a file outside the project is counted apart.",
-  'A shell call is a test, build or migration run when a segment of its command starts with a rule\'s words; any other shell call works in the Workshop. A run passes or fails by its exit code, so `npm test | tail` reads as the exit code of tail. A run started in the background, or ending with no exit code (refused before it ran, timed out), has no verdict.',
+  'A shell call is a test, build or migration run when a segment of its command starts with a rule\'s words. A run lights the room its rule names, else the first room of its type (Tests, Build, Database); any other shell call works in the first Build room, else the first Config room. A run passes or fails by its exit code, so `npm test | tail` reads as the exit code of tail. A run started in the background, or ending with no exit code (refused before it ran, timed out), has no verdict.',
   'A run judges every room with unproven changes (the scaffolded ones): a pass takes their scaffolding down, a failure raises their Alarm, and a failure with none to judge raises it in the run\'s own room.',
   'A call that was denied, interrupted, rejected, or refused by Claude Code before it ran has no verdict: it is never an Alarm. From a transcript, an error counts as a failure only with evidence the tool ran (an exit code, or a system error code such as EACCES).',
   'Heat: read 1, search 1, shell 2, edit 3, create 4, halving every ' + secs(WINDOWS.heatHalfLifeMs) + '. It sets brightness within a state, never the state.',
@@ -286,7 +286,7 @@ function verdictText(v) {
  * only in view(), so the fold is the same whenever it runs.
  */
 export function fold(events, map, locateCall) {
-  const rooms = new Map(map.rooms.filter((r) => !r.dropped).map((r) => [r.id, blankRoom()]));
+  const rooms = new Map(map.rooms.map((r) => [r.id, blankRoom()]));
   const proof = new Set(map.proof);
   const calls = new Map();
   const files = new Map();
@@ -399,7 +399,7 @@ export function fold(events, map, locateCall) {
         dropWizardsOf(caller.key);
         units.set(`W:${e.toolUseId}`, { key: `W:${e.toolUseId}`, kind: 'wizard', sessionId: e.sessionId, caller: caller.key, label: e.summary || 'skill', since: e.at });
       } else if (verb === 'mcp') {
-        units.set(`R:${e.toolUseId}`, { key: `R:${e.toolUseId}`, kind: 'raven', sessionId: e.sessionId, caller: caller.key, room: 'rookery', label: e.summary || e.tool, since: e.at });
+        units.set(`R:${e.toolUseId}`, { key: `R:${e.toolUseId}`, kind: 'raven', sessionId: e.sessionId, caller: caller.key, room: 'perch', label: e.summary || e.tool, since: e.at });
       } else if (verb === 'web') {
         units.set(`S:${e.toolUseId}`, { key: `S:${e.toolUseId}`, kind: 'scout', sessionId: e.sessionId, caller: caller.key, room: 'beyond-gate', label: e.summary || e.tool, since: e.at });
       }
@@ -753,7 +753,7 @@ class Castle {
       const cmd = classifyCommand(map, e.targets?.heads || []);
       const room = map.rooms.find((r) => r.id === cmd.room);
       out.command = cmd;
-      if (room && !room.dropped) out.rooms.push(room.id);
+      if (room) out.rooms.push(room.id);
       out.label = cmd.kind ? `${cmd.kind} run (${cmd.rule})` : 'shell';
       if (out.rooms.length) out.label += ` in ${room.name}`;
       return out;
@@ -832,8 +832,11 @@ class Castle {
     const m = this.map;
     return {
       projectDir: this.projectDir,
-      floor: FLOOR,
-      rooms: m.rooms.map((r) => ({ id: r.id, name: r.name, job: r.job, col: r.col, row: r.row, patterns: r.patterns, dropped: r.dropped, custom: r.custom })),
+      floor: m.floor,
+      rooms: m.rooms.map((r) => ({ id: r.id, name: r.name, type: r.type, col: r.col, row: r.row, patterns: r.patterns, custom: r.custom })),
+      types: ROOM_TYPES,
+      // Where the Raven waits: above this room, or above the gate when null.
+      perch: m.roles.perch,
       source: m.source,
       file: m.file,
       error: m.error,
@@ -1017,4 +1020,3 @@ export async function reloadCastleMap(projectDir) {
   return { source: castle.map.source, error: castle.map.error, version: castle.mapVersion };
 }
 
-export { ROOMS };

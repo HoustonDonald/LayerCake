@@ -2377,10 +2377,18 @@ pre.code {
   font-size: 16px;
 }
 
-.room-tag {
+/* The room's function type (#167), over its name: the project names the room, the type says what kind of part it is. */
+.room-type {
+  fill: var(--castle-dim);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+
+.room-unproven {
   fill: #ffffffb0;
   font-size: 12px;
-  text-anchor: end;
 }
 
 .castle-room:focus-visible .room-fill,
@@ -2413,9 +2421,6 @@ pre.code {
 .castle-svg.pulse-on .castle-room.st-alarm .room-fill { stroke-opacity: 0.35; }
 .castle-room.st-alarm .room-name,
 .castle-room.st-alarm .room-state { fill: #ffe3e0; }
-.castle-room.dropped { cursor: default; }
-.castle-room.dropped .room-fill { fill: none; stroke-dasharray: 8 6; }
-.castle-room.dropped .room-name { fill: var(--castle-dim); text-decoration: line-through; }
 
 .castle-unit circle {
   stroke: #ffffff;

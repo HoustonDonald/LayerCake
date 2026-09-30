@@ -132,7 +132,7 @@ server/launch.js    "Start Claude here": wt.exe + claude --session-id --settings
 server/powershell.js Windows PowerShell 5.1's path and the quoting for starting it; no imports, nothing at load
 server/ingest.js    /ingest/<launch>/<secret>/{statusline,hook} from launched sessions; state per session
 server/castle.js    the Castle (#159, #160): picks sessions, merges hook and transcript events, the fold, the state
-server/castlemap.js the Castle's floor plan, castle.json (read only), the glob matcher, command rules
+server/castlemap.js the Castle's rooms (castle.json v2, read only, else the built-in typed map), room types, the glob matcher, command rules
 server/castle-routes.js /api/castle/stream, /room, /reload: a scan id in, never a path
 client/             React 18 + Vite, two-pane explorer plus editor, snapshots and watch bar
 cli/                layercake CLI, imports server modules directly
@@ -306,7 +306,10 @@ so it is data only: **the glob matcher in castlemap.js is hand-written and must 
 backtracking**. picomatch 4.0.7 ran over a minute on `'*a'` twelve times plus `'b'` against forty
 `a`s (review, 2026-09-29), `path.matchesGlob` is super-linear too; this one agreed with picomatch on
 200,000 random cases (scratch `diff-glob.mjs`) and smoke asserts its hostile/benign time RATIO.
-Command rules are word prefixes, never regular expressions. **The fold is the specification**: room
+Command rules are word prefixes, never regular expressions. The rooms are the project's own sections
+(#167, owner decision 2026-09-30), each with a type from `ROOM_TYPES`, shipped with the map like the
+state rules; a room id must stay out of the names the castle uses for places (gate, wilds, outside,
+perch...), because the fold and the page share that namespace. **The fold is the specification**: room
 states are recomputed from all events under the current map each time (no incremental path to drift
 from it), and smoke's fold oracle closes every stream, reopens, and requires the fresh fold to equal
 the long-running one. That includes each Mason's and Knight's `trail` (#161), its last 12 room

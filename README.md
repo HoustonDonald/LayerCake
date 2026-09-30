@@ -851,28 +851,42 @@ the browser's own full screen for the whole window, header included.)
 - The castle includes every session running now whose start folder is the project or inside it, and,
   if none is running, the most recent one, so it shows how that session left things. At most 6.
 
-**The floor plan** is fixed: twelve rooms in a 3 by 4 grid, the gate under the Gatehouse, the Wilds
-outside the wall. Rooms never move. Built-in patterns assign files by folder and file names that
-usually mean the job:
+**The rooms are the project's own sections** (#167): its API, its database code, its UI, its agent,
+whatever it actually has, named in its own words, inside the castle's wall. Each room has a
+**type** from a fixed list, shown in the room, which says what kind of part it is: API, Routing,
+Database, Storage, UI, Agent, Auth, Services, Core, Jobs, Integrations, CLI, Build, Config, Tests,
+Docs, Logs. A project describes its rooms in `castle.json` (below), which Claude drafts from the
+project's layout; the page's **Copy prompt for Claude** gives it the prompt. Rooms keep their places:
+people learn the map by where rooms are, so new rooms go at the edges.
 
-| Room | Job | Built-in examples |
-|---|---|---|
-| Vault | database, schema, migrations | `**/db/**`, `**/migrations/**`, `**/*.sql` |
-| Keep | core logic, shared libraries | `**/lib/**`, `**/core/**`, `**/utils/**` |
-| Rookery | MCP servers, integrations | `**/integrations/**`, `**/.mcp.json` |
-| Scriptorium | logs | `**/logs/**`, `**/*.log` |
-| Library | documentation | `**/docs/**`, `**/*.md` |
-| Barracks | jobs, workers, queues | `**/jobs/**`, `**/workers/**` |
-| Workshop | configuration, scripts, CI | `**/scripts/**`, `**/.github/**`, `**/package.json` |
-| Great Hall | user interface | `**/client/**`, `**/components/**`, `**/*.css`, `**/*.jsx` |
-| Proving Grounds | tests | `**/tests/**`, `**/*.test.*`, `**/*smoke*` |
-| Watchtower | auth and security | `**/auth/**`, `**/*auth*`, `**/*security*` |
-| Gatehouse | routes, API, entry points | `**/routes/**`, `**/api/**`, `**/app.*` |
-| Steward's Hall | services, request handling | `**/services/**`, `**/middleware/**` |
+Until a project has a `castle.json`, the built-in map applies: twelve common areas, each typed, with
+patterns from folder and file names that usually mean the job:
 
-The full lists are on the page (click a room). A file several rooms claim lights all of them. A file
-in the project that no room claims is counted in **the Wilds**, which is the sign the map needs a
-pattern; a file outside the project is counted apart, since no pattern could claim it.
+| Room (type) | Built-in examples |
+|---|---|
+| Database | `**/db/**`, `**/migrations/**`, `**/*.sql` |
+| Core | `**/lib/**`, `**/core/**`, `**/utils/**` |
+| Integrations | `**/integrations/**`, `**/.mcp.json` |
+| Logs | `**/logs/**`, `**/*.log` |
+| Docs | `**/docs/**`, `**/*.md` |
+| Jobs | `**/jobs/**`, `**/workers/**` |
+| Build and config (Build) | `**/scripts/**`, `**/.github/**`, `**/package.json` |
+| UI | `**/client/**`, `**/components/**`, `**/*.css`, `**/*.jsx` |
+| Tests | `**/tests/**`, `**/*.test.*`, `**/*smoke*` |
+| Auth | `**/auth/**`, `**/*auth*`, `**/*security*` |
+| API | `**/routes/**`, `**/api/**`, `**/app.*` |
+| Services | `**/services/**`, `**/middleware/**` |
+
+The built-in map is a starting point, not a picture of the project: on LayerCake's own repository it
+leaves 24 of the 28 files in `server/` in the Wilds, and a drafted map leaves none. The full lists
+are on the page (click a room). A file several rooms claim lights all of them. A file in the project
+that no room claims is counted in **the Wilds**, which is the sign the map needs a pattern; a file
+outside the project is counted apart, since no pattern could claim it.
+
+**Where runs go** comes from the types: a test run lights the first Tests room, a build run the first
+Build room, a migration the first Database room (a command rule can name a room instead), and any
+other shell call works in the first Build room, else the first Config room, else nowhere. MCP calls
+wait on the wall above the first Integrations room, else above the gate.
 
 **Room states**, highest priority first. The page shows each rule beside the state (hover a state in
 the legend, or click a room); the rules come from the server with the data.
@@ -910,7 +924,7 @@ the legend, or click a room); the rules come from the server with the data.
 **Units** (dots with a letter): **M** a session, in the room of its latest call, resting after 60 s
 without one; **K** a subagent (Knight), from its start to its stop; **W** a skill Claude invoked
 (Wizard), beside its caller until the caller's turn ends (a skill you type as `/name` is not seen);
-**R** an MCP call (Raven), on the wall above the Rookery; **S** a web fetch or search (Scout) beyond
+**R** an MCP call (Raven), on the wall above the first Integrations room (else above the gate); **S** a web fetch or search (Scout) beyond
 the gate; **H** the Herald at the gate while a launched session waits for you, the one unit that
 pulses. Clicking a unit opens the room it stands in.
 
@@ -926,7 +940,7 @@ pulses. Clicking a unit opens the room it stands in.
 - A Mason or Knight first seen while the castle is open walks in from the gate to where it is (what
   it did before the castle saw it, such as a resumed session's earlier work, is not walked), and
   walks out through the gate when its session ends or stops reporting, or its subagent stops. A
-  Raven flies from the Rookery up to the wall and back when its call returns; a Scout walks out of
+  Raven flies from its room up to the wall and back when its call returns; a Scout walks out of
   the gate and back; a Wizard fades in beside its caller and goes where it goes.
 - What was already there when the castle opens, or reconnects (a rescan, a hidden tab shown again),
   stands where it is: a walk nobody saw would be invented. So does every unit when the map is
@@ -935,26 +949,37 @@ pulses. Clicking a unit opens the room it stands in.
 - Walking costs nothing when nobody walks: each walk is one browser animation that ends on arrival,
   with no drawing loop running in between.
 
-**castle.json.** A project can adjust its map with `castle.json` at its root. LayerCake reads it and
-never writes it. **Copy prompt for Claude** copies a prompt to paste into a Claude session in the
-project, so Claude drafts the file from the project's real layout; the prompt is built by the server
-from the same rules the file is checked against. **Reload map** re-reads it, and so does an edit to
-it that the castle sees.
+**castle.json.** A project describes its rooms with `castle.json` at its root. LayerCake reads it
+and never writes it. **Copy prompt for Claude** copies a prompt to paste into a Claude session in
+the project, so Claude drafts the file from the project's real layout (and, when the file exists,
+keeps every room where it is and adds new ones at the edges); the prompt is built by the server from
+the same rules the file is checked against. **Reload map** re-reads it, and so does an edit to it
+that the castle sees.
 
 ```json
 {
-  "version": 1,
-  "rooms": { "vault": { "name": "Treasury", "patterns": ["src/data/**"] }, "barracks": { "drop": true } },
+  "version": 2,
+  "rooms": [
+    { "id": "scan", "name": "Scan and lineage", "type": "core", "col": 1, "row": 0, "patterns": ["server/scan.js", "server/paths.js"] },
+    { "id": "api", "name": "HTTP API", "type": "api", "col": 1, "row": 1, "patterns": ["server/app.js"] }
+  ],
+  "gate": 1,
   "commands": [{ "words": "npm run smoke", "kind": "test" }],
   "proof": ["test"]
 }
 ```
 
-- Room ids are fixed; a room can be renamed or dropped, not added or moved. Giving a room `patterns`
-  replaces its built-in ones.
+- Each room has an `id` (1 to 32 lowercase letters, digits and dashes, unique, and not a place the
+  castle already uses: gate, beyond-gate, wilds, outside, perch, project), a `name` of up to 40
+  characters in the project's own words, a `type` from the list above, and its place: `col` 0 to 3
+  and `row` 0 to 5, one room a cell, row 0 at the back. At most 24 rooms. The floor is as big as the
+  rooms placed on it, and the gate is in the front wall under the column `gate` names (else the
+  middle one). Only the rooms the file lists exist: no built-in room is added to them.
 - Patterns are relative to the project root with `/`; only `*`, `?` and whole-segment `**` are
   wildcards (no braces, classes, `!` or backslashes); a pattern without a slash matches at the root
   only. At most 50 patterns a room, 200 characters each, 100 command rules, 64 KB.
+- A version 1 file (the old fixed castle rooms, renamed or dropped) is no longer read: the page says
+  so, and Copy prompt for Claude drafts a version 2.
 - A file that cannot be used leaves the built-in map in force AND the page says why.
 - castle.json can arrive in a cloned repository, so it is data only: the matcher is LayerCake's own
   and cannot be made to backtrack (a pattern that kept a regular-expression matcher busy for over a

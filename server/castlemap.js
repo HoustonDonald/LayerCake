@@ -1,8 +1,16 @@
 /**
- * The Castle's map (#160): which room a file belongs to, and what a shell
- * command is. The floor plan is fixed (owner decision 2026-09-29, the 3x4
- * layout); a project's own castle.json can rename or drop rooms and set their
- * patterns, never move or add one (spec: "The map never moves").
+ * The Castle's map (#160, #167): the project's rooms, which room a file
+ * belongs to, and what a shell command is.
+ *
+ * The rooms are the project's own sections (owner decision 2026-09-30, #167),
+ * each tagged with a function type from a fixed list. A project describes
+ * them in castle.json (version 2), which Claude drafts from the project's
+ * layout with the page's "Copy prompt for Claude" and the owner reviews once.
+ * Each room has an explicit place on the grid; the prompt asks Claude to keep
+ * every existing room where it is and to add new ones at the edges (spec: "The
+ * map never moves"). Without a castle.json the built-in map applies: twelve
+ * common areas, typed, with patterns from folder and file names that usually
+ * mean the job.
  *
  * castle.json is READ, never written, by LayerCake. It sits in the project, so
  * it can arrive in a cloned repository written by anyone: everything in it is
@@ -28,157 +36,91 @@ export const MAX_MAP_BYTES = 64 * 1024;
 export const MAX_PATTERNS_PER_ROOM = 50;
 export const MAX_PATTERN_CHARS = 200;
 export const MAX_COMMAND_RULES = 100;
+export const MAX_ROOMS = 24;
+export const MAX_COLS = 4;
+export const MAX_ROWS = 6;
+export const MAX_NAME_CHARS = 40;
+/** A room id: a short slug, so it is safe as a key and in a URL. */
+export const ROOM_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+/** Names the castle already uses for places that are not rooms. */
+const RESERVED_IDS = new Set(['gate', 'beyond-gate', 'wilds', 'outside', 'perch', 'project']);
 const FOLD = process.platform === 'win32';
 
 /**
- * The floor plan, back row first; the gate is under the Gatehouse. Keep, Great
- * Hall and Barracks are the assistant's additions to the nine rooms the spec
- * names (owner decision 2026-09-29). Built-in patterns come from folder and
- * file names that usually mean the job; a project whose layout says otherwise
- * writes castle.json.
+ * Room types (#167): what a room does. The type gives a room its icon (#162)
+ * and the roles fixed room ids used to carry: where test, build and migration
+ * runs go when no rule names a room, where a plain shell call works, and where
+ * the Raven waits. Shipped with the map so the page never keeps its own list.
  */
-export const ROOMS = [
-  {
-    id: 'vault',
-    name: 'Vault',
-    job: 'database, schema, migrations',
-    col: 0,
-    row: 0,
-    patterns: ['**/db/**', '**/database/**', '**/migrations/**', '**/models/**', '**/schema/**', '**/prisma/**', '**/*.sql', '**/schema.*'],
-  },
-  {
-    id: 'keep',
-    name: 'Keep',
-    job: 'core logic, shared libraries',
-    col: 1,
-    row: 0,
-    patterns: ['**/lib/**', '**/core/**', '**/shared/**', '**/common/**', '**/utils/**', '**/domain/**'],
-  },
-  {
-    id: 'rookery',
-    name: 'Rookery',
-    job: 'MCP servers, integrations, outside services',
-    col: 2,
-    row: 0,
-    patterns: ['**/integrations/**', '**/clients/**', '**/mcp/**', '**/webhooks/**', '**/.mcp.json'],
-  },
-  {
-    id: 'scriptorium',
-    name: 'Scriptorium',
-    job: 'logs and logging',
-    col: 0,
-    row: 1,
-    patterns: ['**/logs/**', '**/logging/**', '**/*.log', '**/logger.*'],
-  },
-  {
-    id: 'library',
-    name: 'Library',
-    job: 'documentation',
-    col: 1,
-    row: 1,
-    patterns: ['**/docs/**', '**/*.md', '**/*.mdx', '**/*.rst'],
-  },
-  {
-    id: 'barracks',
-    name: 'Barracks',
-    job: 'background jobs, workers, queues',
-    col: 2,
-    row: 1,
-    patterns: ['**/jobs/**', '**/workers/**', '**/queues/**', '**/cron/**', '**/tasks/**'],
-  },
-  {
-    id: 'workshop',
-    name: 'Workshop',
-    job: 'configuration, scripts, build and CI',
-    col: 0,
-    row: 2,
-    patterns: [
-      '**/scripts/**',
-      '**/.github/**',
-      '**/.claude/**',
-      '**/package.json',
-      '**/package-lock.json',
-      '**/*.config.*',
-      '**/tsconfig*.json',
-      '**/Dockerfile',
-      '**/*.yml',
-      '**/*.yaml',
-      '**/*.toml',
-      '**/Makefile',
-      '**/*.csproj',
-      '**/*.sln',
-    ],
-  },
-  {
-    id: 'great-hall',
-    name: 'Great Hall',
-    job: 'user interface: views, components, styles',
-    col: 1,
-    row: 2,
-    patterns: [
-      '**/client/**',
-      '**/components/**',
-      '**/pages/**',
-      '**/views/**',
-      '**/ui/**',
-      '**/public/**',
-      '**/*.css',
-      '**/*.scss',
-      '**/*.html',
-      '**/*.jsx',
-      '**/*.tsx',
-      '**/*.vue',
-      '**/*.svelte',
-    ],
-  },
-  {
-    id: 'proving-grounds',
-    name: 'Proving Grounds',
-    job: 'tests',
-    col: 2,
-    row: 2,
-    patterns: ['**/test/**', '**/tests/**', '**/__tests__/**', '**/spec/**', '**/e2e/**', '**/*.test.*', '**/*.spec.*', '**/*smoke*'],
-  },
-  {
-    id: 'watchtower',
-    name: 'Watchtower',
-    job: 'authentication and security',
-    col: 0,
-    row: 3,
-    patterns: ['**/auth/**', '**/security/**', '**/permissions/**', '**/*auth*', '**/*security*'],
-  },
-  {
-    id: 'gatehouse',
-    name: 'Gatehouse',
-    job: 'routes, API, entry points',
-    col: 1,
-    row: 3,
-    patterns: ['**/routes/**', '**/api/**', '**/controllers/**', '**/endpoints/**', '**/handlers/**', '**/*routes*', '**/server.*', '**/app.*', '**/main.*'],
-  },
-  {
-    id: 'stewards-hall',
-    name: "Steward's Hall",
-    job: 'services and request handling',
-    col: 2,
-    row: 3,
-    patterns: ['**/services/**', '**/middleware/**', '**/validators/**', '**/*service*'],
-  },
+export const ROOM_TYPES = [
+  { type: 'api', label: 'API', job: 'API endpoints and request entry points' },
+  { type: 'routing', label: 'Routing', job: 'routes and navigation' },
+  { type: 'database', label: 'Database', job: 'database, schema and migrations' },
+  { type: 'storage', label: 'Storage', job: 'files, caches and saved state' },
+  { type: 'ui', label: 'UI', job: 'user interface: views, components and styles' },
+  { type: 'agent', label: 'Agent', job: 'agents and processes that act for the user' },
+  { type: 'auth', label: 'Auth', job: 'authentication, authorization and security' },
+  { type: 'services', label: 'Services', job: 'services, business logic and request handling' },
+  { type: 'core', label: 'Core', job: 'core logic and shared libraries' },
+  { type: 'jobs', label: 'Jobs', job: 'background jobs, workers and queues' },
+  { type: 'integrations', label: 'Integrations', job: 'MCP servers, outside services and webhooks' },
+  { type: 'cli', label: 'CLI', job: 'command-line tools' },
+  { type: 'build', label: 'Build', job: 'build, packaging, CI and scripts' },
+  { type: 'config', label: 'Config', job: 'configuration' },
+  { type: 'tests', label: 'Tests', job: 'tests' },
+  { type: 'docs', label: 'Docs', job: 'documentation' },
+  { type: 'logs', label: 'Logs', job: 'logs and logging' },
 ];
+const TYPE_IDS = new Set(ROOM_TYPES.map((t) => t.type));
+/** The room type a kind of run lights up when no rule names a room. */
+const KIND_TYPE = { test: 'tests', build: 'build', migration: 'database' };
+export const COMMAND_KINDS = Object.keys(KIND_TYPE);
+/** A plain shell call works in the first room of these types, in this order (spec: "it works a crank or bellows"). */
+const SHELL_TYPES = ['build', 'config'];
+/** The Raven waits on the wall above the first room of this type, else above the gate. */
+const PERCH_TYPE = 'integrations';
 
-export const FLOOR = { cols: 3, rows: 4, gate: { col: 1 } };
-const ROOM_IDS = new Set(ROOMS.map((r) => r.id));
-
-/** Where a kind of command lights up when no rule names a room. */
-const KIND_ROOM = { test: 'proving-grounds', build: 'workshop', migration: 'vault' };
-export const COMMAND_KINDS = Object.keys(KIND_ROOM);
-/** Any other shell call works in the Workshop (spec: "it works a crank or bellows"). */
-export const SHELL_ROOM = 'workshop';
+/**
+ * The built-in map, back row first; the gate is under API. The twelve areas
+ * and places of the plain castle (owner decision 2026-09-29), renamed for what
+ * they do (#167). A project whose layout says otherwise writes castle.json.
+ */
+export const DEFAULT_ROOMS = [
+  { id: 'database', name: 'Database', type: 'database', col: 0, row: 0, patterns: ['**/db/**', '**/database/**', '**/migrations/**', '**/models/**', '**/schema/**', '**/prisma/**', '**/*.sql', '**/schema.*'] },
+  { id: 'core', name: 'Core', type: 'core', col: 1, row: 0, patterns: ['**/lib/**', '**/core/**', '**/shared/**', '**/common/**', '**/utils/**', '**/domain/**'] },
+  { id: 'integrations', name: 'Integrations', type: 'integrations', col: 2, row: 0, patterns: ['**/integrations/**', '**/clients/**', '**/mcp/**', '**/webhooks/**', '**/.mcp.json'] },
+  { id: 'logs', name: 'Logs', type: 'logs', col: 0, row: 1, patterns: ['**/logs/**', '**/logging/**', '**/*.log', '**/logger.*'] },
+  { id: 'docs', name: 'Docs', type: 'docs', col: 1, row: 1, patterns: ['**/docs/**', '**/*.md', '**/*.mdx', '**/*.rst'] },
+  { id: 'jobs', name: 'Jobs', type: 'jobs', col: 2, row: 1, patterns: ['**/jobs/**', '**/workers/**', '**/queues/**', '**/cron/**', '**/tasks/**'] },
+  {
+    id: 'build',
+    name: 'Build and config',
+    type: 'build',
+    col: 0,
+    row: 2,
+    patterns: ['**/scripts/**', '**/.github/**', '**/.claude/**', '**/package.json', '**/package-lock.json', '**/*.config.*', '**/tsconfig*.json', '**/Dockerfile', '**/*.yml', '**/*.yaml', '**/*.toml', '**/Makefile', '**/*.csproj', '**/*.sln'],
+  },
+  {
+    id: 'ui',
+    name: 'UI',
+    type: 'ui',
+    col: 1,
+    row: 2,
+    patterns: ['**/client/**', '**/components/**', '**/pages/**', '**/views/**', '**/ui/**', '**/public/**', '**/*.css', '**/*.scss', '**/*.html', '**/*.jsx', '**/*.tsx', '**/*.vue', '**/*.svelte'],
+  },
+  { id: 'tests', name: 'Tests', type: 'tests', col: 2, row: 2, patterns: ['**/test/**', '**/tests/**', '**/__tests__/**', '**/spec/**', '**/e2e/**', '**/*.test.*', '**/*.spec.*', '**/*smoke*'] },
+  { id: 'auth', name: 'Auth', type: 'auth', col: 0, row: 3, patterns: ['**/auth/**', '**/security/**', '**/permissions/**', '**/*auth*', '**/*security*'] },
+  { id: 'api', name: 'API', type: 'api', col: 1, row: 3, patterns: ['**/routes/**', '**/api/**', '**/controllers/**', '**/endpoints/**', '**/handlers/**', '**/*routes*', '**/server.*', '**/app.*', '**/main.*'] },
+  { id: 'services', name: 'Services', type: 'services', col: 2, row: 3, patterns: ['**/services/**', '**/middleware/**', '**/validators/**', '**/*service*'] },
+];
+const DEFAULT_GATE = 1;
 
 /**
  * Commands recognised without a castle.json, as word prefixes of a command
- * segment (lowercase). Projects add their own ahead of these.
+ * segment (lowercase). Projects add their own ahead of these. Their room is
+ * the map's room for their kind.
  */
-export const DEFAULT_COMMANDS = [
+const DEFAULT_COMMAND_WORDS = [
   ['npm test', 'test'],
   ['npm run test', 'test'],
   ['npm run smoke', 'test'],
@@ -205,7 +147,7 @@ export const DEFAULT_COMMANDS = [
   ['npm run migrate', 'migration'],
   ['dotnet ef database', 'migration'],
   ['alembic upgrade', 'migration'],
-].map(([words, kind]) => ({ words: words.split(' '), kind, room: KIND_ROOM[kind], source: 'built-in' }));
+].map(([words, kind]) => ({ words: words.split(' '), kind }));
 
 /**
  * Checks a glob's syntax. Returns null when it is usable, else why not. Only
@@ -293,66 +235,105 @@ function ruleWords(value) {
   return words.map((w) => w.toLowerCase());
 }
 
+const isObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+const isCell = (v, max) => Number.isInteger(v) && v >= 0 && v < max;
+
+/** castle.json's rooms, checked. Problems are pushed; returns the rooms or null. */
+function readRooms(list, problems) {
+  if (!Array.isArray(list) || !list.length || list.length > MAX_ROOMS) {
+    problems.push(`"rooms" must be a list of 1 to ${MAX_ROOMS} rooms`);
+    return null;
+  }
+  const rooms = [];
+  const ids = new Set();
+  const cells = new Map();
+  list.forEach((spec, i) => {
+    const at = `rooms[${i}]`;
+    if (!isObject(spec)) {
+      problems.push(`${at} must be an object`);
+      return;
+    }
+    const { id, name, type, col, row } = spec;
+    const where = typeof id === 'string' && ROOM_ID_RE.test(id) ? `room "${id}"` : at;
+    if (typeof id !== 'string' || !ROOM_ID_RE.test(id)) problems.push(`${at}.id must be 1 to 32 lowercase letters, digits and dashes, starting with a letter or digit`);
+    else if (RESERVED_IDS.has(id)) problems.push(`${at}.id "${id}" is a place the castle already uses (${[...RESERVED_IDS].join(', ')})`);
+    else if (ids.has(id)) problems.push(`${at}.id "${id}" is used twice`);
+    if (typeof name !== 'string' || !name.trim() || name.length > MAX_NAME_CHARS) problems.push(`${where}: "name" must be 1 to ${MAX_NAME_CHARS} characters`);
+    if (typeof type !== 'string' || !TYPE_IDS.has(type)) problems.push(`${where}: "type" must be one of ${[...TYPE_IDS].join(', ')}`);
+    if (!isCell(col, MAX_COLS) || !isCell(row, MAX_ROWS)) problems.push(`${where}: "col" must be 0 to ${MAX_COLS - 1} and "row" 0 to ${MAX_ROWS - 1}`);
+    else if (cells.has(`${col},${row}`)) problems.push(`${where} and room "${cells.get(`${col},${row}`)}" both take col ${col}, row ${row}`);
+    let patterns = [];
+    if (spec.patterns !== undefined) {
+      if (!Array.isArray(spec.patterns) || spec.patterns.length > MAX_PATTERNS_PER_ROOM) {
+        problems.push(`${where}: "patterns" must be a list of at most ${MAX_PATTERNS_PER_ROOM}`);
+      } else {
+        const bad = spec.patterns.map(globProblem).filter(Boolean);
+        if (bad.length) problems.push(...bad.map((b) => `${where}: ${b}`));
+        else patterns = spec.patterns.map((p) => p.replace(/^\.\//, ''));
+      }
+    }
+    if (typeof id === 'string') ids.add(id);
+    if (isCell(col, MAX_COLS) && isCell(row, MAX_ROWS) && !cells.has(`${col},${row}`)) cells.set(`${col},${row}`, id);
+    rooms.push({ id, name: typeof name === 'string' ? name.trim() : name, type, col, row, patterns, custom: true });
+  });
+  return rooms;
+}
+
+/** Which room each role goes to, from the rooms' types: the first room of the type, in list order. */
+function rolesOf(rooms) {
+  const first = (types) => {
+    for (const t of types) {
+      const r = rooms.find((x) => x.type === t);
+      if (r) return r.id;
+    }
+    return null;
+  };
+  return {
+    test: first([KIND_TYPE.test]),
+    build: first([KIND_TYPE.build]),
+    migration: first([KIND_TYPE.migration]),
+    shell: first(SHELL_TYPES),
+    perch: first([PERCH_TYPE]),
+  };
+}
+
 /**
- * The built-in map, or a castle.json laid over it. Errors are values: a file
- * that cannot be used leaves the built-in map in force AND says why, so a
- * broken castle.json is never silently ignored.
+ * The built-in map, or castle.json's. Errors are values: a file that cannot
+ * be used leaves the built-in map in force AND says why, so a broken
+ * castle.json is never silently ignored.
  */
 export function buildMap(parsed, source) {
-  const rooms = ROOMS.map((r) => ({ ...r, patterns: [...r.patterns], dropped: false, custom: false }));
-  const commands = [];
-  let proof = ['test'];
   const problems = [];
+  let rooms = null;
+  let gate = null;
+  const rules = [];
+  let proof = ['test'];
   if (parsed !== undefined) {
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    if (!isObject(parsed)) {
       problems.push('the file must hold a JSON object');
+    } else if (parsed.version === 1 || (parsed.version === undefined && isObject(parsed.rooms))) {
+      problems.push('this is a version 1 file (the old fixed castle rooms), which is no longer read. "Copy prompt for Claude" drafts a version 2 with the project\'s own rooms');
+    } else if (parsed.version !== 2) {
+      problems.push('"version" must be 2');
     } else {
-      if (parsed.rooms !== undefined && (typeof parsed.rooms !== 'object' || parsed.rooms === null || Array.isArray(parsed.rooms))) {
-        problems.push('"rooms" must be an object keyed by room id');
-      } else if (parsed.rooms) {
-        for (const key of Object.keys(parsed.rooms)) {
-          if (!ROOM_IDS.has(key)) problems.push(`"${key}" is not a room (rooms: ${[...ROOM_IDS].join(', ')})`);
-        }
-        for (const room of rooms) {
-          // Own properties of the fixed ids only: a key named "constructor" or
-          // "__proto__" is not a room (#48).
-          if (!Object.hasOwn(parsed.rooms, room.id)) continue;
-          const spec = parsed.rooms[room.id];
-          if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
-            problems.push(`rooms.${room.id} must be an object`);
-            continue;
-          }
-          if (spec.name !== undefined) {
-            if (typeof spec.name === 'string' && spec.name.trim() && spec.name.length <= 40) room.name = spec.name.trim();
-            else problems.push(`rooms.${room.id}.name must be a string of 1 to 40 characters`);
-          }
-          if (spec.drop === true) room.dropped = true;
-          if (spec.patterns !== undefined) {
-            if (!Array.isArray(spec.patterns) || spec.patterns.length > MAX_PATTERNS_PER_ROOM) {
-              problems.push(`rooms.${room.id}.patterns must be a list of at most ${MAX_PATTERNS_PER_ROOM}`);
-            } else {
-              const bad = spec.patterns.map(globProblem).filter(Boolean);
-              if (bad.length) problems.push(...bad.map((b) => `rooms.${room.id}: ${b}`));
-              else {
-                room.patterns = spec.patterns.map((p) => p.replace(/^\.\//, ''));
-                room.custom = true;
-              }
-            }
-          }
-        }
+      rooms = readRooms(parsed.rooms, problems);
+      const ids = new Set((rooms || []).map((r) => r.id));
+      if (parsed.gate !== undefined) {
+        const cols = rooms ? Math.max(...rooms.map((r) => (isCell(r.col, MAX_COLS) ? r.col : 0))) + 1 : 0;
+        if (isCell(parsed.gate, cols)) gate = parsed.gate;
+        else problems.push(`"gate" must be a column the rooms use (0 to ${Math.max(0, cols - 1)})`);
       }
       if (parsed.commands !== undefined) {
         if (!Array.isArray(parsed.commands) || parsed.commands.length > MAX_COMMAND_RULES) {
           problems.push(`"commands" must be a list of at most ${MAX_COMMAND_RULES}`);
         } else {
           parsed.commands.forEach((c, i) => {
-            const words = c && typeof c === 'object' ? ruleWords(c.words) : null;
-            const kind = c && typeof c === 'object' ? c.kind : null;
-            const room = c && typeof c === 'object' && c.room !== undefined ? c.room : KIND_ROOM[kind];
+            const words = isObject(c) ? ruleWords(c.words) : null;
+            const kind = isObject(c) ? c.kind : null;
             if (!words) problems.push(`commands[${i}].words must be the command's first words, like "npm run smoke"`);
-            else if (!Object.hasOwn(KIND_ROOM, kind)) problems.push(`commands[${i}].kind must be one of ${COMMAND_KINDS.join(', ')}`);
-            else if (typeof room !== 'string' || !ROOM_IDS.has(room)) problems.push(`commands[${i}].room is not a room`);
-            else commands.push({ words, kind, room, source: 'castle.json' });
+            else if (!Object.hasOwn(KIND_TYPE, kind)) problems.push(`commands[${i}].kind must be one of ${COMMAND_KINDS.join(', ')}`);
+            else if (c.room !== undefined && (typeof c.room !== 'string' || !ids.has(c.room))) problems.push(`commands[${i}].room is not one of the rooms`);
+            else rules.push({ words, kind, room: c.room ?? null, source: 'castle.json' });
           });
         }
       }
@@ -363,23 +344,29 @@ export function buildMap(parsed, source) {
       }
     }
   }
-  const usable = problems.length === 0;
-  const finalRooms = usable ? rooms : ROOMS.map((r) => ({ ...r, patterns: [...r.patterns], dropped: false, custom: false }));
+  const usable = parsed !== undefined && problems.length === 0 && rooms;
+  const finalRooms = usable ? rooms : DEFAULT_ROOMS.map((r) => ({ ...r, patterns: [...r.patterns], custom: false }));
+  const cols = Math.max(...finalRooms.map((r) => r.col)) + 1;
+  const rows = Math.max(...finalRooms.map((r) => r.row)) + 1;
+  const roles = rolesOf(finalRooms);
+  const roomFor = (rule) => rule.room ?? roles[rule.kind];
   return {
-    source: parsed === undefined ? 'built-in' : usable ? 'castle.json' : 'built-in',
-    error: usable ? null : `castle.json not used: ${problems.slice(0, 5).join('; ')}${problems.length > 5 ? ` (and ${problems.length - 5} more)` : ''}`,
+    source: usable ? 'castle.json' : 'built-in',
+    error: parsed === undefined || usable ? null : `castle.json not used: ${problems.slice(0, 5).join('; ')}${problems.length > 5 ? ` (and ${problems.length - 5} more)` : ''}`,
     file: source || null,
     rooms: finalRooms,
-    commands: [...(usable ? commands : []), ...DEFAULT_COMMANDS],
+    floor: { cols, rows, gate: { col: usable ? (gate ?? Math.floor((cols - 1) / 2)) : DEFAULT_GATE } },
+    roles,
+    commands: [...(usable ? rules : []), ...DEFAULT_COMMAND_WORDS.map((r) => ({ ...r, source: 'built-in' }))].map((r) => ({ ...r, room: roomFor(r) })),
     proof: usable ? proof : ['test'],
-    matchers: finalRooms.map((r) => ({ id: r.id, dropped: r.dropped, globs: r.patterns.map(compileGlob) })),
+    matchers: finalRooms.map((r) => ({ id: r.id, globs: r.patterns.map(compileGlob) })),
   };
 }
 
 /**
  * Reads <projectDir>/castle.json through readForDisplay (size cap, share
- * gate, errors as values) and lays it over the built-in map. A missing file is
- * not an error: the built-in map is the default.
+ * gate, errors as values). A missing file is not an error: the built-in map is
+ * the default.
  */
 export async function loadMap(projectDir) {
   const file = path.join(projectDir, CASTLE_FILE);
@@ -409,7 +396,6 @@ export function locate(map, projectDir, absPath) {
   if (!rel) return { where: 'wilds', rooms: [], rel: '.' };
   const rooms = [];
   for (const m of map.matchers) {
-    if (m.dropped) continue;
     if (m.globs.some((g) => g(rel))) rooms.push(m.id);
   }
   return rooms.length ? { where: 'room', rooms, rel } : { where: 'wilds', rooms: [], rel };
@@ -419,7 +405,7 @@ export function locate(map, projectDir, absPath) {
  * A search scoped to a folder (Grep or Glob `path`) lights the rooms that
  * claim the whole folder: the ones whose patterns match any file directly
  * inside it, tested with a placeholder name no extension pattern can match.
- * So a search in `db/` lights the Vault through `**\/db/**`, and one in
+ * So a search in `db/` lights Database through `**\/db/**`, and one in
  * `server/` lights nothing a mere `**\/*.sql` would. A search of the whole
  * project lights no room: it is everywhere at once, which is nowhere useful.
  */
@@ -430,7 +416,6 @@ export function locateFolder(map, projectDir, absDir) {
   const probe = `${rel}/\u0000`;
   const rooms = [];
   for (const m of map.matchers) {
-    if (m.dropped) continue;
     if (m.globs.some((g) => g(probe))) rooms.push(m.id);
   }
   return rooms.length ? { where: 'room', rooms, rel } : { where: 'wilds', rooms: [], rel };
@@ -439,7 +424,8 @@ export function locateFolder(map, projectDir, absDir) {
 /**
  * What a shell call is, from its command heads: the strongest kind any
  * segment matches (test, then build, then migration), and its room; else a
- * plain shell call in the Workshop.
+ * plain shell call, in the map's shell room (the first Build room, else the
+ * first Config room, else none).
  */
 export function classifyCommand(map, heads) {
   let best = null;
@@ -452,34 +438,41 @@ export function classifyCommand(map, heads) {
       break;
     }
   }
-  return best || { kind: null, room: SHELL_ROOM, rule: null };
+  return best || { kind: null, room: map.roles.shell, rule: null };
 }
 
 /**
  * The prompt the page copies for "Copy prompt for Claude". Built here, from
- * the same room table and limits the loader checks, so the page never keeps a
+ * the same type list and limits the loader checks, so the page never keeps a
  * copy of the schema that could drift from the validator.
  */
 export function draftPrompt(projectDir) {
-  const rooms = ROOMS.map((r) => `- ${r.id} (${r.name}): ${r.job}`).join('\n');
+  const types = ROOM_TYPES.map((t) => `- ${t.type}: ${t.job}`).join('\n');
   return [
-    `Write a file named ${CASTLE_FILE} at the root of this project (${projectDir}). It maps the project's files to the rooms of LayerCake's Castle view, which shows where Claude is working. Read the project's layout first, then assign folders and files to rooms by what they do. Change no other file.`,
+    `Write a file named ${CASTLE_FILE} at the root of this project (${projectDir}). It describes the project's sections as the rooms of LayerCake's Castle view, which shows where Claude is working. Read the project's layout first: its folders, entry points, and what each part does. Then give each real section of this project a room. Change no other file.`,
     '',
-    'Rooms (the ids are fixed; you may rename a room or drop one this project has nothing like):',
-    rooms,
+    `If ${CASTLE_FILE} already exists, keep every room's id and its col and row exactly as they are, and change its patterns only where the project changed. Put new rooms in empty cells at the edges of the grid. Never move a room: people learn the map by where rooms are.`,
+    '',
+    'Each room has a type, which gives it its icon and a job. Use these types only:',
+    types,
     '',
     'Format:',
     '{',
-    '  "version": 1,',
-    '  "rooms": { "<room id>": { "name": "optional new name", "drop": true, "patterns": ["src/db/**", "**/*.sql"] } },',
+    '  "version": 2,',
+    '  "rooms": [',
+    '    { "id": "scan", "name": "Scan and lineage", "type": "core", "col": 0, "row": 0, "patterns": ["server/scan.js", "server/paths.js"] }',
+    '  ],',
+    '  "gate": 1,',
     '  "commands": [ { "words": "npm run smoke", "kind": "test" } ],',
     '  "proof": ["test"]',
     '}',
     '',
     'Rules:',
-    `- Patterns are relative to the project root with forward slashes. Only *, ? and ** are wildcards (no braces, [classes], ! or backslashes). ** must be a whole segment. A pattern with no slash matches at the root only, so write **/x.md for anywhere. At most ${MAX_PATTERNS_PER_ROOM} patterns per room, ${MAX_PATTERN_CHARS} characters each.`,
-    '- A room you leave out keeps its built-in patterns. Giving a room "patterns" replaces its built-in ones. A file may belong to several rooms.',
-    `- "commands" lists this project's own test, build and migration commands by their first words; "kind" is ${COMMAND_KINDS.join(', ')}; "room" is optional.`,
+    `- Name rooms for what they are in THIS project, in its own words, like "Snapshots and writes" or "Session history", not by their type. At most ${MAX_NAME_CHARS} characters. The id is 1 to 32 lowercase letters, digits and dashes, unique; not gate, beyond-gate, wilds, outside, perch or project.`,
+    `- At most ${MAX_ROOMS} rooms, on a grid of at most ${MAX_COLS} columns (col 0 to ${MAX_COLS - 1}) and ${MAX_ROWS} rows (row 0 to ${MAX_ROWS - 1}), one room per cell. Row 0 is the back of the castle; the gate is in the front wall, below the last row, under the column "gate" names. Put entry points (API, routes, the app's front door) in the last row beside the gate, storage and core logic toward the back, and related rooms next to each other.`,
+    `- Patterns are relative to the project root with forward slashes. Only *, ? and ** are wildcards (no braces, [classes], ! or backslashes). ** must be a whole segment. A pattern with no slash matches at the root only, so write **/x.md for anywhere. At most ${MAX_PATTERNS_PER_ROOM} patterns per room, ${MAX_PATTERN_CHARS} characters each. A file may belong to several rooms; a file no room claims shows up in the Wilds, which says the map needs a pattern.`,
+    `- Runs go to rooms by type: test runs to the first "tests" room, build runs to the first "build" room, migrations to the first "database" room, and any other shell command to the first "build" room (else "config"). MCP calls wait above the first "integrations" room.`,
+    `- "commands" lists this project's own test, build and migration commands by their first words; "kind" is ${COMMAND_KINDS.join(', ')}; "room" (a room id) is optional.`,
     '- "proof" says which passing runs take the scaffolding down: ["test"] (default) or ["test", "build"] for a project with no tests.',
   ].join('\n');
 }

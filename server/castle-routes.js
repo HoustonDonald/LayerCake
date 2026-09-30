@@ -9,12 +9,14 @@
  * paths, tool names and one-line summaries, never a file or tool body.
  */
 
-import { ROOMS, openCastle, reloadCastleMap, subscribeCastle } from './castle.js';
+import { openCastle, reloadCastleMap, subscribeCastle } from './castle.js';
+import { ROOM_ID_RE } from './castlemap.js';
 
 const MAX_STREAMS = 4;
 /** An event, not a comment line, so the page can tell a quiet castle from a dead stream. */
 const PING_MS = 30_000;
-const DETAIL_IDS = new Set([...ROOMS.map((r) => r.id), 'wilds', 'outside']);
+/** The Wilds and outside have lists too; every other id must be one of the open castle's rooms (#167). */
+const BANDS = new Set(['wilds', 'outside']);
 
 const streams = new Set();
 
@@ -87,10 +89,11 @@ export function registerCastleRoutes(app, { projectFor }) {
     const projectDir = projectFor(String(req.query.scanId || ''));
     if (!projectDir) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan the directory.', code: 'ESCANGONE' });
     const id = String(req.query.room || '');
-    if (!DETAIL_IDS.has(id)) return res.status(400).json({ message: 'Not a room.', code: 'EBADREQUEST' });
+    if (!BANDS.has(id) && !ROOM_ID_RE.test(id)) return res.status(400).json({ message: 'Not a room.', code: 'EBADREQUEST' });
     const castle = openCastle(projectDir);
-    const detail = castle ? castle.roomDetail(id) : null;
-    if (!detail) return res.status(409).json({ message: 'The castle for this project is not open.', code: 'ENOTOPEN' });
+    if (!castle?.folded) return res.status(409).json({ message: 'The castle for this project is not open.', code: 'ENOTOPEN' });
+    const detail = castle.roomDetail(id);
+    if (!detail) return res.status(400).json({ message: 'Not a room.', code: 'EBADREQUEST' });
     return res.json(detail);
   });
 

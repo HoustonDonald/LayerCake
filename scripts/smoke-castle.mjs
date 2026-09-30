@@ -153,12 +153,14 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     check('the castle stream opens with the map first, then the state', await s1.until(() => s1.last('map') && s1.last('state'), 8000) && s1.frames[0]?.event === 'map', `status ${s1.status}`);
     const map = s1.last('map') || { rooms: [], states: [] };
     const cells = new Map(map.rooms.map((r) => [r.id, `${r.col},${r.row}`]));
-    check('the map is the 12-room floor plan, from the built-in patterns when there is no castle.json',
-      map.rooms.length === 12 && new Set(cells.values()).size === 12 && map.source === 'built-in' && map.error === null,
-      JSON.stringify({ n: map.rooms.length, source: map.source, error: map.error }));
+    check('with no castle.json the map is the 12 built-in areas, each typed, with the type list and roles shipped',
+      map.rooms.length === 12 && new Set(cells.values()).size === 12 && map.source === 'built-in' && map.error === null &&
+        map.rooms.every((r) => map.types.some((t) => t.type === r.type)) && map.perch === 'integrations' &&
+        JSON.stringify(map.floor) === JSON.stringify({ cols: 3, rows: 4, gate: { col: 1 } }),
+      JSON.stringify({ n: map.rooms.length, source: map.source, error: map.error, perch: map.perch, floor: map.floor }));
     check('the map ships each room state with its rule, and the prompt for Claude built from the validator\'s limits',
       map.states.map((s) => s.state).join() === 'alarm,construction,survey,proven,embers,dark' && map.states.every((s) => s.rule && s.label) &&
-        /castle\.json/.test(map.prompt) && /stewards-hall/.test(map.prompt) && /At most 50 patterns per room, 200 characters/.test(map.prompt));
+        /castle\.json/.test(map.prompt) && /"version": 2/.test(map.prompt) && /- integrations: /.test(map.prompt) && /At most 24 rooms/.test(map.prompt) && /At most 50 patterns per room, 200 characters/.test(map.prompt));
 
     check('a launched session that is reporting stands at the gate before its first call',
       await s1.untilState((st) => st.sessions.some((x) => x.sessionId === sid && x.live && x.source === 'hooks') && st.units.some((u) => u.key === `M:${sid}` && u.room === 'gate'), 8000),
@@ -171,38 +173,38 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     const latency = Date.now() - t0;
     check('a tool call of a launched session reaches the castle stream within 1 s (#159)', seen && latency < 1000, `${latency} ms`);
     check('a read lights its room as Survey and moves the session\'s Mason there',
-      await s1.untilState((st) => st.rooms.library.state === 'survey' && st.units.find((u) => u.key === `M:${sid}`)?.room === 'library'),
-      JSON.stringify(s1.last('state')?.rooms?.library));
+      await s1.untilState((st) => st.rooms.docs.state === 'survey' && st.units.find((u) => u.key === `M:${sid}`)?.room === 'docs'),
+      JSON.stringify(s1.last('state')?.rooms?.docs));
     await hook({ hook_event_name: 'PostToolUse', tool_name: 'Read', tool_use_id: 'toolu_c_read', tool_input: { file_path: P('docs', 'guide.md') }, tool_response: { type: 'text', file: { content: S.readBody } } });
 
     // --- change, scaffolding, a failing and a passing run -------------------------
     await call('toolu_c_edit', 'Edit', { file_path: P('db', 'schema.sql'), old_string: S.oldString, new_string: S.newString }, { response: { filePath: P('db', 'schema.sql'), oldString: S.oldString, newString: S.newString } });
     check('an edit lights its room as Construction and puts up scaffolding',
-      await s1.untilState((st) => st.rooms.vault.state === 'construction' && st.rooms.vault.scaffolding === true), JSON.stringify(s1.last('state')?.rooms?.vault));
+      await s1.untilState((st) => st.rooms.database.state === 'construction' && st.rooms.database.scaffolding === true), JSON.stringify(s1.last('state')?.rooms?.database));
 
     const testCmd = { command: `${S.commandHead} --flag && npm test`, description: 'Run the tests' };
     await hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'toolu_c_t1', tool_input: testCmd });
-    check('a running test run lights the Proving Grounds', await s1.untilState((st) => st.rooms['proving-grounds'].state === 'survey'));
+    check('a running test run lights the Tests room', await s1.untilState((st) => st.rooms.tests.state === 'survey'));
     await hook({ hook_event_name: 'PostToolUseFailure', tool_name: 'Bash', tool_use_id: 'toolu_c_t1', tool_input: testCmd, error: `Exit code 1\n${S.errorTail}` });
     check('a failing test run raises Alarm in the room with unproven changes, naming the run and its exit code',
-      await s1.untilState((st) => st.rooms.vault.state === 'alarm' && st.rooms.vault.cause?.kind === 'run' && st.rooms.vault.cause.exitCode === 1 && st.rooms.vault.cause.summary === 'Run the tests'),
-      JSON.stringify(s1.last('state')?.rooms?.vault));
-    check('the run is listed as failed, with the rooms it judged', s1.last('state')?.runs?.some((r) => r.id === 'toolu_c_t1' && r.ok === false && r.exitCode === 1 && r.judged.includes('vault')));
+      await s1.untilState((st) => st.rooms.database.state === 'alarm' && st.rooms.database.cause?.kind === 'run' && st.rooms.database.cause.exitCode === 1 && st.rooms.database.cause.summary === 'Run the tests'),
+      JSON.stringify(s1.last('state')?.rooms?.database));
+    check('the run is listed as failed, with the rooms it judged', s1.last('state')?.runs?.some((r) => r.id === 'toolu_c_t1' && r.ok === false && r.exitCode === 1 && r.judged.includes('database')));
 
     await call('toolu_c_t2', 'Bash', testCmd, { response: { stdout: S.stdout, stderr: '', interrupted: false } });
     check('a passing test run clears that Alarm and takes the scaffolding down',
-      await s1.untilState((st) => st.rooms.vault.state !== 'alarm' && st.rooms.vault.scaffolding === false), JSON.stringify(s1.last('state')?.rooms?.vault));
+      await s1.untilState((st) => st.rooms.database.state !== 'alarm' && st.rooms.database.scaffolding === false), JSON.stringify(s1.last('state')?.rooms?.database));
     check('once Construction lapses, the room shows Proven, naming the run',
-      await s1.untilState((st) => st.rooms.vault.state === 'proven' && st.rooms.vault.cause?.runId === 'toolu_c_t2', 6000), JSON.stringify(s1.last('state')?.rooms?.vault));
+      await s1.untilState((st) => st.rooms.database.state === 'proven' && st.rooms.database.cause?.runId === 'toolu_c_t2', 6000), JSON.stringify(s1.last('state')?.rooms?.database));
 
     // --- thrash, and a passing build ending it ------------------------------------
     for (let i = 1; i <= 4; i += 1) await call(`toolu_c_th${i}`, 'Edit', { file_path: P('src', 'app.js'), old_string: 'a', new_string: 'b' }, { response: { filePath: P('src', 'app.js') } });
     check('four edits of one file with no passing run between raise a thrash Alarm naming the file',
-      await s1.untilState((st) => st.rooms.gatehouse.state === 'alarm' && st.rooms.gatehouse.cause?.kind === 'thrash' && st.rooms.gatehouse.cause.path === 'src/app.js'),
-      JSON.stringify(s1.last('state')?.rooms?.gatehouse));
+      await s1.untilState((st) => st.rooms.api.state === 'alarm' && st.rooms.api.cause?.kind === 'thrash' && st.rooms.api.cause.path === 'src/app.js'),
+      JSON.stringify(s1.last('state')?.rooms?.api));
     await call('toolu_c_build', 'Bash', { command: 'npm run build', description: 'Build' }, { response: { stdout: '', stderr: '' } });
-    check('a passing build ends the thrash Alarm (spec: "no passing test or build in between")', await s1.untilState((st) => st.rooms.gatehouse.state !== 'alarm'));
-    check('a passing build is not proof by default: the scaffolding stays up', s1.last('state')?.rooms?.gatehouse?.scaffolding === true);
+    check('a passing build ends the thrash Alarm (spec: "no passing test or build in between")', await s1.untilState((st) => st.rooms.api.state !== 'alarm'));
+    check('a passing build is not proof by default: the scaffolding stays up', s1.last('state')?.rooms?.api?.scaffolding === true);
 
     // --- no verdict: a denial, a rejection, an interrupt ---------------------------
     await hook({ hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_use_id: 'toolu_c_deny', tool_input: { file_path: P('docs', 'x.md') } });
@@ -213,7 +215,7 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     await sleep(400);
     const noVerdict = s1.last('log')?.entries || [];
     check('a denied, rejected or interrupted change raises no Alarm, and says it had no verdict',
-      s1.last('state')?.rooms?.library?.state !== 'alarm' &&
+      s1.last('state')?.rooms?.docs?.state !== 'alarm' &&
         noVerdict.find((e) => e.id === 'toolu_c_deny')?.verdict === 'no verdict (denied)' &&
         noVerdict.find((e) => e.id === 'toolu_c_reject')?.verdict === 'no verdict (rejected)' &&
         noVerdict.find((e) => e.id === 'toolu_c_int')?.verdict === 'no verdict (interrupted)',
@@ -221,12 +223,12 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
 
     // --- a change that fails, cleared by a later success ---------------------------
     await call('toolu_c_wfail', 'Write', { file_path: P('tests', 'a.test.js'), content: S.writeContent }, { fail: 'EACCES: permission denied' });
-    check('a change that fails raises Alarm in its room', await s1.untilState((st) => st.rooms['proving-grounds'].state === 'alarm' && st.rooms['proving-grounds'].cause?.kind === 'tool'));
+    check('a change that fails raises Alarm in its room', await s1.untilState((st) => st.rooms.tests.state === 'alarm' && st.rooms.tests.cause?.kind === 'tool'));
     await call('toolu_c_rok', 'Read', { file_path: P('tests', 'a.test.js') }, { response: { file: { content: S.readBody } } });
-    check('a later successful call in that room clears it', await s1.untilState((st) => st.rooms['proving-grounds'].state !== 'alarm'));
+    check('a later successful call in that room clears it', await s1.untilState((st) => st.rooms.tests.state !== 'alarm'));
 
     await call('toolu_c_create', 'Write', { file_path: P('src', 'services', 'new.js'), content: S.writeContent }, { response: { type: 'create', filePath: P('src', 'services', 'new.js'), content: S.writeContent } });
-    check('a created file lights its room as Construction', await s1.untilState((st) => st.rooms['stewards-hall'].state === 'construction'));
+    check('a created file lights its room as Construction', await s1.untilState((st) => st.rooms.services.state === 'construction'));
 
     // --- the Wilds, outside, and a search scoped to a folder -----------------------
     await call('toolu_c_wild', 'Read', { file_path: P('weird', 'thing.xyz') });
@@ -236,15 +238,15 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
       JSON.stringify({ wilds: s1.last('state')?.wilds, outside: s1.last('state')?.outside }));
     await call('toolu_c_grep', 'Grep', { pattern: 'x', path: 'db' }, { response: { mode: 'content', content: S.grepBody, filenames: [P('db', 'schema.sql')] } });
     check('a search in a folder given relative to the session\'s cwd lights that folder\'s room',
-      await s1.untilState((st) => st.rooms.vault.state === 'survey'), JSON.stringify(s1.last('state')?.rooms?.vault));
+      await s1.untilState((st) => st.rooms.database.state === 'survey'), JSON.stringify(s1.last('state')?.rooms?.database));
 
     // --- the trail the page walks (#161) ------------------------------------------
     // Every call above, as the room changes it made: in order, a run of calls
     // in one room as one visit (t2, th2 to th4, reject, int, rok), each keyed
     // by the call that caused it.
     const walked = [
-      ['library', 'read'], ['vault', 'edit'], ['proving-grounds', 't1'], ['gatehouse', 'th1'], ['workshop', 'build'], ['library', 'deny'],
-      ['proving-grounds', 'wfail'], ['stewards-hall', 'create'], ['wilds', 'wild'], ['outside', 'out'], ['vault', 'grep'],
+      ['docs', 'read'], ['database', 'edit'], ['tests', 't1'], ['api', 'th1'], ['build', 'build'], ['docs', 'deny'],
+      ['tests', 'wfail'], ['services', 'create'], ['wilds', 'wild'], ['outside', 'out'], ['database', 'grep'],
     ].map(([room, id]) => ({ room, key: `s:toolu_c_${id}` }));
     const trailOf = (st, key) => st?.units?.find((u) => u.key === key)?.trail;
     check("a Mason's trail lists every room its calls took it to, in order, one entry per visit, keyed by the call",
@@ -257,10 +259,10 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     const masonBefore = s1.last('state')?.units?.find((u) => u.key === `M:${sid}`)?.room;
     await hook({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_use_id: 'toolu_c_sub', tool_input: { file_path: P('docs', 'sub.md') }, agent_id: agent, agent_type: 'Explore' });
     check("a subagent's call moves its Knight, not the Mason",
-      await s1.untilState((st) => st.units.find((u) => u.key === `K:${agent}`)?.room === 'library' && st.units.find((u) => u.key === `M:${sid}`)?.room === masonBefore),
+      await s1.untilState((st) => st.units.find((u) => u.key === `K:${agent}`)?.room === 'docs' && st.units.find((u) => u.key === `M:${sid}`)?.room === masonBefore),
       JSON.stringify(s1.last('state')?.units));
     check("the Knight has a trail of its own, and the Mason's is unchanged by the Knight's call",
-      JSON.stringify(trailOf(s1.last('state'), `K:${agent}`)) === JSON.stringify([{ room: 'library', key: 's:toolu_c_sub' }]) &&
+      JSON.stringify(trailOf(s1.last('state'), `K:${agent}`)) === JSON.stringify([{ room: 'docs', key: 's:toolu_c_sub' }]) &&
         JSON.stringify(trailOf(s1.last('state'), `M:${sid}`)) === JSON.stringify(walked),
       JSON.stringify(trailOf(s1.last('state'), `K:${agent}`)));
     await hook({ hook_event_name: 'PostToolUse', tool_name: 'Read', tool_use_id: 'toolu_c_sub', tool_input: { file_path: P('docs', 'sub.md') }, tool_response: {}, agent_id: agent });
@@ -284,8 +286,8 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
 
     await hook({ hook_event_name: 'PreToolUse', tool_name: 'mcp__smoke__lookup', tool_use_id: 'toolu_c_mcp', tool_input: {} });
     await hook({ hook_event_name: 'PreToolUse', tool_name: 'WebFetch', tool_use_id: 'toolu_c_web', tool_input: { url: 'https://example.invalid/' } });
-    check('an MCP call is a Raven at the Rookery, and a web fetch a Scout beyond the gate, while they run',
-      await s1.untilState((st) => st.units.some((u) => u.key === 'R:toolu_c_mcp' && u.room === 'rookery') && st.units.some((u) => u.key === 'S:toolu_c_web' && u.room === 'beyond-gate')));
+    check('an MCP call is a Raven on its perch, and a web fetch a Scout beyond the gate, while they run',
+      await s1.untilState((st) => st.units.some((u) => u.key === 'R:toolu_c_mcp' && u.room === 'perch') && st.units.some((u) => u.key === 'S:toolu_c_web' && u.room === 'beyond-gate')));
     await hook({ hook_event_name: 'PostToolUse', tool_name: 'mcp__smoke__lookup', tool_use_id: 'toolu_c_mcp', tool_input: {}, tool_response: {} });
     await hook({ hook_event_name: 'PostToolUse', tool_name: 'WebFetch', tool_use_id: 'toolu_c_web', tool_input: { url: 'https://example.invalid/' }, tool_response: {} });
     check('they return when the call does', await s1.untilState((st) => !st.units.some((u) => u.kind === 'raven' || u.kind === 'scout')));
@@ -301,7 +303,7 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
       await s1.untilState((st) => st.runs.some((r) => r.id === 'toolu_c_bg' && r.ok === null && r.noVerdict === 'started in the background')));
     // Two more visits (the Library, the Proving Grounds) make 13: the trail
     // keeps the latest 12, the oldest going first.
-    const kept = [...walked.slice(1), { room: 'library', key: 's:toolu_c_after' }, { room: 'proving-grounds', key: 's:toolu_c_bg' }];
+    const kept = [...walked.slice(1), { room: 'docs', key: 's:toolu_c_after' }, { room: 'tests', key: 's:toolu_c_bg' }];
     check("a Mason's trail is bounded: the latest 12 visits, still in order",
       JSON.stringify(trailOf(s1.last('state'), `M:${sid}`)) === JSON.stringify(kept), JSON.stringify(trailOf(s1.last('state'), `M:${sid}`)));
 
@@ -336,10 +338,10 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     check('a session started outside LayerCake is drawn from its transcript, and says so',
       await s1.untilState((st) => st.sessions.some((x) => x.sessionId === sid2 && x.source === 'transcript' && x.live), 8000), JSON.stringify(s1.last('state')?.sessions));
     check("its transcript's call lights its room and moves its Mason there",
-      await s1.untilState((st) => st.rooms.keep.state !== 'dark' && st.units.find((u) => u.key === `M:${sid2}`)?.room === 'keep'), JSON.stringify(s1.last('state')?.units));
+      await s1.untilState((st) => st.rooms.core.state !== 'dark' && st.units.find((u) => u.key === `M:${sid2}`)?.room === 'core'), JSON.stringify(s1.last('state')?.units));
     check("its subagent's own transcript puts a Knight in the room of its call (a relative path resolved against the record's cwd), with scaffolding",
-      await s1.untilState((st) => st.units.some((u) => u.key === `K:${agent2}` && u.room === 'barracks' && u.agentType === 'general-purpose') && st.rooms.barracks.scaffolding === true),
-      JSON.stringify({ units: s1.last('state')?.units, barracks: s1.last('state')?.rooms?.barracks }));
+      await s1.untilState((st) => st.units.some((u) => u.key === `K:${agent2}` && u.room === 'jobs' && u.agentType === 'general-purpose') && st.rooms.jobs.scaffolding === true),
+      JSON.stringify({ units: s1.last('state')?.units, jobs: s1.last('state')?.rooms?.jobs }));
     await fs.appendFile(
       path.join(slugDir, `${sid2}.jsonl`),
       `${rec(sid2, proj, Date.now(), toolUse('toolu_t_late', 'Read', { file_path: P('docs', 'late.md') }))}\n`
@@ -364,8 +366,8 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     check('a command refused before it ran (only the transcript records it) is no failed test run, and a refused edit raises no Alarm (#164)',
       (await s1.untilState((st) => st.runs.some((r) => r.id === 'toolu_t_refused' && r.ok === null && r.noVerdict === 'not run'), 4000)) &&
         (await s1.untilLog((es) => es.find((e) => e.id === 'toolu_t_refused_edit')?.verdict === 'no verdict (not run)', 3000)) &&
-        s1.last('state')?.rooms?.barracks?.state !== 'alarm',
-      JSON.stringify({ runs: s1.last('state')?.runs, barracks: s1.last('state')?.rooms?.barracks?.state }));
+        s1.last('state')?.rooms?.jobs?.state !== 'alarm',
+      JSON.stringify({ runs: s1.last('state')?.runs, jobs: s1.last('state')?.rooms?.jobs?.state }));
     await call('toolu_c_timeout', 'Bash', { command: 'npm test', description: 'Tests that time out' }, { fail: 'Command timed out after 2m 0s' });
     check('a test run that fails with no exit code (a timeout) has no verdict (#164)',
       await s1.untilState((st) => st.runs.some((r) => r.id === 'toolu_c_timeout' && r.ok === null && r.noVerdict === 'no exit code')),
@@ -398,7 +400,7 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     // Stamped after every call above, and before the hooks below.
     await sleep(400);
     const tp = Date.now() - 200;
-    const par = [['toolu_c_par1', P('docs', 'p1.md'), 'library'], ['toolu_c_par2', P('db', 'p2.sql'), 'vault'], ['toolu_c_par3', P('src', 'lib', 'p3.js'), 'keep']];
+    const par = [['toolu_c_par1', P('docs', 'p1.md'), 'docs'], ['toolu_c_par2', P('db', 'p2.sql'), 'database'], ['toolu_c_par3', P('src', 'lib', 'p3.js'), 'core']];
     await fs.appendFile(path.join(slugDir, `${sid}.jsonl`), par.map(([id, file], i) => rec(sid, proj, tp + i, toolUse(id, 'Read', { file_path: file }))).join('\n') + '\n');
     const parTail = (st) => JSON.stringify(trailOf(st, `M:${sid}`)?.slice(-3));
     const parWant = JSON.stringify(par.map(([id, , room]) => ({ room, key: `s:${id}` })));
@@ -416,31 +418,64 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     await fs.writeFile(
       P('castle.json'),
       JSON.stringify({
-        version: 1,
-        rooms: { vault: { name: 'Treasury' }, keep: { drop: true }, library: { patterns: ['manual/**'] } },
+        version: 2,
+        rooms: [
+          { id: 'treasury', name: 'Treasury of records', type: 'database', col: 0, row: 0, patterns: ['db/**'] },
+          { id: 'manual', name: 'The manual', type: 'docs', col: 1, row: 0, patterns: ['manual/**'] },
+          { id: 'front-door', name: 'Front door', type: 'api', col: 1, row: 1, patterns: ['src/app.js'] },
+          { id: 'own-tests', name: 'Own tests', type: 'tests', col: 3, row: 1, patterns: ['tests/**'] },
+        ],
+        gate: 1,
         commands: [{ words: 'node run-tests.js', kind: 'test' }],
         proof: ['test', 'build'],
       })
     );
     const reloaded = await postRaw(base, '/api/castle/reload', { scanId }, H);
-    check('castle.json renames and drops rooms without moving any',
+    check("castle.json version 2 gives the project its own rooms, types and places, and the floor their size",
       reloaded.status === 200 &&
-        (await s1.untilMap((mp) => mp.source === 'castle.json' && mp.rooms.find((r) => r.id === 'vault').name === 'Treasury' && mp.rooms.find((r) => r.id === 'keep').dropped && mp.rooms.every((r) => cells.get(r.id) === `${r.col},${r.row}`))),
-      reloaded.body);
+        (await s1.untilMap((mp) => mp.source === 'castle.json' && !mp.error &&
+          mp.rooms.map((r) => [r.id, r.name, r.type, r.col, r.row].join('|')).join() === 'treasury|Treasury of records|database|0|0,manual|The manual|docs|1|0,front-door|Front door|api|1|1,own-tests|Own tests|tests|3|1' &&
+          JSON.stringify(mp.floor) === JSON.stringify({ cols: 4, rows: 2, gate: { col: 1 } }) && mp.perch === null)),
+      JSON.stringify({ body: reloaded.body.slice(0, 200), rooms: s1.last('map')?.rooms?.map((r) => r.id), floor: s1.last('map')?.floor, error: s1.last('map')?.error }));
+    check('the state frame carries exactly the rooms castle.json names',
+      await s1.untilState((st) => Object.keys(st.rooms).sort().join() === 'front-door,manual,own-tests,treasury'), Object.keys(s1.last('state')?.rooms || {}).join());
+    await call('toolu_c_manual', 'Read', { file_path: P('manual', 'guide.md') });
+    check("a file a castle.json room claims lights that room", await s1.untilState((st) => st.rooms.manual.state === 'survey'), JSON.stringify(s1.last('state')?.rooms?.manual));
     await call('toolu_c_own', 'Bash', { command: 'node run-tests.js', description: 'Own tests' }, { response: { stdout: '' } });
-    check("castle.json's command rule makes the project's own command a test run", await s1.untilState((st) => st.runs.some((r) => r.id === 'toolu_c_own' && r.kind === 'test')));
+    check("castle.json's command rule makes the project's own command a test run, in the first Tests room",
+      await s1.untilState((st) => st.runs.some((r) => r.id === 'toolu_c_own' && r.kind === 'test') && st.rooms['own-tests'].state === 'survey'), JSON.stringify(s1.last('state')?.rooms?.['own-tests']));
     await call('toolu_c_moved', 'Read', { file_path: P('docs', 'q.md') });
-    check('patterns in castle.json replace the built-in ones: docs/ now lies in the Wilds',
+    check("castle.json's patterns are the only ones: docs/ now lies in the Wilds",
       await s1.untilLog((es) => es.find((e) => e.id === 'toolu_c_moved')?.where === 'the Wilds'), JSON.stringify((s1.last('log')?.entries || []).find((e) => e.id === 'toolu_c_moved')));
+    await call('toolu_c_ls', 'Bash', { command: 'ls -la', description: 'List' }, { response: { stdout: '' } });
+    check('with no Build or Config room, a plain shell call lights no room',
+      await s1.untilLog((es) => es.find((e) => e.id === 'toolu_c_ls')?.where === 'shell'), JSON.stringify((s1.last('log')?.entries || []).find((e) => e.id === 'toolu_c_ls')));
 
     await fs.writeFile(P('castle.json'), '{ "rooms": ');
     await postRaw(base, '/api/castle/reload', { scanId }, H);
     check('an invalid castle.json leaves the built-in map in force AND says why',
-      await s1.untilMap((mp) => mp.source === 'built-in' && /not valid JSON/.test(mp.error || '') && mp.rooms.find((r) => r.id === 'vault').name === 'Vault'), s1.last('map')?.error);
-    await fs.writeFile(P('castle.json'), JSON.stringify({ rooms: { vault: { patterns: ['db/{a,b}/**'] }, constructor: {} } }));
+      await s1.untilMap((mp) => mp.source === 'built-in' && /not valid JSON/.test(mp.error || '') && mp.rooms.find((r) => r.id === 'database')?.name === 'Database'), s1.last('map')?.error);
+    await fs.writeFile(P('castle.json'), JSON.stringify({ version: 1, rooms: { vault: { name: 'Treasury' } } }));
     await postRaw(base, '/api/castle/reload', { scanId }, H);
-    check('castle.json glob syntax beyond *, ? and ** is refused by name, and "constructor" is not a room (#48)',
-      await s1.untilMap((mp) => mp.source === 'built-in' && /only \*, \? and \*\*/.test(mp.error || '') && /"constructor" is not a room/.test(mp.error || '')), s1.last('map')?.error);
+    check('a version 1 castle.json (the old fixed rooms) is refused by name, pointing at the prompt',
+      await s1.untilMap((mp) => mp.source === 'built-in' && /version 1 file/.test(mp.error || '') && /Copy prompt for Claude/.test(mp.error || '')), s1.last('map')?.error);
+    await fs.writeFile(P('castle.json'), JSON.stringify({
+      version: 2,
+      rooms: [
+        { id: 'gate', name: 'G', type: 'api', col: 0, row: 0 },
+        { id: '__proto__', name: 'P', type: 'api', col: 1, row: 0 },
+        { id: 'a', name: 'A', type: 'teleporter', col: 2, row: 0 },
+        { id: 'b', name: 'B', type: 'ui', col: 3, row: 0, patterns: ['db/{a,b}/**'] },
+        { id: 'c', name: 'C', type: 'ui', col: 3, row: 0 },
+      ],
+    }));
+    await postRaw(base, '/api/castle/reload', { scanId }, H);
+    check('castle.json version 2 refuses a reserved id, an id that is not a slug, an unknown type, two rooms in one cell and glob syntax beyond *, ? and **, each by name',
+      await s1.untilMap((mp) => mp.source === 'built-in' && /"gate" is a place the castle already uses/.test(mp.error || '') && /rooms\[1\]\.id must be/.test(mp.error || '') && /"type" must be one of/.test(mp.error || '') && /both take col 3, row 0/.test(mp.error || '') && /only \*, \? and \*\*/.test(mp.error || '')),
+      s1.last('map')?.error);
+    await fs.writeFile(P('castle.json'), JSON.stringify({ version: 2, rooms: Array.from({ length: 25 }, (_, i) => ({ id: `r${i}`, name: `R${i}`, type: 'core', col: i % 4, row: Math.floor(i / 4) })) }));
+    await postRaw(base, '/api/castle/reload', { scanId }, H);
+    check('castle.json version 2 refuses more than 24 rooms', await s1.untilMap((mp) => mp.source === 'built-in' && /1 to 24 rooms/.test(mp.error || '')), s1.last('map')?.error);
 
     // A pattern that backtracking matchers take minutes over (measured with
     // picomatch 4.0.7 in review): timed against a benign one, both measured.
@@ -454,8 +489,11 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     const benign = time('**/*.md', 'a'.repeat(40));
     const deep = time(`${'**/'.repeat(20)}x`, 'a/'.repeat(40) + 'y');
     check('a hostile glob costs about what a benign one does (the matcher never backtracks exponentially)', hostile < benign * 200 && deep < benign * 200, `${hostile} ns, ${deep} ns vs ${benign} ns`);
-    await fs.writeFile(P('castle.json'), JSON.stringify({ rooms: { vault: { patterns: [`${'*a'.repeat(12)}b`] } } }));
+    const hostilePattern = `${'*a'.repeat(12)}b`;
+    await fs.writeFile(P('castle.json'), JSON.stringify({ version: 2, rooms: [{ id: 'hostile', name: 'Hostile', type: 'core', col: 0, row: 0, patterns: [hostilePattern] }] }));
     await postRaw(base, '/api/castle/reload', { scanId }, H);
+    // The control: the pattern is in force, or the timing below proves nothing.
+    check('the hostile pattern is loaded (the control for the next check)', await s1.untilMap((mp) => mp.source === 'castle.json' && mp.rooms[0]?.patterns?.[0] === hostilePattern), s1.last('map')?.error);
     const th = Date.now();
     await call('toolu_c_hostile', 'Read', { file_path: P('a'.repeat(40)) });
     check('a hook through that pattern still reaches the stream within 1 s', (await s1.untilLog((es) => es.some((e) => e.id === 'toolu_c_hostile'), 3000)) && Date.now() - th < 1000, `${Date.now() - th} ms`);
@@ -463,10 +501,10 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     await postRaw(base, '/api/castle/reload', { scanId }, H);
     await s1.untilMap((mp) => mp.source === 'built-in' && !mp.error);
 
-    const roomRes = await get(base, `/api/castle/room?scanId=${scanId}&room=vault`, H);
+    const roomRes = await get(base, `/api/castle/room?scanId=${scanId}&room=database`, H);
     bodies.push(roomRes.body);
     check("a room's recent files are served as paths", roomRes.status === 200 && JSON.parse(roomRes.body).recent.some((f) => f.path === 'db/schema.sql'), roomRes.body.slice(0, 300));
-    check('the room route refuses a room that is not on the floor plan', (await get(base, `/api/castle/room?scanId=${scanId}&room=__proto__`, H)).status === 400);
+    check('the room route refuses a room that is not on the map, or not an id at all', (await get(base, `/api/castle/room?scanId=${scanId}&room=__proto__`, H)).status === 400 && (await get(base, `/api/castle/room?scanId=${scanId}&room=no-such-room`, H)).status === 400);
 
     // --- the fold is the spec: a fresh fold equals the long-running one -------------------
     await sleep(3500); // every 3 s window lapses
@@ -482,7 +520,7 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     const before = JSON.stringify(strip(s1.last('state')));
     s1.close();
     await sleep(500);
-    check('with no stream open the castle is gone (state exists only while it is shown)', (await get(base, `/api/castle/room?scanId=${scanId}&room=vault`, H)).status === 409);
+    check('with no stream open the castle is gone (state exists only while it is shown)', (await get(base, `/api/castle/room?scanId=${scanId}&room=database`, H)).status === 409);
     const s2 = openCastle(base, scanId, H);
     await s2.until(() => s2.last('state')?.sessions?.length >= 2, 8000);
     const after = JSON.stringify(strip(s2.last('state')));
@@ -512,9 +550,9 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     keepAlive = null;
     await hook({ hook_event_name: 'SessionEnd', reason: 'prompt_input_exit' });
     check('SessionEnd takes the session\'s units out, and the scaffolding it left stays up',
-      await s2.untilState((st) => !st.units.some((u) => u.sessionId === sid) && st.sessions.find((x) => x.sessionId === sid)?.ended === true && st.rooms.gatehouse.scaffolding === true),
+      await s2.untilState((st) => !st.units.some((u) => u.sessionId === sid) && st.sessions.find((x) => x.sessionId === sid)?.ended === true && st.rooms.api.scaffolding === true),
       JSON.stringify(s2.last('state')?.sessions));
-    check('Proven ends with the session that ran the proof', s2.last('state')?.rooms?.vault?.state !== 'proven', s2.last('state')?.rooms?.vault?.state);
+    check('Proven ends with the session that ran the proof', s2.last('state')?.rooms?.database?.state !== 'proven', s2.last('state')?.rooms?.database?.state);
 
     // --- eviction ---------------------------------------------------------------------------
     for (let i = 0; i < 8; i += 1) await postRaw(base, '/api/scan', { dir: proj }, H);

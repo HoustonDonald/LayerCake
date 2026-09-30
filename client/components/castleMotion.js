@@ -85,14 +85,14 @@ export function slots(box, count, { row = 'bottom' } = {}) {
 
 const centre = (b) => ({ x: b.x + b.w / 2, y: b.y + b.h / 2 });
 
-/** The spots `n` units take at one place. */
-function spots(L, rooms, place, n) {
+/** The spots `n` units take at one place. `perch` is the room Ravens wait above (the map's), or null. */
+function spots(L, rooms, place, n, perch) {
   const room = rooms.get(place);
   if (room) return slots(L.cell(room.col, room.row), n);
   if (place === 'perch') {
-    // Ravens wait on the wall above the Rookery.
-    const r = rooms.get('rookery');
-    const x = r ? centre(L.cell(r.col, r.row)).x : W / 2;
+    // Ravens wait on the wall above the first Integrations room, else above the gate.
+    const r = perch ? rooms.get(perch) : null;
+    const x = r ? centre(L.cell(r.col, r.row)).x : L.gate.x;
     return Array.from({ length: n }, (_, i) => ({ x: x + (i - (n - 1) / 2) * (DOT * 2 + 8), y: L.wallY }));
   }
   if (place === 'wilds' || place === 'outside') {
@@ -107,7 +107,7 @@ function spots(L, rooms, place, n) {
  * on the castle rides with it and is not placed; a Raven's place is its perch.
  * A place not on this floor plan stands at the gate.
  */
-export function placeUnits(L, rooms, units) {
+export function placeUnits(L, rooms, units, perch = null) {
   const keys = new Set(units.map((u) => u.key));
   const at = new Map();
   for (const u of units) {
@@ -119,7 +119,7 @@ export function placeUnits(L, rooms, units) {
   }
   const out = new Map();
   for (const [place, list] of at) {
-    const pts = spots(L, rooms, place, list.length);
+    const pts = spots(L, rooms, place, list.length, perch);
     list.forEach((u, i) => out.set(u.key, { place, point: pts[i] }));
   }
   return out;

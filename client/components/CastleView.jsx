@@ -214,7 +214,9 @@ function Drawer({ scanId, map, state, selected, onClose }) {
           Close
         </button>
       </div>
-      <div className="dim">{room.job}</div>
+      <div className="dim">
+        {map?.types?.find((t) => t.type === room.type)?.label || room.type}: {map?.types?.find((t) => t.type === room.type)?.job || ''}
+      </div>
       <div className={`drawer-state st-${r?.state || 'dark'}`}>
         <strong>
           {def?.glyph ? `${def.glyph} ` : ''}

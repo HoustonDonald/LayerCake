@@ -3,10 +3,10 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { BAND, DOT, FADE_MS, HOP_MS, SLIDE_MS, W, keyframes, lastTrailKey, layout, newPlaces, placeUnits, planWalk, positionAt, replan, totalMs, waypoint } from './castleMotion.js';
 
 /**
- * The castle itself (#160): one SVG with a fixed viewBox, so full screen only
- * scales it. Rooms keep the grid cell the server's floor plan gives them for
- * the life of the project (spec: "The map never moves"); a dropped room stays
- * as empty ground rather than letting its neighbours shift.
+ * The castle itself (#160): one SVG with a fixed viewBox width, so full screen
+ * only scales it. The rooms are the project's own sections (#167), each at the
+ * grid cell its map gives it (spec: "The map never moves"); an empty cell stays
+ * empty ground. The floor is as big as the rooms placed on it.
  *
  * What a room shows comes from the server (state, cause, heat, scaffolding).
  * This file adds only presentation: the 3 s hold against flicker, the heat
@@ -167,6 +167,19 @@ function Unit({ u, x, y, colour, kinds, riders = [], colourOf, onClick }) {
   );
 }
 
+/** Room names are the project's own (#167), up to 40 characters: two lines at most, then an ellipsis. */
+const NAME_CHAR_W = 10; // about 0.5 em at the name's 20 px (measured in the rendered castle)
+const NAME_LINE = 22;
+function wrapName(name, first, rest) {
+  const fit = (s, n) => (s.length <= n ? s : `${s.slice(0, Math.max(1, n - 1)).trimEnd()}…`);
+  if (name.length <= first) return [name];
+  const words = name.split(' ');
+  let line = '';
+  while (words.length && (line ? `${line} ${words[0]}` : words[0]).length <= first) line = line ? `${line} ${words.shift()}` : words.shift();
+  if (!line) return [fit(name, first)];
+  return words.length ? [line, fit(words.join(' '), rest)] : [line];
+}
+
 const WALKERS = new Set(['mason', 'knight']);
 /** Kinds that walk in and out; the rest (Herald, a Wizard on its own) appear and go. */
 const COMERS = new Set(['mason', 'knight', 'raven', 'scout']);
@@ -201,14 +214,14 @@ const samePoint = (a, b) => Math.abs(a.x - b.x) < 0.01 && Math.abs(a.y - b.y) < 
  * Scout walks out of the gate and back. With reduced motion nothing walks: a
  * unit that moves fades in at its new spot.
  */
-function UnitLayer({ L, rooms, units, generation, state, reduce, colourOf, kinds, onSelect }) {
+function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf, kinds, onSelect }) {
   // key -> { key, unit, place, point, lastKey, legs, anim, fade, leaving, exit }
   const motion = useRef(new Map());
   const frame = useRef({ generation: null, state: undefined, awaiting: false, mapVersion: undefined });
   const layerRef = useRef(null);
   const [, rerender] = useState(0);
 
-  const placed = placeUnits(L, rooms, units);
+  const placed = placeUnits(L, rooms, units, perch);
   const mode = frameMode(frame.current, generation, state);
   const riders = new Map();
   for (const u of units) {
@@ -242,6 +255,8 @@ function UnitLayer({ L, rooms, units, generation, state, reduce, colourOf, kinds
     const els = new Map();
     for (const el of layerRef.current?.children || []) if (el.dataset.unit) els.set(el.dataset.unit, el);
     const gateOpening = { x: L.gate.x, y: L.wallBottom };
+    // Where a Raven flies up from, and back down to: the room it waits above, else the gate.
+    const ravenHome = perch && rooms.has(perch) ? waypoint(L, rooms, perch) : gateOpening;
 
     const stop = (rec) => {
       rec.anim?.cancel();
@@ -302,7 +317,7 @@ function UnitLayer({ L, rooms, units, generation, state, reduce, colourOf, kinds
           if (!reduce) {
             let legs;
             if (WALKERS.has(u.kind)) legs = planWalk(L, rooms, { place: 'gate', point: L.gate.outer }, [p.place], p.point);
-            else if (u.kind === 'raven') legs = [{ place: p.place, pts: [waypoint(L, rooms, 'rookery'), p.point], ms: HOP_MS }];
+            else if (u.kind === 'raven') legs = [{ place: p.place, pts: [ravenHome, p.point], ms: HOP_MS }];
             else legs = [{ place: p.place, pts: [gateOpening, p.point], ms: HOP_MS }];
             play(rec, el, legs);
           }
@@ -344,7 +359,7 @@ function UnitLayer({ L, rooms, units, generation, state, reduce, colourOf, kinds
           // Out through the gate, after any room it was still walking to.
           legs = (rec.anim && rec.legs && replan(L, rooms, rec.legs, rec.anim.currentTime ?? 0, ['gate'], L.gate.outer)) || planWalk(L, rooms, { place: rec.place, point: rec.point }, ['gate'], L.gate.outer);
         } else {
-          legs = [{ place: rec.place, pts: [here(rec), rec.unit.kind === 'raven' ? waypoint(L, rooms, 'rookery') : gateOpening], ms: HOP_MS }];
+          legs = [{ place: rec.place, pts: [here(rec), rec.unit.kind === 'raven' ? ravenHome : gateOpening], ms: HOP_MS }];
         }
         play(rec, el, legs, 'forwards');
         const end = legs[legs.length - 1];
@@ -405,6 +420,7 @@ export default function CastleStage({ map, state, generation, selected, onSelect
   const sessionIndex = new Map((state?.sessions || []).map((s) => [s.sessionId, s.index]));
   const colourOf = (u) => unitColour(u, sessionIndex.get(u.sessionId) ?? 0);
   const rooms = new Map((map?.rooms || []).map((r) => [r.id, r]));
+  const types = new Map((map?.types || []).map((t) => [t.type, t]));
 
   const select = (id) => onSelect(selected === id ? null : id);
   const keySelect = (id) => (e) => {
@@ -467,46 +483,46 @@ export default function CastleStage({ map, state, generation, selected, onSelect
       {(map?.rooms || []).map((room) => {
         const box = L.cell(room.col, room.row);
         const r = state?.rooms?.[room.id];
-        if (room.dropped) {
-          return (
-            <g key={room.id} className="castle-room dropped">
-              <rect x={box.x} y={box.y} width={box.w} height={box.h} rx={6} className="room-fill" />
-              <text className="room-name" x={box.x + 14} y={box.y + 30}>
-                {room.name}
-              </text>
-              <text className="room-state" x={box.x + 14} y={box.y + 54}>
-                not used here (castle.json)
-              </text>
-            </g>
-          );
-        }
         const st = shown[room.id] || r?.state || 'dark';
         const def = byState.get(st);
+        const type = types.get(room.type);
+        const typeLabel = type?.label || room.type;
         const heat = heatNow(r?.heat, halfLife, now);
         const glow = Math.min(0.55, 1 - Math.exp(-heat / 4));
+        const perLine = Math.floor((box.w - 28) / NAME_CHAR_W);
+        const lines = wrapName(room.name, perLine, perLine);
+        const stateY = box.y + 46 + NAME_LINE * (lines.length - 1) + 24;
         return (
           <g
             key={room.id}
             className={`castle-room st-${st}${selected === room.id ? ' selected' : ''}`}
             tabIndex={0}
             role="button"
-            aria-label={`${room.name}: ${def?.label || st}${r?.scaffolding ? ', unproven changes' : ''}`}
+            aria-label={`${room.name} (${typeLabel}): ${def?.label || st}${r?.scaffolding ? ', unproven changes' : ''}`}
             onClick={() => select(room.id)}
             onKeyDown={keySelect(room.id)}
           >
-            <title>{`${room.name} (${room.job})\n${def?.label || st}: ${def?.rule || ''}`}</title>
+            <title>{`${room.name} (${typeLabel}: ${type?.job || room.type})\n${def?.label || st}: ${def?.rule || ''}`}</title>
             <rect x={box.x} y={box.y} width={box.w} height={box.h} rx={6} className="room-fill" />
             <rect x={box.x} y={box.y} width={box.w} height={box.h} rx={6} className="room-heat" style={{ opacity: glow }} />
             {r?.scaffolding && <rect x={box.x} y={box.y} width={box.w} height={box.h} rx={6} className="room-scaffold" />}
-            <text className="room-name" x={box.x + 14} y={box.y + 30}>
-              {room.name}
+            {/* The type over the name, the whole width to itself: the project names the room, the type says what kind of part it is. */}
+            <text className="room-type" x={box.x + 14} y={box.y + 22}>
+              {typeLabel}
             </text>
-            <text className="room-state" x={box.x + 14} y={box.y + 56}>
+            <text className="room-name" x={box.x + 14} y={box.y + 46}>
+              {lines.map((line, i) => (
+                <tspan key={i} x={box.x + 14} dy={i ? NAME_LINE : 0}>
+                  {line}
+                </tspan>
+              ))}
+            </text>
+            <text className="room-state" x={box.x + 14} y={stateY}>
               {def?.glyph ? `${def.glyph} ` : ''}
               {def?.label || st}
             </text>
             {r?.scaffolding && (
-              <text className="room-tag" x={box.x + box.w - 12} y={box.y + 24}>
+              <text className="room-unproven" x={box.x + 14} y={stateY + 18}>
                 unproven
               </text>
             )}
@@ -514,7 +530,7 @@ export default function CastleStage({ map, state, generation, selected, onSelect
         );
       })}
 
-      <UnitLayer L={L} rooms={rooms} units={state?.units || []} generation={generation} state={state} reduce={reduce} colourOf={colourOf} kinds={map?.units} onSelect={select} />
+      <UnitLayer L={L} rooms={rooms} perch={map?.perch || null} units={state?.units || []} generation={generation} state={state} reduce={reduce} colourOf={colourOf} kinds={map?.units} onSelect={select} />
     </svg>
   );
 }
