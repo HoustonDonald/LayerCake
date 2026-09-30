@@ -42,8 +42,13 @@ export const MAX_ROWS = 6;
 export const MAX_NAME_CHARS = 40;
 /** A room id: a short slug, so it is safe as a key and in a URL. */
 export const ROOM_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
-/** Names the castle already uses for places that are not rooms. */
-const RESERVED_IDS = new Set(['gate', 'beyond-gate', 'wilds', 'outside', 'perch', 'project']);
+/**
+ * Names the castle already uses for places that are not rooms: the fold and
+ * the page share one namespace. The village is Hollowmere, where files no room
+ * claims are kept (#172); the Wilds, beyond the Frostwall, are where Raiders
+ * stand; outside is the Citadel.
+ */
+const RESERVED_IDS = new Set(['gate', 'beyond-gate', 'village', 'wilds', 'outside', 'perch', 'project']);
 const FOLD = process.platform === 'win32';
 
 /**
@@ -389,19 +394,19 @@ export async function loadMap(projectDir) {
 }
 
 /**
- * Where a file is: `{ where: 'room', rooms, rel }`, `{ where: 'wilds', rel }`
- * (in the project, claimed by no room) or `{ where: 'outside' }` (not in the
+ * Where a file is: `{ where: 'room', rooms, rel }`, `{ where: 'village', rel }`
+ * (in the project, claimed by no room: Hollowmere's, #172) or `{ where: 'outside' }` (not in the
  * project, which no pattern could ever claim).
  */
 export function locate(map, projectDir, absPath) {
   if (!isInsideDir(absPath, projectDir)) return { where: 'outside', rooms: [], rel: null };
   const rel = path.relative(projectDir, absPath).split(path.sep).join('/');
-  if (!rel) return { where: 'wilds', rooms: [], rel: '.' };
+  if (!rel) return { where: 'village', rooms: [], rel: '.' };
   const rooms = [];
   for (const m of map.matchers) {
     if (m.globs.some((g) => g(rel))) rooms.push(m.id);
   }
-  return rooms.length ? { where: 'room', rooms, rel } : { where: 'wilds', rooms: [], rel };
+  return rooms.length ? { where: 'room', rooms, rel } : { where: 'village', rooms: [], rel };
 }
 
 /**
@@ -421,7 +426,7 @@ export function locateFolder(map, projectDir, absDir) {
   for (const m of map.matchers) {
     if (m.globs.some((g) => g(probe))) rooms.push(m.id);
   }
-  return rooms.length ? { where: 'room', rooms, rel } : { where: 'wilds', rooms: [], rel };
+  return rooms.length ? { where: 'room', rooms, rel } : { where: 'village', rooms: [], rel };
 }
 
 /**
@@ -471,9 +476,9 @@ export function draftPrompt(projectDir) {
     '}',
     '',
     'Rules:',
-    `- Name rooms for what they are in THIS project, in its own words, like "Snapshots and writes" or "Session history", not by their type. At most ${MAX_NAME_CHARS} characters. The id is 1 to 32 lowercase letters, digits and dashes, unique; not gate, beyond-gate, wilds, outside, perch or project.`,
+    `- Name rooms for what they are in THIS project, in its own words, like "Snapshots and writes" or "Session history", not by their type. At most ${MAX_NAME_CHARS} characters. The id is 1 to 32 lowercase letters, digits and dashes, unique; not ${[...RESERVED_IDS].join(', ')}.`,
     `- At most ${MAX_ROOMS} rooms, on a grid of at most ${MAX_COLS} columns (col 0 to ${MAX_COLS - 1}) and ${MAX_ROWS} rows (row 0 to ${MAX_ROWS - 1}), one room per cell. Row 0 is the back of the castle; the gate is in the front wall, below the last row, under the column "gate" names. Put entry points (API, routes, the app's front door) in the last row beside the gate, storage and core logic toward the back, and related rooms next to each other.`,
-    `- Patterns are relative to the project root with forward slashes. Only *, ? and ** are wildcards (no braces, [classes], ! or backslashes). ** must be a whole segment. A pattern with no slash matches at the root only, so write **/x.md for anywhere. At most ${MAX_PATTERNS_PER_ROOM} patterns per room, ${MAX_PATTERN_CHARS} characters each. A file may belong to several rooms; a file no room claims shows up in the Wilds, which says the map needs a pattern.`,
+    `- Patterns are relative to the project root with forward slashes. Only *, ? and ** are wildcards (no braces, [classes], ! or backslashes). ** must be a whole segment. A pattern with no slash matches at the root only, so write **/x.md for anywhere. At most ${MAX_PATTERNS_PER_ROOM} patterns per room, ${MAX_PATTERN_CHARS} characters each. A file may belong to several rooms; a file no room claims shows up in Hollowmere, the village by the road, which says the map needs a pattern.`,
     `- Runs go to rooms by type: test runs to the first "tests" room, build runs to the first "build" room, migrations to the first "database" room, and any other shell command to the first "build" room (else "config"). MCP calls wait above the first "integrations" room.`,
     `- "commands" lists this project's own test, build and migration commands by their first words; "kind" is ${COMMAND_KINDS.join(', ')}; "room" (a room id) is optional.`,
     '- "proof" says which passing runs take the scaffolding down: ["test"] (default) or ["test", "build"] for a project with no tests.',

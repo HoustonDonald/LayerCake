@@ -316,8 +316,10 @@ backtracking**. picomatch 4.0.7 ran over a minute on `'*a'` twelve times plus `'
 200,000 random cases (scratch `diff-glob.mjs`) and smoke asserts its hostile/benign time RATIO.
 Command rules are word prefixes, never regular expressions. The rooms are the project's own sections
 (#167, owner decision 2026-09-30), each with a type from `ROOM_TYPES`, shipped with the map like the
-state rules; a room id must stay out of the names the castle uses for places (gate, wilds, outside,
-perch...), because the fold and the page share that namespace. **The fold is the specification**: room
+state rules; a room id must stay out of the names the castle uses for places (gate, village, wilds,
+outside, perch...: `RESERVED_IDS` in castlemap.js), because the fold and the page share that
+namespace. Files no room claims are Hollowmere's, id `village` (#172); `wilds` is the forest beyond
+the Frostwall; the Citadel keeps the id `outside`. **The fold is the specification**: room
 states are recomputed from all events under the current map each time (no incremental path to drift
 from it), and smoke's fold oracle closes every stream, reopens, and requires the fresh fold to equal
 the long-running one. That includes each Mason's and Knight's `trail` (#161), its last 12 room

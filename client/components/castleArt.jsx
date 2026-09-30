@@ -324,21 +324,51 @@ export function Citadel({ cx, gateX, gy, lit }) {
   );
 }
 
-/** Trees down the Wilds band. */
-export function WildsTrees({ height, width }) {
+/**
+ * The Wilds (#172): the dark forest north of the Frostwall, snow on the tops,
+ * where Raiders come out of when a test run starts.
+ */
+export function WildsForest({ width, height }) {
   const trees = [];
-  for (let i = 0, y = 40; y < height - 40; i += 1, y += 52) {
-    const x = 5 + (i % 2) * (width - 30);
+  for (let i = 0, x = 4; x < width - 24; i += 1, x += 31) {
+    const h = 26 + (i % 3) * 9;
+    const y = height - 6 - (i % 2) * 22;
     trees.push(
       <g key={i}>
-        <path d={`M${x} ${y + 24} L${x + 10} ${y} L${x + 20} ${y + 24} Z`} className="tree-crown" />
-        <rect x={x + 8} y={y + 24} width="4" height="6" className="tree-trunk" />
+        <path className="tree-crown" d={`M${x} ${y} L${x + h * 0.42} ${y - h} L${x + h * 0.84} ${y} Z`} />
+        <path className="tree-snow" d={`M${x + h * 0.42} ${y - h} l${h * 0.13} ${h * 0.3} h-${h * 0.26} Z`} />
       </g>
     );
   }
   return (
     <g className="wilds-trees" aria-hidden="true">
       {trees}
+    </g>
+  );
+}
+
+/**
+ * Hollowmere (#172): the village south of the gate, where files in the project
+ * that no room claims are kept. Its windows light once a file lands there.
+ */
+export function Hollowmere({ box, lit }) {
+  const n = Math.max(3, Math.min(6, Math.floor(box.w / 46)));
+  const houses = [];
+  for (let i = 0; i < n; i += 1) {
+    const w = 30 + (i % 3) * 5;
+    const x = box.x + 6 + (i * (box.w - 12 - w)) / Math.max(1, n - 1);
+    const y = box.y + 20 + (i % 2) * 22;
+    houses.push(
+      <g key={i}>
+        <path className="house-roof" d={`M${x - 3} ${y} L${x + w / 2} ${y - w * 0.45} L${x + w + 3} ${y} Z`} />
+        <rect className="house-wall" x={x} y={y} width={w} height={w * 0.66} />
+        <rect className="house-window" x={x + w * 0.37} y={y + w * 0.2} width={w * 0.26} height={w * 0.22} />
+      </g>
+    );
+  }
+  return (
+    <g className={`hollowmere${lit ? ' lit' : ''}`} aria-hidden="true">
+      {houses}
     </g>
   );
 }

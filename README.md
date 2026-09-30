@@ -885,19 +885,24 @@ patterns from folder and file names that usually mean the job:
 | API | `**/routes/**`, `**/api/**`, `**/app.*` |
 | Services | `**/services/**`, `**/middleware/**` |
 
+**The ground (#172).** The castle is **Duskhold**, a keep whose north wall is **the Frostwall**, with
+**the Wilds**, a forest, beyond it. **Hollowmere** is the village by the road south of the gate, and
+**the Citadel** a tower beyond the east wall. The names are the project's own inventions.
+
 The built-in map is a starting point, not a picture of the project: on LayerCake's own repository it
-leaves 24 of the 28 files in `server/` in the Wilds, and a drafted map leaves none. The full lists
-are on the page (click a room). A file several rooms claim lights all of them. A file in the project
-that no room claims is counted in **the Wilds**, which is the sign the map needs a pattern. A file
+left 24 of the 28 files in `server/` unclaimed, and a drafted map leaves none. The full lists are on
+the page (click a room). A file several rooms claim lights all of them. A file in the project that no
+room claims belongs to **Hollowmere**, which is the sign the map needs a pattern; its windows light
+once any such file has been touched, and a unit working on one walks out of the gate to it. A file
 outside the project (your home folder, Claude's configuration, other projects) belongs to **the
-Citadel**, a tower beyond the east wall at the end of a road; it is counted apart, since no pattern
-could claim it, and its windows light once any such file has been touched. A unit working on one
-walks out of the east gate to the Citadel. Clicking the Citadel lists its files.
+Citadel**, at the end of a road from the east gate; it is counted apart, since no pattern could claim
+it, and its windows light once any such file has been touched. A unit working on one walks out of the
+east gate to it. Clicking Hollowmere or the Citadel lists its files.
 
 **Where runs go** comes from the types: a test run lights the first Tests room, a build run the first
 Build room, a migration the first Database room (a command rule can name a room instead), and any
 other shell call works in the first Build room, else the first Config room, else nowhere. MCP calls
-wait on the wall above the first Integrations room, else above the gate.
+wait on the Frostwall above the first Integrations room, else above the gate's column.
 
 **Room states**, highest priority first. The page shows each rule beside the state (hover a state in
 the legend, or click a room); the rules come from the server with the data.
@@ -943,15 +948,15 @@ the legend, or click a room); the rules come from the server with the data.
 with a "z"); a **Knight** (a helm and a banner in its own colour) is a subagent, from its start to its
 stop; a **Wizard** (hat and robe) is a skill Claude invoked, beside its caller until the caller's turn
 ends (a skill you type as `/name` is not seen); a **Raven** (a bird, no disc) is an MCP call, on the
-wall above the first Integrations room (else above the gate); a **Scout** (a horse) is a web fetch or
-search, beyond the gate; the **Herald** (a bell, with a ring) is at the gate while a launched session
+Frostwall above the first Integrations room (else above the gate's column); a **Scout** (a horse) is
+a web fetch or search, down the road from the gate; the **Herald** (a bell, with a ring) is at the gate while a launched session
 waits for you, the one unit that pulses. Clicking a unit opens the room it stands in.
 
 **Movement.** Units walk; none jumps from room to room.
 
 - A Mason or Knight walks the corridors to the room of its call: out of its room's door onto the
-  corridor below, along to a gap between the columns, up or down, along, and in. The Wilds and the
-  Citadel are reached through small gates in the west and east walls. One room to the
+  corridor below, along to a gap between the columns, up or down, along, and in. Hollowmere is
+  reached through the gate, the Citadel through a small gate in the east wall. One room to the
   next takes about 1 s.
 - Every room it worked in is walked through, in order, and none is skipped: parallel calls in three
   rooms send it through all three. When several are queued it speeds up to keep up (with n queued,
@@ -989,7 +994,7 @@ that the castle sees.
 ```
 
 - Each room has an `id` (1 to 32 lowercase letters, digits and dashes, unique, and not a place the
-  castle already uses: gate, beyond-gate, wilds, outside, perch, project), a `name` of up to 40
+  castle already uses: gate, beyond-gate, village, wilds, outside, perch, project), a `name` of up to 40
   characters in the project's own words, a `type` from the list above, and its place: `col` 0 to 3
   and `row` 0 to 5, one room a cell, row 0 at the back. At most 24 rooms. The floor is as big as the
   rooms placed on it, and the gate is in the front wall under the column `gate` names (else the

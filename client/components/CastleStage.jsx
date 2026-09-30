@@ -1,8 +1,8 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-import { ArtDefs, Citadel, Figure, FigureIcon, RoomLight, TypeIcon, WildsTrees } from './castleArt.jsx';
+import { ArtDefs, Citadel, Figure, FigureIcon, Hollowmere, RoomLight, TypeIcon, WildsForest } from './castleArt.jsx';
 import { describeUnit } from './castleDescribe.js';
-import { BAND, DOT, FADE_MS, HOP_MS, SLIDE_MS, W, keyframes, lastTrailKey, layout, newPlaces, placeUnits, planWalk, positionAt, replan, totalMs, waypoint } from './castleMotion.js';
+import { BAND, DOT, FADE_MS, FROST_H, HOP_MS, SLIDE_MS, W, WILDS_H, keyframes, lastTrailKey, layout, newPlaces, placeUnits, planWalk, positionAt, replan, totalMs, waypoint } from './castleMotion.js';
 
 /**
  * The castle itself (#160): one SVG with a fixed viewBox width, so full screen
@@ -395,7 +395,7 @@ function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf
   return (
     <g className="castle-units" ref={layerRef} onMouseOver={(e) => onHover(hoverAt(e.target))} onMouseLeave={() => onHover(null)}>
       {shown.map(({ u, p, ghost }) => {
-        const selectable = !ghost && (rooms.has(p.place) || p.place === 'wilds' || p.place === 'outside');
+        const selectable = !ghost && (rooms.has(p.place) || p.place === 'village' || p.place === 'outside');
         return (
           <Unit
             key={u.key}
@@ -495,25 +495,35 @@ export default function CastleStage({ map, state, generation, selected, onSelect
     <svg className={`castle-svg${pulse ? ' pulse-on' : ''}`} viewBox={`0 0 ${W} ${L.H}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="The castle: rooms by what Claude is doing in them">
       <ArtDefs />
 
-      {/* The ground outside the wall, and the road out of the gate. */}
+      {/* The ground outside the wall, and the road south out of the gate. */}
       <rect className="castle-ground" x={0} y={L.wallBottom} width={W} height={L.H - L.wallBottom} />
-      <path className="castle-road" d={`M${L.gate.x - 34} ${L.wallBottom} L${L.gate.x - 70} ${L.H} L${L.gate.x + 150} ${L.H} L${L.gate.x + 34} ${L.wallBottom} Z`} />
+      <path className="castle-road" d={`M${L.gate.x - 34} ${L.wallBottom} L${L.gate.x - 46} ${L.H} L${L.gate.x + 46} ${L.H} L${L.gate.x + 34} ${L.wallBottom} Z`} />
 
-      {/* The Wilds and outside: bands beyond the wall, clickable for their lists. */}
-      <g
-        className={`castle-band${selected === 'wilds' ? ' selected' : ''}`}
-        tabIndex={0}
-        role="button"
-        aria-label={`The Wilds: ${state?.wilds?.count ?? 0} files no room claims`}
-        onClick={() => select('wilds')}
-        onKeyDown={keySelect('wilds')}
-      >
-        <rect x={0} y={0} width={BAND - 26} height={L.H} className="band-fill" />
-        <WildsTrees height={L.H} width={BAND - 26} />
-        <text className="band-label" transform={`translate(${(BAND - 26) / 2 + 5} ${L.H / 2}) rotate(-90)`}>
-          The Wilds · {state?.wilds?.count ?? 0} unmapped
+      {/* The Wilds (#172): the forest north of the Frostwall, where Raiders come from. */}
+      <g className="castle-wilds" aria-label="The Wilds, beyond the Frostwall">
+        <rect x={0} y={0} width={W} height={WILDS_H} className="wilds-fill" />
+        <WildsForest width={W} height={WILDS_H} />
+        <text className="band-label wilds-label" x={BAND - 40} y={24}>
+          The Wilds
         </text>
       </g>
+
+      {/* Hollowmere (#172): the village by the road, clickable for the files no room claims. */}
+      <g
+        className={`castle-band castle-village${selected === 'village' ? ' selected' : ''}`}
+        tabIndex={0}
+        role="button"
+        aria-label={`Hollowmere: ${state?.village?.count ?? 0} files no room claims`}
+        onClick={() => select('village')}
+        onKeyDown={keySelect('village')}
+      >
+        <rect x={L.villageBox.x - 8} y={L.villageBox.y - 34} width={L.villageBox.w + 16} height={L.villageBox.h + 30} rx={10} className="band-fill" />
+        <Hollowmere box={L.villageBox} lit={(state?.village?.count ?? 0) > 0} />
+        <text className="band-label village-label" x={L.villageBox.x} y={L.villageBox.y - 14}>
+          Hollowmere · {state?.village?.count ?? 0} unclaimed
+        </text>
+      </g>
+
       <g
         className={`castle-band${selected === 'outside' ? ' selected' : ''}`}
         tabIndex={0}
@@ -522,7 +532,7 @@ export default function CastleStage({ map, state, generation, selected, onSelect
         onClick={() => select('outside')}
         onKeyDown={keySelect('outside')}
       >
-        <rect x={W - BAND + 26} y={0} width={BAND - 26} height={L.H} className="band-fill" />
+        <rect x={W - BAND + 26} y={WILDS_H + FROST_H} width={BAND - 26} height={L.H - WILDS_H - FROST_H} className="band-fill" />
         {/* Files outside the project (home, Claude's configuration, other projects) are the Citadel's. */}
         <Citadel cx={W - (BAND - 26) / 2} gateX={L.sideGates.outside.x} gy={L.sideGates.outside.y} lit={(state?.outside?.count ?? 0) > 0} />
         <text className="band-label" transform={`translate(${W - (BAND - 26) / 2 + 5} ${L.H / 2 + 80}) rotate(90)`}>
@@ -531,18 +541,24 @@ export default function CastleStage({ map, state, generation, selected, onSelect
       </g>
 
       <rect className="castle-wall" x={L.wallX} y={L.wallY} width={wallW} height={wallH} rx={10} />
-      <g className="castle-crenels" aria-hidden="true">
-        {Array.from({ length: Math.floor((wallW - 20) / 28) + 1 }, (_, i) => (
-          <rect key={i} x={L.wallX + 6 + i * 28} y={L.wallY - 16} width={14} height={10} />
+      {/* The Frostwall (#172): the keep's north wall, run the whole width, crenellated towards the Wilds. */}
+      <g className="frostwall" aria-hidden="true">
+        <rect className="frostwall-face" x={0} y={WILDS_H} width={W} height={FROST_H} />
+        <rect className="frostwall-rime" x={0} y={WILDS_H} width={W} height={4} />
+        {Array.from({ length: Math.floor(W / 28) + 1 }, (_, i) => (
+          <rect key={i} className="frostwall-face" x={6 + i * 28} y={WILDS_H - 10} width={14} height={10} />
         ))}
+        <text className="frostwall-label" x={W - 16} y={WILDS_H + FROST_H / 2 + 5}>
+          The Frostwall
+        </text>
       </g>
       <rect className="castle-gate" x={L.gate.x - gateW / 2} y={L.wallBottom - 6} width={gateW} height={12} />
       <path className="castle-gate-arch" d={`M${L.gate.x - gateW / 2} ${L.wallBottom - 6} V${L.wallBottom - 14} Q${L.gate.x} ${L.wallBottom - 38} ${L.gate.x + gateW / 2} ${L.wallBottom - 14} V${L.wallBottom - 6}`} />
-      {/* The small gates units take to the Wilds (west) and the Citadel (east). */}
-      <rect className="castle-gate" x={L.sideGates.wilds.x - 6} y={L.sideGates.wilds.y - sideGate / 2} width={12} height={sideGate} />
+      {/* The small gate units take to the Citadel (east). */}
       <rect className="castle-gate" x={L.sideGates.outside.x - 6} y={L.sideGates.outside.y - sideGate / 2} width={12} height={sideGate} />
-      <text className="gate-label" x={L.gate.x + gateW / 2 + 10} y={L.wallBottom + 20}>
-        Gate
+      {/* The keep's name, on the road below its gate (#172): clear of the units waiting there and of Hollowmere either side. */}
+      <text className="keep-name" x={L.gate.x} y={L.wallBottom + 74}>
+        Duskhold
       </text>
 
       {(map?.rooms || []).map((room) => {

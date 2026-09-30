@@ -12,21 +12,29 @@
  *
  * The corridors: one under each row of rooms (under the last row, the strip
  * inside the wall), one in each gap between columns, the gate in the south
- * wall, and small gates in the west wall (to the Wilds) and the east wall (to
- * the Citadel, where files outside the project go). Every room's door opens
- * onto the corridor below it.
+ * wall, and a small gate in the east wall to the Citadel, where files outside
+ * the project go. Hollowmere, the village for files no room claims, is reached
+ * through the south gate (#172). The keep's north wall is the Frostwall, with
+ * the Wilds beyond it. Every room's door opens onto the corridor below it.
  * A route is always the same path: out of the door onto that corridor, along
  * it to the nearest column gap, up or down the gap to the other room's
  * corridor, along, and in at that room's door.
  */
 
 export const W = 1000;
-export const BAND = 70; // the Wilds, all round the wall
+/** Beside the wall: open ground west, the Citadel's band east. */
+export const BAND = 70;
+/** The Wilds, north of the Frostwall (#172): the forest Raiders come out of. */
+export const WILDS_H = 100;
+/** The Frostwall: the keep's north wall, the whole width (#172). */
+export const FROST_H = 34;
+/** The top of the rooms: under the Frostwall and the wall's inset. */
+const TOP = WILDS_H + FROST_H + 22;
 const GAP = 24;
 const ROOM_H = 190;
 export const DOT = 15;
-/** Space below the wall: the gate, and beyond it where Scouts go. */
-const BELOW = 120;
+/** Space below the wall: the gate, the road where Scouts go, and Hollowmere beside it. */
+const BELOW = 240;
 const WALL_INSET = 22;
 
 export const HOP_MS = 1000;
@@ -39,15 +47,20 @@ export function layout(floor) {
   const cols = floor?.cols || 3;
   const rows = floor?.rows || 4;
   const roomW = (W - 2 * BAND - (cols - 1) * GAP) / cols;
-  const gridBottom = BAND + rows * ROOM_H + (rows - 1) * GAP;
+  const gridBottom = TOP + rows * ROOM_H + (rows - 1) * GAP;
   const wallBottom = gridBottom + WALL_INSET;
   const H = gridBottom + BELOW;
-  const cell = (col, row) => ({ x: BAND + col * (roomW + GAP), y: BAND + row * (ROOM_H + GAP), w: roomW, h: ROOM_H });
+  const cell = (col, row) => ({ x: BAND + col * (roomW + GAP), y: TOP + row * (ROOM_H + GAP), w: roomW, h: ROOM_H });
   const gateCol = floor?.gate?.col ?? 1;
   const gateX = BAND + gateCol * (roomW + GAP) + roomW / 2;
   const wallX = BAND - WALL_INSET;
-  const wallY = BAND - WALL_INSET;
-  const corridorY = (row) => (row < rows - 1 ? BAND + (row + 1) * ROOM_H + row * GAP + GAP / 2 : gridBottom + WALL_INSET / 2);
+  const wallY = TOP - WALL_INSET;
+  const corridorY = (row) => (row < rows - 1 ? TOP + (row + 1) * ROOM_H + row * GAP + GAP / 2 : gridBottom + WALL_INSET / 2);
+  // Hollowmere takes the wider side of the road, clear of the gate and the Citadel's band.
+  const leftRoom = gateX - 90 - 16;
+  const rightRoom = W - BAND - (gateX + 90);
+  const villageW = Math.min(280, Math.max(leftRoom, rightRoom));
+  const villageX = leftRoom >= rightRoom ? gateX - 90 - villageW : gateX + 90;
   const gaps = Array.from({ length: cols - 1 }, (_, i) => BAND + (i + 1) * roomW + i * GAP + GAP / 2);
   return {
     cols,
@@ -58,16 +71,19 @@ export function layout(floor) {
     wallBottom,
     wallX,
     wallY,
+    // Ravens wait on the Frostwall.
+    perchY: WILDS_H + FROST_H / 2,
     corridorY,
     gaps,
     gate: { x: gateX, outer: { x: gateX, y: wallBottom + 70 } },
-    // The side gates sit on the first corridor, clear of the bands' labels.
-    sideGates: { wilds: { x: wallX, y: corridorY(0) }, outside: { x: W - wallX, y: corridorY(0) } },
-    // At the gate: just outside the wall's opening. Beyond it: further out, in the Wilds.
+    // The Citadel's side gate sits on the first corridor, clear of its band's label.
+    sideGates: { outside: { x: W - wallX, y: corridorY(0) } },
+    // At the gate: just outside the wall's opening. Beyond it: down the road.
     gateBox: { x: gateX - 80, y: wallBottom + 4, w: 160, h: 40 },
-    beyondBox: { x: gateX - 120, y: wallBottom + 50, w: 240, h: 40 },
-    wildsBox: { x: 6, y: BAND, w: BAND - 30, h: H - 2 * BAND },
-    outsideBox: { x: W - BAND + 24, y: BAND, w: BAND - 30, h: H - 2 * BAND },
+    beyondBox: { x: gateX - 60, y: wallBottom + 110, w: 120, h: 110 },
+    villageBox: { x: villageX, y: wallBottom + 40, w: villageW, h: BELOW - 56 },
+    wildsBox: { x: BAND, y: 12, w: W - 2 * BAND, h: WILDS_H - 24 },
+    outsideBox: { x: W - BAND + 24, y: TOP, w: BAND - 30, h: H - TOP - BAND },
   };
 }
 
@@ -94,12 +110,10 @@ function spots(L, rooms, place, n, perch) {
     // Ravens wait on the wall above the first Integrations room, else above the gate.
     const r = perch ? rooms.get(perch) : null;
     const x = r ? centre(L.cell(r.col, r.row)).x : L.gate.x;
-    return Array.from({ length: n }, (_, i) => ({ x: x + (i - (n - 1) / 2) * (DOT * 2 + 8), y: L.wallY }));
+    return Array.from({ length: n }, (_, i) => ({ x: x + (i - (n - 1) / 2) * (DOT * 2 + 8), y: L.perchY }));
   }
-  if (place === 'wilds') {
-    const box = L.wildsBox;
-    return Array.from({ length: n }, (_, i) => ({ x: box.x + box.w / 2 + 6, y: box.y + 40 + i * (DOT * 2 + 8) }));
-  }
+  if (place === 'village') return slots(L.villageBox, n);
+  if (place === 'wilds') return slots(L.wildsBox, n);
   if (place === 'outside') {
     // Below the road to the Citadel, whose tower stands above it.
     const box = L.outsideBox;
@@ -119,7 +133,7 @@ export function placeUnits(L, rooms, units, perch = null) {
   for (const u of units) {
     if (u.kind === 'wizard' && keys.has(u.caller)) continue;
     let place = u.kind === 'raven' ? 'perch' : u.room || 'gate';
-    if (!rooms.has(place) && !['perch', 'wilds', 'outside', 'gate', 'beyond-gate'].includes(place)) place = 'gate';
+    if (!rooms.has(place) && !['perch', 'village', 'wilds', 'outside', 'gate', 'beyond-gate'].includes(place)) place = 'gate';
     if (!at.has(place)) at.set(place, []);
     at.get(place).push(u);
   }
@@ -137,7 +151,8 @@ export function waypoint(L, rooms, place) {
   return room ? centre(L.cell(room.col, room.row)) : spots(L, rooms, place, 1)[0];
 }
 
-const beyondWall = (place) => place === 'gate' || place === 'beyond-gate';
+/** Places outside the south wall: a walk between two of them does not go through the keep. */
+const beyondWall = (place) => place === 'gate' || place === 'beyond-gate' || place === 'village';
 
 /** A place's door, and the corridor it opens onto (row, and x along it). */
 function door(L, rooms, place) {
@@ -147,8 +162,8 @@ function door(L, rooms, place) {
     const x = b.x + b.w / 2;
     return { at: { x, y: b.y + b.h }, row: room.row, x };
   }
-  if (place === 'wilds' || place === 'outside') {
-    const g = L.sideGates[place];
+  if (place === 'outside') {
+    const g = L.sideGates.outside;
     return { at: g, row: 0, x: g.x };
   }
   return { at: { x: L.gate.x, y: L.wallBottom }, row: L.rows - 1, x: L.gate.x };

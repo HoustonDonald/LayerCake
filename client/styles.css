@@ -2399,7 +2399,38 @@ pre.code {
   text-anchor: middle;
 }
 
+/* The Wilds (#172): the forest north of the Frostwall. */
+.wilds-fill { fill: #0d131b; }
 .wilds-trees { pointer-events: none; }
+.tree-snow { fill: #c7d3e2; fill-opacity: 0.35; }
+.castle-band .wilds-label,
+.castle-wilds .wilds-label { text-anchor: start; letter-spacing: 3px; fill: #9fb0c6; }
+
+/* The Frostwall (#172): the keep's north wall, pale, the whole width. */
+.frostwall { pointer-events: none; }
+.frostwall-face { fill: #5d6f86; }
+.frostwall-rime { fill: #dfe8f3; fill-opacity: 0.45; }
+.frostwall-label { fill: #eef3f9; font-size: 13px; font-weight: 700; letter-spacing: 3px; text-anchor: end; text-transform: uppercase; }
+
+/* Hollowmere (#172): the village by the road for files no room claims. Its windows light once any file lands there. */
+.castle-village .village-label { text-anchor: start; }
+/* Its click area shows only as a highlight: at rest the village stands on open ground. */
+.castle-village .band-fill { fill: transparent; }
+.hollowmere { pointer-events: none; }
+.house-wall { fill: #1c232e; stroke: #2c3440; }
+.house-roof { fill: #2a2320; }
+.house-window { fill: #10151d; }
+.hollowmere.lit .house-window { fill: var(--castle-construction-glow); fill-opacity: 0.85; }
+
+/* The keep's name, on the road below its gate. */
+.keep-name {
+  fill: var(--castle-text);
+  font-size: 18px;
+  font-weight: 700;
+  font-variant: small-caps;
+  letter-spacing: 2px;
+  text-anchor: middle;
+}
 
 /* The Citadel: files outside the project. Its windows light once any such file has been touched. */
 .citadel { pointer-events: none; }
@@ -2424,8 +2455,6 @@ pre.code {
   stroke-width: 12;
 }
 
-.castle-crenels rect { fill: #3a424e; }
-
 .castle-gate {
   fill: var(--castle-bg);
   stroke: #6c7686;
@@ -2436,11 +2465,6 @@ pre.code {
   fill: none;
   stroke: #6c7686;
   stroke-width: 2;
-}
-
-.gate-label {
-  fill: var(--castle-dim);
-  font-size: 13px;
 }
 
 /* Floor and the type's icon. */

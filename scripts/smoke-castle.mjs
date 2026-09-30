@@ -246,12 +246,12 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     await call('toolu_c_create', 'Write', { file_path: P('src', 'services', 'new.js'), content: S.writeContent }, { response: { type: 'create', filePath: P('src', 'services', 'new.js'), content: S.writeContent } });
     check('a created file lights its room as Construction', await s1.untilState((st) => st.rooms.services.state === 'construction'));
 
-    // --- the Wilds, outside, and a search scoped to a folder -----------------------
+    // --- Hollowmere, the Citadel, and a search scoped to a folder -----------------
     await call('toolu_c_wild', 'Read', { file_path: P('weird', 'thing.xyz') });
     await call('toolu_c_out', 'Read', { file_path: path.join(smokeDir, 'elsewhere.txt') });
-    check('a file no room claims counts in the Wilds; a file outside the project is counted apart',
-      await s1.untilState((st) => st.wilds.count === 1 && st.wilds.recent[0]?.path === 'weird/thing.xyz' && st.outside.count === 1),
-      JSON.stringify({ wilds: s1.last('state')?.wilds, outside: s1.last('state')?.outside }));
+    check('a file no room claims counts in Hollowmere, the village (#172); a file outside the project is counted apart',
+      await s1.untilState((st) => st.village?.count === 1 && st.village.recent[0]?.path === 'weird/thing.xyz' && st.outside.count === 1 && !('wilds' in st)),
+      JSON.stringify({ village: s1.last('state')?.village, outside: s1.last('state')?.outside }));
     await call('toolu_c_grep', 'Grep', { pattern: 'x', path: 'db' }, { response: { mode: 'content', content: S.grepBody, filenames: [P('db', 'schema.sql')] } });
     check('a search in a folder given relative to the session\'s cwd lights that folder\'s room',
       await s1.untilState((st) => st.rooms.database.state === 'survey'), JSON.stringify(s1.last('state')?.rooms?.database));
@@ -262,7 +262,7 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     // by the call that caused it.
     const walked = [
       ['docs', 'read'], ['database', 'edit'], ['tests', 't1'], ['api', 'th1'], ['build', 'build'], ['docs', 'deny'],
-      ['tests', 'wfail'], ['services', 'create'], ['wilds', 'wild'], ['outside', 'out'], ['database', 'grep'],
+      ['tests', 'wfail'], ['services', 'create'], ['village', 'wild'], ['outside', 'out'], ['database', 'grep'],
     ].map(([room, id]) => ({ room, key: `s:toolu_c_${id}` }));
     const trailOf = (st, key) => st?.units?.find((u) => u.key === key)?.trail;
     check("a Mason's trail lists every room its calls took it to, in order, one entry per visit, keyed by the call",
@@ -476,8 +476,8 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     check("castle.json's command rule makes the project's own command a test run, in the first Tests room",
       await s1.untilState((st) => st.runs.some((r) => r.id === 'toolu_c_own' && r.kind === 'test') && st.rooms['own-tests'].state === 'survey'), JSON.stringify(s1.last('state')?.rooms?.['own-tests']));
     await call('toolu_c_moved', 'Read', { file_path: P('docs', 'q.md') });
-    check("castle.json's patterns are the only ones: docs/ now lies in the Wilds",
-      await s1.untilLog((es) => es.find((e) => e.id === 'toolu_c_moved')?.where === 'the Wilds'), JSON.stringify((s1.last('log')?.entries || []).find((e) => e.id === 'toolu_c_moved')));
+    check("castle.json's patterns are the only ones: docs/ now lies in Hollowmere",
+      await s1.untilLog((es) => es.find((e) => e.id === 'toolu_c_moved')?.where === 'Hollowmere'), JSON.stringify((s1.last('log')?.entries || []).find((e) => e.id === 'toolu_c_moved')));
     await call('toolu_c_ls', 'Bash', { command: 'ls -la', description: 'List' }, { response: { stdout: '' } });
     check('with no Build or Config room, a plain shell call lights no room',
       await s1.untilLog((es) => es.find((e) => e.id === 'toolu_c_ls')?.where === 'shell'), JSON.stringify((s1.last('log')?.entries || []).find((e) => e.id === 'toolu_c_ls')));
@@ -548,6 +548,9 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     const roomRes = await get(base, `/api/castle/room?scanId=${scanId}&room=database`, H);
     bodies.push(roomRes.body);
     check("a room's recent files are served as paths", roomRes.status === 200 && JSON.parse(roomRes.body).recent.some((f) => f.path === 'db/schema.sql'), roomRes.body.slice(0, 300));
+    const villageRes = await get(base, `/api/castle/room?scanId=${scanId}&room=village`, H);
+    bodies.push(villageRes.body);
+    check("Hollowmere's list is served by the room route as 'village' (#172)", villageRes.status === 200 && JSON.parse(villageRes.body).recent.some((f) => f.path === 'weird/thing.xyz'), villageRes.body.slice(0, 300));
     check('the room route refuses a room that is not on the map, or not an id at all', (await get(base, `/api/castle/room?scanId=${scanId}&room=__proto__`, H)).status === 400 && (await get(base, `/api/castle/room?scanId=${scanId}&room=no-such-room`, H)).status === 400);
 
     // --- thrash lapses (#170) ----------------------------------------------------------------
@@ -576,7 +579,7 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     const strip = (st) => ({
       rooms: st.rooms,
       units: [...st.units].map(({ resting, ...u }) => u).sort((a, b) => a.key.localeCompare(b.key)),
-      wilds: st.wilds,
+      village: st.village,
       outside: st.outside,
       runs: st.runs,
       summary: st.summary,

@@ -204,7 +204,8 @@ function HereNow({ state, map, place }) {
 function Drawer({ scanId, map, state, selected, onClose }) {
   const [detail, setDetail] = useState(null);
   const [error, setError] = useState(null);
-  const stamp = state?.rooms?.[selected]?.touchedAt ?? state?.wilds?.count ?? 0;
+  // Refetch when what the drawer lists changes: a room's last touch, or Hollowmere's or the Citadel's count.
+  const stamp = selected === 'village' ? state?.village?.count : selected === 'outside' ? state?.outside?.count : (state?.rooms?.[selected]?.touchedAt ?? 0);
   useEffect(() => {
     let alive = true;
     setError(null);
@@ -216,18 +217,18 @@ function Drawer({ scanId, map, state, selected, onClose }) {
     };
   }, [scanId, selected, stamp]);
 
-  if (selected === 'wilds' || selected === 'outside') {
-    const wilds = selected === 'wilds';
+  if (selected === 'village' || selected === 'outside') {
+    const village = selected === 'village';
     return (
       <aside className="castle-drawer">
         <div className="drawer-head">
-          <h3>{wilds ? 'The Wilds' : 'The Citadel'}</h3>
+          <h3>{village ? 'Hollowmere' : 'The Citadel'}</h3>
           <button className="btn btn-small" onClick={onClose}>
             Close
           </button>
         </div>
         <p className="drawer-note">
-          {wilds
+          {village
             ? 'Files in the project that no room claims. Activity here means the map needs a pattern: add one to castle.json (Copy prompt for Claude drafts it).'
             : "Files outside the project folder: your home folder, Claude's configuration, other projects. No room can claim these; the Citadel keeps count of them so nothing is silently dropped."}
         </p>

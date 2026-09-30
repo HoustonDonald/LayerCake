@@ -57,7 +57,8 @@ const MAX_SESSIONS = 6;
 const MAX_LOG = 200;
 const MAX_RECENT = 20;
 const MAX_RUNS = 20;
-const MAX_WILDS = 200;
+/** Files listed for Hollowmere and for the Citadel (their counts stay whole). */
+const MAX_LISTED = 200;
 const TICK_MS = 1000;
 /** Sessions are re-picked every 5 s (every second in smoke, whose windows are scaled down). */
 const SELECT_EVERY_TICKS = Math.max(1, Math.round(5 * SCALE));
@@ -115,7 +116,7 @@ export const UNIT_KINDS = [
 
 export const CASTLE_RULES = [
   'Only real events move anything: hooks from sessions LayerCake started, and the transcripts of the others. When nothing is known, the castle shows less.',
-  "A file's room comes from castle.json's patterns, else the built-in ones; a file no room claims is in the Wilds, and a file outside the project (the home folder, Claude's configuration, other projects) goes to the Citadel and is counted apart.",
+  "A file's room comes from castle.json's patterns, else the built-in ones; a file no room claims is in Hollowmere, the village south of the gate, and a file outside the project (the home folder, Claude's configuration, other projects) goes to the Citadel and is counted apart.",
   'A shell call is a test, build or migration run when a segment of its command starts with a rule\'s words. A run lights the room its rule names, else the first room of its type (Tests, Build, Database); any other shell call works in the first Build room, else the first Config room. A run passes or fails by its exit code, so `npm test | tail` reads as the exit code of tail. A run started in the background, or ending with no exit code (refused before it ran, timed out), has no verdict.',
   'A run judges every room with unproven changes (the scaffolded ones): a pass takes their scaffolding down, a failure raises their Alarm, and a failure with none to judge raises it in the run\'s own room.',
   `No run can prove a ${ROOM_TYPES.filter((t) => t.provable === false).map((t) => t.label).join(' or ')} room: a change there puts up no scaffolding, no run judges it, and it has no thrash. A failed change there is still an Alarm.`,
@@ -298,7 +299,8 @@ export function fold(events, map, locateCall) {
   const files = new Map();
   const runs = [];
   const units = new Map();
-  const wilds = new Map();
+  // Files no room claims: Hollowmere, the village south of the gate (#172).
+  const village = new Map();
   const outside = new Map();
   const log = [];
   const sessions = new Map();
@@ -384,7 +386,7 @@ export function fold(events, map, locateCall) {
       caller.lastCallAt = e.at;
       // What it is doing, for the page's hover card: its latest call, in the one line the log shows.
       caller.last = { id: e.toolUseId || e.key, tool: e.tool || null, summary: e.summary || '', where: loc.label || null, at: e.at, endAt: null };
-      const to = loc.rooms.length ? loc.rooms[0] : loc.wilds.length ? 'wilds' : loc.outside.length ? 'outside' : null;
+      const to = loc.rooms.length ? loc.rooms[0] : loc.village.length ? 'village' : loc.outside.length ? 'outside' : null;
       // The trail (#161): each room change, keyed by the call that caused it
       // (the same key from either source, so a refold gives the same ids).
       // Consecutive calls in one room are one visit.
@@ -401,7 +403,7 @@ export function fold(events, map, locateCall) {
         if (verb === 'read' || verb === 'search' || verb === 'shell') r.lastRead = e.at;
         for (const p of loc.rels) pushRecent(r.recent, { path: p, at: e.at, verb, sessionId: e.sessionId, agentId: e.agentId || null }, MAX_RECENT);
       }
-      for (const p of loc.wilds) wilds.set(p, { path: p, at: e.at, verb });
+      for (const p of loc.village) village.set(p, { path: p, at: e.at, verb });
       for (const p of loc.outside) outside.set(p, { path: p, at: e.at, verb });
       if (verb === 'skill') {
         dropWizardsOf(caller.key);
@@ -446,7 +448,7 @@ export function fold(events, map, locateCall) {
             r.touchedAt = e.at;
             r.lastChangedFile = loc.rels[0] || null;
           }
-          for (const p of [...loc.rels, ...loc.wilds]) {
+          for (const p of [...loc.rels, ...loc.village]) {
             if (p === 'castle.json') changedMapAt = e.at;
           }
           for (const rel of loc.rels) {
@@ -518,8 +520,8 @@ export function fold(events, map, locateCall) {
     if (log.length > MAX_LOG) log.shift();
   }
 
-  // Trim the Wilds to the most recent, keeping the count honest.
-  const wildsList = [...wilds.values()].sort((a, b) => b.at - a.at);
+  // Trim Hollowmere to the most recent, keeping the count honest.
+  const villageList = [...village.values()].sort((a, b) => b.at - a.at);
   const outsideList = [...outside.values()].sort((a, b) => b.at - a.at);
   return {
     rooms,
@@ -528,8 +530,8 @@ export function fold(events, map, locateCall) {
     log,
     sessions,
     changedMapAt,
-    wilds: { count: wildsList.length, recent: wildsList.slice(0, MAX_WILDS) },
-    outside: { count: outsideList.length, recent: outsideList.slice(0, MAX_WILDS) },
+    village: { count: villageList.length, recent: villageList.slice(0, MAX_LISTED) },
+    outside: { count: outsideList.length, recent: outsideList.slice(0, MAX_LISTED) },
   };
 }
 
@@ -778,7 +780,7 @@ class Castle {
   /** Where one call is, cached by verb and path for the current map. */
   locateCall(e, verb) {
     const map = this.map;
-    const out = { rooms: [], rels: [], wilds: [], outside: [], roomsByRel: {}, command: null, label: null };
+    const out = { rooms: [], rels: [], village: [], outside: [], roomsByRel: {}, command: null, label: null };
     if (verb === 'shell') {
       const cmd = classifyCommand(map, e.targets?.heads || []);
       const room = map.rooms.find((r) => r.id === cmd.room);
@@ -794,7 +796,7 @@ class Castle {
       let loc = this.cache.get(cacheKey);
       if (!loc) {
         loc = locate(map, this.projectDir, p);
-        if (verb === 'search' && loc.where === 'wilds') {
+        if (verb === 'search' && loc.where === 'village') {
           const folder = locateFolder(map, this.projectDir, p);
           if (folder.where === 'room' || folder.where === 'project') loc = folder;
         }
@@ -805,11 +807,11 @@ class Castle {
         for (const id of loc.rooms) if (!out.rooms.includes(id)) out.rooms.push(id);
         out.rels.push(loc.rel);
         out.roomsByRel[loc.rel] = loc.rooms;
-      } else if (loc.where === 'wilds') out.wilds.push(loc.rel);
+      } else if (loc.where === 'village') out.village.push(loc.rel);
       else if (loc.where === 'outside') out.outside.push(p);
     }
     const names = out.rooms.map((id) => map.rooms.find((r) => r.id === id)?.name || id);
-    out.label = names.length ? names.join(', ') : out.wilds.length ? 'the Wilds' : out.outside.length ? 'the Citadel' : null;
+    out.label = names.length ? names.join(', ') : out.village.length ? 'Hollowmere' : out.outside.length ? 'the Citadel' : null;
     return out;
   }
 
@@ -978,7 +980,7 @@ class Castle {
       rooms,
       units,
       sessions,
-      wilds: { count: folded.wilds.count, recent: folded.wilds.recent.slice(0, 5) },
+      village: { count: folded.village.count, recent: folded.village.recent.slice(0, 5) },
       outside: { count: folded.outside.count },
       runs: folded.runs.slice(-5).map((r) => ({ id: r.id, kind: r.kind, summary: r.summary, at: r.at, endAt: r.endAt, ok: r.ok, exitCode: r.exitCode, noVerdict: r.noVerdict || null, judged: r.judged, sessionId: r.sessionId })),
       summary: { sessions: liveSet.size, workers: units.filter((u) => u.kind === 'mason' || u.kind === 'knight').length, alarms, busy },
@@ -992,10 +994,10 @@ class Castle {
     return { entries: this.folded ? this.folded.log : [] };
   }
 
-  /** A room's recent files (paths), or the Wilds' or outside's. Null when there is no such room. */
+  /** A room's recent files (paths), or Hollowmere's or the Citadel's. Null when there is no such room. */
   roomDetail(id) {
     if (!this.folded) return null;
-    if (id === 'wilds') return { id, recent: this.folded.wilds.recent };
+    if (id === 'village') return { id, recent: this.folded.village.recent };
     if (id === 'outside') return { id, recent: this.folded.outside.recent };
     const r = this.folded.rooms.get(id);
     if (!r) return null;

@@ -15,8 +15,8 @@ import { ROOM_ID_RE } from './castlemap.js';
 const MAX_STREAMS = 4;
 /** An event, not a comment line, so the page can tell a quiet castle from a dead stream. */
 const PING_MS = 30_000;
-/** The Wilds and outside have lists too; every other id must be one of the open castle's rooms (#167). */
-const BANDS = new Set(['wilds', 'outside']);
+/** Hollowmere (village) and the Citadel (outside) have lists too; every other id must be one of the open castle's rooms (#167, #172). */
+const BANDS = new Set(['village', 'outside']);
 
 const streams = new Set();
 

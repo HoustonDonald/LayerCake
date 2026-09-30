@@ -52,12 +52,19 @@ with the art, the hover card with the Citadel, #170, and #171.)
   `sim-watch.mjs` (reads the castle stream): stress, 3 sessions, 9 units at once, every unit kind
   but the Herald in that minute; replay, 3 of the owner's sessions from the transcript source, 9
   units at once. Then a 3-minute stress in a window the owner watched: it opened the Castle itself
-  and closed cleanly (no Edge, port or scratch folder left). A **live** mode (a real `claude -p`
-  fan-out, capped) is still to build; it spends usage, so it stays a scratch script.
+  and closed cleanly (no Edge, port or scratch folder left). The **live** mode is a scratch script
+  (`live/castle-live.mjs`, this session's scratchpad), since it spends usage: a real `claude -p`
+  fan-out on Haiku in a scratch copy of the repo, `--restricted`, `--strict-mcp-config` with a
+  one-tool MCP server of its own (`live/mcp/lookup-server.mjs`, the official SDK installed in
+  scratch), capped by `--max-budget-usd`. First run: $0.20, 29 s; 4 subagents, a skill, the MCP
+  call, a web fetch, a Write and an Edit all reached the Castle.
 - **#172, owner direction:** the Castle becomes a Castle Black analogue on a great Wall, with
-  original names; raiders from the Wilds loose arrows at the rooms a test run is testing; a village
-  takes the unclaimed files the Wilds hold now. Names, the Citadel's place and build runs are open
-  questions on the issue. Next: a style board for him to pick from.
+  original names. Style board (private): https://claude.ai/artifact/CDyEW7B613F631Nxu2nAYi. His
+  picks: Duskhold, the Frostwall, the Wilds, Hollowmere, Raiders, the Citadel east, and a siege
+  engine at the gate for build runs. The build plan is a comment on #172. **Commit A (done):**
+  Hollowmere (id `village`) holds unclaimed files; the Frostwall and the Wilds run across the north;
+  Duskhold's name is on the road. **Commit B (next):** Raiders for test runs and the siege engine for
+  build runs, as units with `targets`, drawn as a flip-book on one shared 8 fps timer.
 
 ### 2026-09-30, night: Docs was always in Alarm (#170, fixed)
 
