@@ -62,6 +62,13 @@ const FLUSH_MS = 250;
 const MAX_CACHE = 20_000;
 const MAX_LAGS = 20;
 /**
+ * Room changes kept per Mason and Knight, for the page to walk (#161). A frame
+ * goes out within 250 ms of a hook and each second from transcripts, so a room
+ * is left out of a walk only when one unit changes room more times than this
+ * inside one of those windows (a burst of parallel calls alternating rooms).
+ */
+const MAX_TRAIL = 12;
+/**
  * Events folded per castle. A refold of 20,000 took a median 18 ms (5,000: 5 ms)
  * on this machine under load (bench-fold, 2026-09-29); past it the oldest are
  * left out and the state frame says how many, so a very long session's first
@@ -95,11 +102,11 @@ export const ROOM_STATES = [
 ];
 
 export const UNIT_KINDS = [
-  { kind: 'mason', letter: 'M', label: 'Mason', rule: `A session. Stands in the room of its latest tool call; rests after ${secs(WINDOWS.restMs)} without one; leaves when the session ends.` },
-  { kind: 'knight', letter: 'K', label: 'Knight', rule: 'A subagent, from its start to its stop, in the room of its latest tool call.' },
-  { kind: 'wizard', letter: 'W', label: 'Wizard', rule: "A skill Claude invoked, beside the unit that called it until that unit's turn ends or it calls another skill. A skill you type as /name is not seen." },
-  { kind: 'raven', letter: 'R', label: 'Raven', rule: 'An MCP tool call, at the Rookery until it returns.' },
-  { kind: 'scout', letter: 'S', label: 'Scout', rule: 'A web fetch or search, beyond the gate until it returns.' },
+  { kind: 'mason', letter: 'M', label: 'Mason', rule: `A session. Walks the corridors to the room of its latest tool call, through each room it worked in on the way, in order; rests after ${secs(WINDOWS.restMs)} without one; walks out of the gate when the session ends.` },
+  { kind: 'knight', letter: 'K', label: 'Knight', rule: 'A subagent, from its start to its stop: enters by the gate, walks to the room of each tool call as a Mason does, and walks out of the gate when it stops.' },
+  { kind: 'wizard', letter: 'W', label: 'Wizard', rule: "A skill Claude invoked, beside the unit that called it, following it, until that unit's turn ends or it calls another skill. A skill you type as /name is not seen." },
+  { kind: 'raven', letter: 'R', label: 'Raven', rule: 'An MCP tool call: flies from the Rookery to the wall above it, and back when the call returns.' },
+  { kind: 'scout', letter: 'S', label: 'Scout', rule: 'A web fetch or search: walks out of the gate, and back when the call returns.' },
   { kind: 'herald', letter: 'H', label: 'Herald', rule: 'Claude is waiting for you (a permission or input prompt). Only sessions started from LayerCake can report this.' },
 ];
 
@@ -221,13 +228,21 @@ function transcriptEvents(entry, hooksSince) {
 const KIND_ORDER = { 'agent-start': 0, turn: 1, 'call-start': 2, 'call-end': 3, stop: 4, 'agent-end': 5, compact: 6, 'session-end': 7 };
 
 /**
- * Hook events first, so where both sources report a call the hook's (earlier)
- * copy is kept; then the transcript fills in what the hooks did not see.
+ * Hook events first, so where both sources report a call the hook's copy is
+ * kept; then the transcript fills in what the hooks did not see. The kept copy
+ * takes the earlier of the two times, so the order does not depend on which
+ * source was read first: parallel calls the transcript recorded before their
+ * hooks arrived otherwise moved behind each other as each hook landed, and a
+ * Mason walked their rooms twice (#161).
  */
 export function mergeEvents(lists) {
   const byKey = new Map();
   for (const list of lists) {
-    for (const e of list) if (!byKey.has(e.key)) byKey.set(e.key, e);
+    for (const e of list) {
+      const had = byKey.get(e.key);
+      if (!had) byKey.set(e.key, e);
+      else if (e.at < had.at) byKey.set(e.key, { ...had, at: e.at });
+    }
   }
   return [...byKey.values()].sort((a, b) => a.at - b.at || KIND_ORDER[a.kind] - KIND_ORDER[b.kind]);
 }
@@ -298,8 +313,8 @@ export function fold(events, map, locateCall) {
     let u = units.get(key);
     if (!u) {
       u = e.agentId
-        ? { key, kind: 'knight', sessionId: e.sessionId, agentId: e.agentId, agentType: e.agentType || null, room: 'gate', since: e.at, lastCallAt: null }
-        : { key, kind: 'mason', sessionId: e.sessionId, agentId: null, room: 'gate', since: e.at, lastCallAt: null };
+        ? { key, kind: 'knight', sessionId: e.sessionId, agentId: e.agentId, agentType: e.agentType || null, room: 'gate', trail: [], since: e.at, lastCallAt: null }
+        : { key, kind: 'mason', sessionId: e.sessionId, agentId: null, room: 'gate', trail: [], since: e.at, lastCallAt: null };
       units.set(key, u);
     }
     if (e.agentType && !u.agentType) u.agentType = e.agentType;
@@ -361,9 +376,15 @@ export function fold(events, map, locateCall) {
       logByCall.set(e.toolUseId, entry);
       const caller = ensureCaller(e);
       caller.lastCallAt = e.at;
-      if (loc.rooms.length) caller.room = loc.rooms[0];
-      else if (loc.wilds.length) caller.room = 'wilds';
-      else if (loc.outside.length) caller.room = 'outside';
+      const to = loc.rooms.length ? loc.rooms[0] : loc.wilds.length ? 'wilds' : loc.outside.length ? 'outside' : null;
+      // The trail (#161): each room change, keyed by the call that caused it
+      // (the same key from either source, so a refold gives the same ids).
+      // Consecutive calls in one room are one visit.
+      if (to && to !== caller.room) {
+        caller.room = to;
+        caller.trail.push({ room: to, key: e.key });
+        if (caller.trail.length > MAX_TRAIL) caller.trail.shift();
+      }
       for (const id of loc.rooms) {
         const r = rooms.get(id);
         if (!r) continue;
@@ -884,13 +905,14 @@ class Castle {
         out.room = caller ? caller.room : 'gate';
         out.caller = u.caller;
       } else out.room = u.room;
+      if (u.trail) out.trail = u.trail;
       out.resting = (u.kind === 'mason' || u.kind === 'knight') && (u.lastCallAt === null ? now - u.since > WINDOWS.restMs : now - u.lastCallAt > WINDOWS.restMs);
       units.push(out);
     }
     for (const s of sessions) {
       if (s.live && !folded.units.has(`M:${s.sessionId}`)) {
         // Running, and nothing it did is known yet: it stands inside the gate.
-        units.push({ key: `M:${s.sessionId}`, kind: 'mason', sessionId: s.sessionId, agentId: null, room: 'gate', resting: false, since: null });
+        units.push({ key: `M:${s.sessionId}`, kind: 'mason', sessionId: s.sessionId, agentId: null, room: 'gate', trail: [], resting: false, since: null });
       }
       if (s.live && s.waiting) units.push({ key: `H:${s.sessionId}`, kind: 'herald', sessionId: s.sessionId, room: 'gate', label: s.waiting });
     }

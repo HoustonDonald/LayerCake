@@ -827,9 +827,9 @@ scanned project, meant to be read from across the desk: the project's functional
 that light up with what Claude does in them, and each session, subagent, skill, MCP call and web call
 is a lettered dot standing where it works. It follows the owner's Castle spec, which is kept outside
 this repository; this section is the spec for what is built. This build is the spec's Phase 1 (the
-wiring and an event log) and Phase 2 (the plain castle: labelled boxes and dots). Movement, art
-and polish are issues #161 to #163. Everything shown comes from a real event: when LayerCake knows
-nothing, the castle shows less, never something invented.
+wiring and an event log), Phase 2 (the plain castle: labelled boxes and dots) and Phase 3 (the dots
+walk, #161). Art and polish are issues #162 and #163. Everything shown comes from a real event: when
+LayerCake knows nothing, the castle shows less, never something invented.
 
 **Full screen.** The Castle's **Full screen** button fills the screen with the Castle view alone:
 the header, the tabs and the watch bar go, and Esc or **Exit full screen** brings them back. (F11 is
@@ -910,8 +910,30 @@ the legend, or click a room); the rules come from the server with the data.
 **Units** (dots with a letter): **M** a session, in the room of its latest call, resting after 60 s
 without one; **K** a subagent (Knight), from its start to its stop; **W** a skill Claude invoked
 (Wizard), beside its caller until the caller's turn ends (a skill you type as `/name` is not seen);
-**R** an MCP call (Raven) at the Rookery; **S** a web fetch or search (Scout) beyond the gate; **H**
-the Herald at the gate while a launched session waits for you, the one unit that pulses.
+**R** an MCP call (Raven), on the wall above the Rookery; **S** a web fetch or search (Scout) beyond
+the gate; **H** the Herald at the gate while a launched session waits for you, the one unit that
+pulses. Clicking a unit opens the room it stands in.
+
+**Movement.** Units walk; none jumps from room to room.
+
+- A Mason or Knight walks the corridors to the room of its call: out of its room's door onto the
+  corridor below, along to a gap between the columns, up or down, along, and in. The Wilds and
+  "outside the project" are reached through small gates in the west and east walls. One room to the
+  next takes about 1 s.
+- Every room it worked in is walked through, in order, and none is skipped: parallel calls in three
+  rooms send it through all three. When several are queued it speeds up to keep up (with n queued,
+  each takes 1/n of a second, never under 0.25 s); rooms on the way are crossed through their middle.
+- A Mason or Knight first seen while the castle is open walks in from the gate to where it is (what
+  it did before the castle saw it, such as a resumed session's earlier work, is not walked), and
+  walks out through the gate when its session ends or stops reporting, or its subagent stops. A
+  Raven flies from the Rookery up to the wall and back when its call returns; a Scout walks out of
+  the gate and back; a Wizard fades in beside its caller and goes where it goes.
+- What was already there when the castle opens, or reconnects (a rescan, a hidden tab shown again),
+  stands where it is: a walk nobody saw would be invented. So does every unit when the map is
+  reloaded, since the rooms changed and nobody walked.
+- With reduced motion set, nothing walks: a unit that moves fades in at its new place.
+- Walking costs nothing when nobody walks: each walk is one browser animation that ends on arrival,
+  with no drawing loop running in between.
 
 **castle.json.** A project can adjust its map with `castle.json` at its root. LayerCake reads it and
 never writes it. **Copy prompt for Claude** copies a prompt to paste into a Claude session in the
@@ -952,6 +974,11 @@ it that the castle sees.
 - Searches light a room only when scoped to a folder that room claims; their matched files are not
   used. A shell command's changes to files are not seen (only the files a tool names), so a room a
   script rewrote stays as it was.
+- The server keeps each Mason's and Knight's last 12 room changes for the page to walk. A picture
+  goes out within 250 ms of a hook and each second from transcripts, so only a unit changing room
+  more than 12 times inside one of those windows has its oldest rooms left out of the walk. A
+  subagent or session that ends in the same window as its last calls walks out from where the page
+  last saw it, without those rooms.
 
 ## Network posture
 

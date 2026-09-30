@@ -238,6 +238,18 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     check('a search in a folder given relative to the session\'s cwd lights that folder\'s room',
       await s1.untilState((st) => st.rooms.vault.state === 'survey'), JSON.stringify(s1.last('state')?.rooms?.vault));
 
+    // --- the trail the page walks (#161) ------------------------------------------
+    // Every call above, as the room changes it made: in order, a run of calls
+    // in one room as one visit (t2, th2 to th4, reject, int, rok), each keyed
+    // by the call that caused it.
+    const walked = [
+      ['library', 'read'], ['vault', 'edit'], ['proving-grounds', 't1'], ['gatehouse', 'th1'], ['workshop', 'build'], ['library', 'deny'],
+      ['proving-grounds', 'wfail'], ['stewards-hall', 'create'], ['wilds', 'wild'], ['outside', 'out'], ['vault', 'grep'],
+    ].map(([room, id]) => ({ room, key: `s:toolu_c_${id}` }));
+    const trailOf = (st, key) => st?.units?.find((u) => u.key === key)?.trail;
+    check("a Mason's trail lists every room its calls took it to, in order, one entry per visit, keyed by the call",
+      JSON.stringify(trailOf(s1.last('state'), `M:${sid}`)) === JSON.stringify(walked), JSON.stringify(trailOf(s1.last('state'), `M:${sid}`)));
+
     // --- units: Knight, Wizard, Raven, Scout, Herald ---------------------------------
     const agent = 'ac0ffee0c0ffee00c';
     await hook({ hook_event_name: 'SubagentStart', agent_id: agent, agent_type: 'Explore' });
@@ -247,6 +259,10 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     check("a subagent's call moves its Knight, not the Mason",
       await s1.untilState((st) => st.units.find((u) => u.key === `K:${agent}`)?.room === 'library' && st.units.find((u) => u.key === `M:${sid}`)?.room === masonBefore),
       JSON.stringify(s1.last('state')?.units));
+    check("the Knight has a trail of its own, and the Mason's is unchanged by the Knight's call",
+      JSON.stringify(trailOf(s1.last('state'), `K:${agent}`)) === JSON.stringify([{ room: 'library', key: 's:toolu_c_sub' }]) &&
+        JSON.stringify(trailOf(s1.last('state'), `M:${sid}`)) === JSON.stringify(walked),
+      JSON.stringify(trailOf(s1.last('state'), `K:${agent}`)));
     await hook({ hook_event_name: 'PostToolUse', tool_name: 'Read', tool_use_id: 'toolu_c_sub', tool_input: { file_path: P('docs', 'sub.md') }, tool_response: {}, agent_id: agent });
     await hook({ hook_event_name: 'SubagentStop', agent_id: agent, agent_type: 'Explore' });
     check('a subagent that stops leaves', await s1.untilState((st) => !st.units.some((u) => u.key === `K:${agent}`)));
@@ -283,6 +299,11 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     await call('toolu_c_bg', 'Bash', { command: 'npm test', run_in_background: true, description: 'Tests in the background' }, { response: { stdout: '', backgroundTaskId: 'bg1' } });
     check('a test run started in the background has no verdict',
       await s1.untilState((st) => st.runs.some((r) => r.id === 'toolu_c_bg' && r.ok === null && r.noVerdict === 'started in the background')));
+    // Two more visits (the Library, the Proving Grounds) make 13: the trail
+    // keeps the latest 12, the oldest going first.
+    const kept = [...walked.slice(1), { room: 'library', key: 's:toolu_c_after' }, { room: 'proving-grounds', key: 's:toolu_c_bg' }];
+    check("a Mason's trail is bounded: the latest 12 visits, still in order",
+      JSON.stringify(trailOf(s1.last('state'), `M:${sid}`)) === JSON.stringify(kept), JSON.stringify(trailOf(s1.last('state'), `M:${sid}`)));
 
     // --- the transcript source --------------------------------------------------------
     const slugDir = path.join(claudeData, 'projects', projectSlug(proj));
@@ -370,6 +391,26 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     const detail = await get(base, `/api/session/${sid}`, H);
     bodies.push(detail.body);
     check('the session view never serves the castle ring or command heads', detail.status === 200 && !/"castle"|"heads"|"targets"/.test(detail.body), `status ${detail.status}`);
+
+    // Parallel calls the transcript records before their hooks arrive: as each
+    // hook lands, the trail must keep the order it had (#161), or the page
+    // walks those rooms again.
+    // Stamped after every call above, and before the hooks below.
+    await sleep(400);
+    const tp = Date.now() - 200;
+    const par = [['toolu_c_par1', P('docs', 'p1.md'), 'library'], ['toolu_c_par2', P('db', 'p2.sql'), 'vault'], ['toolu_c_par3', P('src', 'lib', 'p3.js'), 'keep']];
+    await fs.appendFile(path.join(slugDir, `${sid}.jsonl`), par.map(([id, file], i) => rec(sid, proj, tp + i, toolUse(id, 'Read', { file_path: file }))).join('\n') + '\n');
+    const parTail = (st) => JSON.stringify(trailOf(st, `M:${sid}`)?.slice(-3));
+    const parWant = JSON.stringify(par.map(([id, , room]) => ({ room, key: `s:${id}` })));
+    check('parallel calls read from the transcript first join the trail in their order',
+      await s1.untilState((st) => parTail(st) === parWant, 4000), parTail(s1.last('state')));
+    await hook({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_use_id: 'toolu_c_par1', tool_input: { file_path: par[0][1] } });
+    await s1.untilLog((es) => es.find((e) => e.id === 'toolu_c_par1')?.source === 'hooks', 3000);
+    const afterFirstHook = parTail(s1.last('state'));
+    for (const [id, file] of par.slice(1)) await hook({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_use_id: id, tool_input: { file_path: file } });
+    await s1.untilLog((es) => es.filter((e) => /toolu_c_par/.test(e.id || '') && e.source === 'hooks').length === 3, 3000);
+    check('and keep it as each of their hooks lands (a call both sources report takes the earlier time)',
+      afterFirstHook === parWant && parTail(s1.last('state')) === parWant, `after the first hook ${afterFirstHook}, after all ${parTail(s1.last('state'))}`);
 
     // --- castle.json ----------------------------------------------------------------------
     await fs.writeFile(

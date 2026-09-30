@@ -1,4 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+
+import { BAND, DOT, FADE_MS, HOP_MS, SLIDE_MS, W, keyframes, lastTrailKey, layout, newPlaces, placeUnits, planWalk, positionAt, replan, totalMs, waypoint } from './castleMotion.js';
 
 /**
  * The castle itself (#160): one SVG with a fixed viewBox, so full screen only
@@ -8,14 +10,9 @@ import React, { useEffect, useRef, useState } from 'react';
  *
  * What a room shows comes from the server (state, cause, heat, scaffolding).
  * This file adds only presentation: the 3 s hold against flicker, the heat
- * decay between frames, and where the dots stand.
+ * decay between frames, and the units walking between the places the server
+ * puts them (#161; the geometry and the walking rules are in castleMotion.js).
  */
-
-const W = 1000;
-const BAND = 70; // the Wilds, all round the wall
-const GAP = 24;
-const ROOM_H = 190;
-const DOT = 15;
 
 /** Session colours: hues no room state uses (red, orange, amber, gold and blue are reserved). */
 export const SESSION_COLOURS = ['#2ec4b6', '#9b7bf7', '#9ccc3c', '#e86fb2', '#4dd0e1', '#c3a6ff'];
@@ -35,23 +32,6 @@ function knightColour(id) {
     pick -= b - a;
   }
   return 'hsl(120, 65%, 62%)';
-}
-
-/** Space below the wall: the gate, and beyond it where Scouts go. */
-const BELOW = 120;
-const WALL_INSET = 22;
-
-function layout(floor) {
-  const cols = floor?.cols || 3;
-  const rows = floor?.rows || 4;
-  const roomW = (W - 2 * BAND - (cols - 1) * GAP) / cols;
-  const gridBottom = BAND + rows * ROOM_H + (rows - 1) * GAP;
-  const wallBottom = gridBottom + WALL_INSET;
-  const H = gridBottom + BELOW;
-  const cell = (col, row) => ({ x: BAND + col * (roomW + GAP), y: BAND + row * (ROOM_H + GAP), w: roomW, h: ROOM_H });
-  const gateCol = floor?.gate?.col ?? 1;
-  const gateX = BAND + gateCol * (roomW + GAP) + roomW / 2;
-  return { cols, rows, roomW, H, cell, wallBottom, gate: { x: gateX } };
 }
 
 const HOLD_MS = 3000;
@@ -98,16 +78,8 @@ function heatNow(heat, halfLife, now) {
   return heat.v * 0.5 ** Math.max(0, (now - heat.t) / halfLife);
 }
 
-/**
- * The Alarm's slow pulse and the Herald's ring, as a class toggled every
- * 1.2 s rather than a CSS animation. An SVG stroke animation is not
- * composited: a smooth one repainted the whole castle every frame, 16% of a
- * core for as long as an Alarm stood, and even a stepped one ticked every
- * frame (5.6%; ui-idle.mjs, headless Edge, 2026-09-29). A toggle is two
- * repaints a cycle. Off entirely with reduced motion.
- */
-function usePulse(active) {
-  const [on, setOn] = useState(false);
+/** The viewer's reduced-motion setting, followed live. */
+function useReducedMotion() {
   const [reduce, setReduce] = useState(() => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || false);
   useEffect(() => {
     const q = window.matchMedia?.('(prefers-reduced-motion: reduce)');
@@ -116,6 +88,19 @@ function usePulse(active) {
     q.addEventListener('change', onChange);
     return () => q.removeEventListener('change', onChange);
   }, []);
+  return reduce;
+}
+
+/**
+ * The Alarm's slow pulse and the Herald's ring, as a class toggled every
+ * 1.2 s rather than a CSS animation. An SVG stroke animation is not
+ * composited: a smooth one repainted the whole castle every frame, 16% of a
+ * core for as long as an Alarm stood, and even a stepped one ticked every
+ * frame (5.6%; ui-idle.mjs, headless Edge, 2026-09-29). A toggle is two
+ * repaints a cycle. Off entirely with reduced motion.
+ */
+function usePulse(active, reduce) {
+  const [on, setOn] = useState(false);
   useEffect(() => {
     if (!active || reduce) {
       setOn(false);
@@ -138,19 +123,6 @@ function useCooling(rooms, halfLife) {
   }, [warm]);
 }
 
-function slots(box, count, { row = 'bottom' } = {}) {
-  const perRow = Math.max(1, Math.floor((box.w - 16) / (DOT * 2 + 8)));
-  const out = [];
-  for (let i = 0; i < count; i += 1) {
-    const r = Math.floor(i / perRow);
-    const c = i % perRow;
-    const x = box.x + 8 + DOT + c * (DOT * 2 + 8);
-    const y = row === 'bottom' ? box.y + box.h - 8 - DOT - r * (DOT * 2 + 6) : box.y + 8 + DOT + r * (DOT * 2 + 6);
-    out.push({ x, y });
-  }
-  return out;
-}
-
 function unitColour(u, sessionIndex) {
   if (u.kind === 'knight') return knightColour(u.agentId);
   if (u.kind === 'herald') return '#f4f6fa';
@@ -160,11 +132,11 @@ function unitColour(u, sessionIndex) {
 
 const LETTER = { mason: 'M', knight: 'K', wizard: 'W', raven: 'R', scout: 'S', herald: 'H' };
 
-function Unit({ u, x, y, colour, kinds }) {
+function Unit({ u, x, y, colour, kinds, riders = [], colourOf, onClick }) {
   const label = kinds?.find((k) => k.kind === u.kind)?.label || u.kind;
   const title = [label, u.agentType, u.label, u.resting ? 'resting' : null].filter(Boolean).join(' · ');
   return (
-    <g className={`castle-unit unit-${u.kind}${u.resting ? ' resting' : ''}`} transform={`translate(${x} ${y})`}>
+    <g className={`castle-unit unit-${u.kind}${u.resting ? ' resting' : ''}`} data-unit={x === undefined ? undefined : u.key} transform={x === undefined ? undefined : `translate(${x} ${y})`} onClick={onClick}>
       <title>{title}</title>
       {u.kind === 'herald' && <circle className="herald-ring" r={DOT + 6} />}
       <circle r={DOT} fill={colour} />
@@ -176,6 +148,238 @@ function Unit({ u, x, y, colour, kinds }) {
           z
         </text>
       )}
+      {/* A Wizard stands beside the unit that called it and goes where it goes. */}
+      {riders.map((w, i) => (
+        <g key={w.key} className="castle-rider" transform={`translate(${(i + 1) * (DOT * 2 + 4)} ${-(DOT + 6)})`}>
+          <Unit u={w} colour={colourOf(w)} kinds={kinds} colourOf={colourOf} />
+        </g>
+      ))}
+    </g>
+  );
+}
+
+const WALKERS = new Set(['mason', 'knight']);
+/** Kinds that walk in and out; the rest (Herald, a Wizard on its own) appear and go. */
+const COMERS = new Set(['mason', 'knight', 'raven', 'scout']);
+
+/**
+ * How to treat a frame. The first state of a connection is a picture, not a
+ * story: every unit is placed where it stands and nothing walks, because a
+ * walk nobody saw would be invented. Until that state arrives (the map comes
+ * first, and the last connection's state is still on screen) nothing moves
+ * either. A new map is a picture too: the server refolds every trail under the
+ * new rooms, and nobody walked.
+ */
+function frameMode(f, generation, state) {
+  if (f.generation === generation && !f.awaiting) return state && state.mapVersion !== f.mapVersion ? 'place' : 'move';
+  return state && state !== f.state ? 'place' : 'hold';
+}
+
+const samePoint = (a, b) => Math.abs(a.x - b.x) < 0.01 && Math.abs(a.y - b.y) < 0.01;
+
+/**
+ * The units, in one layer above the rooms, so a unit walking from room to room
+ * is one element moving (#161). React puts each unit on its spot; the walk
+ * there is a Web Animations API animation of its transform that ends on that
+ * spot. Nothing runs between walks (no requestAnimationFrame loop), so an idle
+ * castle costs nothing.
+ *
+ * After the first frame of a connection: a Mason or Knight walks the rooms of
+ * its trail it has not walked yet, in order; one first seen walks in from the
+ * gate to where it is (what it did before the castle saw it is not walked: a
+ * resumed session's trail is yesterday's), and one that goes walks out through
+ * it, kept on screen (a ghost) until it is out. A Raven flies from the Rookery to the wall above it and back; a
+ * Scout walks out of the gate and back. With reduced motion nothing walks: a
+ * unit that moves fades in at its new spot.
+ */
+function UnitLayer({ L, rooms, units, generation, state, reduce, colourOf, kinds, onSelect }) {
+  // key -> { key, unit, place, point, lastKey, legs, anim, fade, leaving, exit }
+  const motion = useRef(new Map());
+  const frame = useRef({ generation: null, state: undefined, awaiting: false, mapVersion: undefined });
+  const layerRef = useRef(null);
+  const [, rerender] = useState(0);
+
+  const placed = placeUnits(L, rooms, units);
+  const mode = frameMode(frame.current, generation, state);
+  const riders = new Map();
+  for (const u of units) {
+    if (u.kind !== 'wizard' || placed.has(u.key)) continue;
+    if (!riders.has(u.caller)) riders.set(u.caller, []);
+    riders.get(u.caller).push(u);
+  }
+  const shown = [];
+  for (const u of units) {
+    const p = placed.get(u.key);
+    if (p) shown.push({ u, p });
+  }
+  if (mode === 'move') {
+    // Gone from the frame, still walking out (a unit back in the frame is drawn as itself).
+    for (const rec of motion.current.values()) {
+      if (!placed.has(rec.key) && COMERS.has(rec.unit.kind)) shown.push({ u: rec.unit, p: rec, ghost: true });
+    }
+  }
+
+  useEffect(
+    () => () => {
+      for (const rec of motion.current.values()) {
+        rec.anim?.cancel();
+        rec.fade?.cancel();
+      }
+    },
+    []
+  );
+
+  useLayoutEffect(() => {
+    const els = new Map();
+    for (const el of layerRef.current?.children || []) if (el.dataset.unit) els.set(el.dataset.unit, el);
+    const gateOpening = { x: L.gate.x, y: L.wallBottom };
+
+    const stop = (rec) => {
+      rec.anim?.cancel();
+      rec.fade?.cancel();
+      rec.anim = rec.fade = rec.legs = null;
+    };
+    // A walk out holds its last step (fill) until the unit is removed: React
+    // last drew it where it stood, and that is where it would show otherwise.
+    const play = (rec, el, legs, fill = 'none') => {
+      // A new walk replaces whatever the unit was doing, a held walk out
+      // included: left attached, that would win again once this walk ends.
+      for (const a of el.getAnimations()) if (a !== rec.fade) a.cancel();
+      const anim = el.animate(keyframes(legs), { duration: totalMs(legs), easing: 'linear', fill });
+      rec.anim = anim;
+      rec.legs = legs;
+      anim.onfinish = () => {
+        if (rec.anim === anim) rec.anim = rec.legs = null;
+      };
+    };
+    const fadeIn = (rec, el) => {
+      rec.fade?.cancel();
+      rec.fade = el.animate([{ opacity: 0, offset: 0 }], { duration: FADE_MS, easing: 'ease-out' });
+    };
+    const here = (rec) => (rec.anim && rec.legs ? positionAt(rec.legs, rec.anim.currentTime ?? 0)?.point : null) || rec.point;
+
+    const m = frameMode(frame.current, generation, state);
+    if (m !== 'move') {
+      for (const rec of motion.current.values()) stop(rec);
+      motion.current.clear();
+      for (const u of units) {
+        const p = placed.get(u.key);
+        if (p) motion.current.set(u.key, { key: u.key, unit: u, place: p.place, point: p.point, lastKey: lastTrailKey(u.trail), legs: null, anim: null, fade: null, leaving: false });
+      }
+      frame.current = { generation, state, awaiting: m === 'hold', mapVersion: state?.mapVersion };
+      return;
+    }
+    // A re-render for something else (a held room, cooling, a ghost gone): nothing new to walk.
+    if (frame.current.state === state) return;
+    frame.current.state = state;
+
+    for (const u of units) {
+      const p = placed.get(u.key);
+      if (!p) continue;
+      const el = els.get(u.key);
+      let rec = motion.current.get(u.key);
+      if (rec?.leaving) {
+        // Back before it was out: it finishes the walk out it started, then
+        // walks back in (a liveness flap within about a second).
+        rec.leaving = false;
+        rec.exit = null;
+        rec.fade?.cancel();
+        rec.fade = null;
+      }
+      if (!rec) {
+        rec = { key: u.key, unit: u, place: p.place, point: p.point, lastKey: lastTrailKey(u.trail), legs: null, anim: null, fade: null, leaving: false };
+        motion.current.set(u.key, rec);
+        if (el && COMERS.has(u.kind)) {
+          if (!reduce) {
+            let legs;
+            if (WALKERS.has(u.kind)) legs = planWalk(L, rooms, { place: 'gate', point: L.gate.outer }, [p.place], p.point);
+            else if (u.kind === 'raven') legs = [{ place: p.place, pts: [waypoint(L, rooms, 'rookery'), p.point], ms: HOP_MS }];
+            else legs = [{ place: p.place, pts: [gateOpening, p.point], ms: HOP_MS }];
+            play(rec, el, legs);
+          }
+          fadeIn(rec, el);
+        }
+        continue;
+      }
+      rec.unit = u;
+      const places = newPlaces(u.trail, rec.lastKey);
+      rec.lastKey = lastTrailKey(u.trail) ?? rec.lastKey;
+      if (places.length && places[places.length - 1] !== p.place) places.push(p.place);
+      if (!places.length && p.place !== rec.place) places.push(p.place);
+      if (!places.length && samePoint(p.point, rec.point)) continue;
+      if (!el || reduce) {
+        stop(rec);
+        if (el && places.length) fadeIn(rec, el);
+      } else {
+        const legs =
+          (rec.anim && rec.legs && replan(L, rooms, rec.legs, rec.anim.currentTime ?? 0, places, p.point)) ||
+          (places.length ? planWalk(L, rooms, { place: rec.place, point: rec.point }, places, p.point) : [{ place: p.place, pts: [rec.point, p.point], ms: SLIDE_MS }]);
+        play(rec, el, legs);
+      }
+      rec.place = p.place;
+      rec.point = p.point;
+    }
+
+    for (const rec of [...motion.current.values()]) {
+      if (placed.has(rec.key) || rec.leaving) continue;
+      const el = els.get(rec.key);
+      if (!el || !COMERS.has(rec.unit.kind)) {
+        stop(rec);
+        motion.current.delete(rec.key);
+        continue;
+      }
+      rec.leaving = true;
+      let legs = null;
+      if (!reduce) {
+        if (WALKERS.has(rec.unit.kind)) {
+          // Out through the gate, after any room it was still walking to.
+          legs = (rec.anim && rec.legs && replan(L, rooms, rec.legs, rec.anim.currentTime ?? 0, ['gate'], L.gate.outer)) || planWalk(L, rooms, { place: rec.place, point: rec.point }, ['gate'], L.gate.outer);
+        } else {
+          legs = [{ place: rec.place, pts: [here(rec), rec.unit.kind === 'raven' ? waypoint(L, rooms, 'rookery') : gateOpening], ms: HOP_MS }];
+        }
+        play(rec, el, legs, 'forwards');
+        const end = legs[legs.length - 1];
+        rec.point = end.pts[end.pts.length - 1];
+        if (WALKERS.has(rec.unit.kind)) rec.place = 'gate';
+      } else {
+        rec.anim?.cancel();
+        rec.anim = rec.legs = null;
+      }
+      // Gone at the end of the walk out: it fades over the last steps, then is removed.
+      const ms = legs ? totalMs(legs) : FADE_MS;
+      rec.fade?.cancel();
+      const fade = el.animate([{ opacity: 0, offset: 1 }], { delay: Math.max(0, ms - FADE_MS), duration: Math.min(FADE_MS, ms), fill: 'forwards' });
+      rec.fade = fade;
+      const exit = {};
+      rec.exit = exit;
+      fade.onfinish = () => {
+        if (rec.exit !== exit || !rec.leaving) return;
+        // No cancel here: that would show it at its old spot until React
+        // removes it; removing the element ends its animations.
+        motion.current.delete(rec.key);
+        rerender((n) => n + 1);
+      };
+    }
+  });
+
+  return (
+    <g className="castle-units" ref={layerRef}>
+      {shown.map(({ u, p, ghost }) => {
+        const selectable = !ghost && (rooms.has(p.place) || p.place === 'wilds' || p.place === 'outside');
+        return (
+          <Unit
+            key={u.key}
+            u={u}
+            x={p.point.x}
+            y={p.point.y}
+            colour={colourOf(u)}
+            kinds={kinds}
+            riders={ghost ? [] : riders.get(u.key)}
+            colourOf={colourOf}
+            onClick={selectable ? () => onSelect(p.place) : undefined}
+          />
+        );
+      })}
     </g>
   );
 }
@@ -185,19 +389,13 @@ export default function CastleStage({ map, state, generation, selected, onSelect
   const halfLife = map?.windows?.heatHalfLifeMs || 45_000;
   const shown = useHeldStates(state?.rooms, generation);
   useCooling(state?.rooms, halfLife);
-  const pulse = usePulse(Object.values(shown).includes('alarm') || (state?.units || []).some((u) => u.kind === 'herald'));
+  const reduce = useReducedMotion();
+  const pulse = usePulse(Object.values(shown).includes('alarm') || (state?.units || []).some((u) => u.kind === 'herald'), reduce);
   const now = Date.now();
   const byState = new Map((map?.states || []).map((s) => [s.state, s]));
   const sessionIndex = new Map((state?.sessions || []).map((s) => [s.sessionId, s.index]));
   const colourOf = (u) => unitColour(u, sessionIndex.get(u.sessionId) ?? 0);
-
-  // Dots grouped by where they stand.
-  const at = new Map();
-  for (const u of state?.units || []) {
-    const where = u.room || 'gate';
-    if (!at.has(where)) at.set(where, []);
-    at.get(where).push(u);
-  }
+  const rooms = new Map((map?.rooms || []).map((r) => [r.id, r]));
 
   const select = (id) => onSelect(selected === id ? null : id);
   const keySelect = (id) => (e) => {
@@ -207,17 +405,10 @@ export default function CastleStage({ map, state, generation, selected, onSelect
     }
   };
 
-  const wallX = BAND - WALL_INSET;
-  const wallY = BAND - WALL_INSET;
-  const wallW = W - 2 * wallX;
-  const wallH = L.wallBottom - wallY;
+  const wallW = W - 2 * L.wallX;
+  const wallH = L.wallBottom - L.wallY;
   const gateW = 96;
-
-  const wildsBox = { x: 6, y: BAND, w: BAND - 30, h: L.H - 2 * BAND };
-  const outsideBox = { x: W - BAND + 24, y: BAND, w: BAND - 30, h: L.H - 2 * BAND };
-  // At the gate: just outside the wall's opening. Beyond it: further out, in the Wilds.
-  const gateBox = { x: L.gate.x - 80, y: L.wallBottom + 4, w: 160, h: 40 };
-  const beyondBox = { x: L.gate.x - 120, y: L.wallBottom + 50, w: 240, h: 40 };
+  const sideGate = 48;
 
   return (
     <svg className={`castle-svg${pulse ? ' pulse-on' : ''}`} viewBox={`0 0 ${W} ${L.H}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="The castle: rooms by what Claude is doing in them">
@@ -255,8 +446,11 @@ export default function CastleStage({ map, state, generation, selected, onSelect
         </text>
       </g>
 
-      <rect className="castle-wall" x={wallX} y={wallY} width={wallW} height={wallH} rx={10} />
+      <rect className="castle-wall" x={L.wallX} y={L.wallY} width={wallW} height={wallH} rx={10} />
       <rect className="castle-gate" x={L.gate.x - gateW / 2} y={L.wallBottom - 6} width={gateW} height={12} />
+      {/* The small gates units take to the Wilds (west) and outside the project (east). */}
+      <rect className="castle-gate" x={L.sideGates.wilds.x - 6} y={L.sideGates.wilds.y - sideGate / 2} width={12} height={sideGate} />
+      <rect className="castle-gate" x={L.sideGates.outside.x - 6} y={L.sideGates.outside.y - sideGate / 2} width={12} height={sideGate} />
       <text className="gate-label" x={L.gate.x + gateW / 2 + 10} y={L.wallBottom + 20}>
         Gate
       </text>
@@ -265,8 +459,6 @@ export default function CastleStage({ map, state, generation, selected, onSelect
         const box = L.cell(room.col, room.row);
         const r = state?.rooms?.[room.id];
         if (room.dropped) {
-          const dots = at.get(room.id) || [];
-          const pos = slots(box, dots.length);
           return (
             <g key={room.id} className="castle-room dropped">
               <rect x={box.x} y={box.y} width={box.w} height={box.h} rx={6} className="room-fill" />
@@ -276,9 +468,6 @@ export default function CastleStage({ map, state, generation, selected, onSelect
               <text className="room-state" x={box.x + 14} y={box.y + 54}>
                 not used here (castle.json)
               </text>
-              {dots.map((u, i) => (
-                <Unit key={u.key} u={u} x={pos[i].x} y={pos[i].y} colour={colourOf(u)} kinds={map?.units} />
-              ))}
             </g>
           );
         }
@@ -286,8 +475,6 @@ export default function CastleStage({ map, state, generation, selected, onSelect
         const def = byState.get(st);
         const heat = heatNow(r?.heat, halfLife, now);
         const glow = Math.min(0.55, 1 - Math.exp(-heat / 4));
-        const dots = at.get(room.id) || [];
-        const pos = slots(box, dots.length);
         return (
           <g
             key={room.id}
@@ -314,30 +501,11 @@ export default function CastleStage({ map, state, generation, selected, onSelect
                 unproven
               </text>
             )}
-            {dots.map((u, i) => (
-              <Unit key={u.key} u={u} x={pos[i].x} y={pos[i].y} colour={colourOf(u)} kinds={map?.units} />
-            ))}
           </g>
         );
       })}
 
-      {/* Where units stand when they are not in a room. */}
-      {[
-        ['gate', gateBox, 'bottom'],
-        ['beyond-gate', beyondBox, 'bottom'],
-      ].map(([where, box, row]) => {
-        const dots = at.get(where) || [];
-        const pos = slots(box, dots.length, { row });
-        return dots.map((u, i) => <Unit key={u.key} u={u} x={pos[i].x} y={pos[i].y} colour={colourOf(u)} kinds={map?.units} />);
-      })}
-      {[
-        ['wilds', wildsBox],
-        ['outside', outsideBox],
-      ].map(([where, box]) =>
-        (at.get(where) || []).map((u, i) => (
-          <Unit key={u.key} u={u} x={box.x + box.w / 2 + 6} y={box.y + 40 + i * (DOT * 2 + 8)} colour={colourOf(u)} kinds={map?.units} />
-        ))
-      )}
+      <UnitLayer L={L} rooms={rooms} units={state?.units || []} generation={generation} state={state} reduce={reduce} colourOf={colourOf} kinds={map?.units} onSelect={select} />
     </svg>
   );
 }

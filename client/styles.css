@@ -2426,6 +2426,15 @@ pre.code {
   opacity: 0.55;
 }
 
+/* A Wizard fades in beside its caller (#161); it rides in the caller's group, so it follows its walk. */
+.castle-rider {
+  animation: castle-fade-in 300ms ease-out;
+}
+
+@keyframes castle-fade-in {
+  from { opacity: 0; }
+}
+
 .unit-letter {
   fill: #0b0d11;
   font-size: 14px;

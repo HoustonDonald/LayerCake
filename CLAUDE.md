@@ -309,7 +309,10 @@ backtracking**. picomatch 4.0.7 ran over a minute on `'*a'` twelve times plus `'
 Command rules are word prefixes, never regular expressions. **The fold is the specification**: room
 states are recomputed from all events under the current map each time (no incremental path to drift
 from it), and smoke's fold oracle closes every stream, reopens, and requires the fresh fold to equal
-the long-running one. It caught a real defect on its first run (a session joining later never had its
+the long-running one. That includes each Mason's and Knight's `trail` (#161), its last 12 room
+changes keyed by the call that caused each, which the page walks: a key must be the same from either
+source and on every refold, because the page walks what follows the last key it saw, and a key it
+cannot find sends it through the whole trail again. It caught a real defect on its first run (a session joining later never had its
 subagent files listed). Denied, rejected, interrupted and refused calls have no verdict and never
 raise an Alarm (`toolVerdict`): a hook's PostToolUseFailure fires only for a tool that ran, but a
 transcript also records as an error a call Claude Code refused before running it, so a transcript
@@ -619,7 +622,9 @@ partially. A truncated file restored is silent data loss.
   `/name` fires no PreToolUse (docs), so it brings no Wizard. A file a shell command changes is not
   seen, only the files a tool call names. Searches light rooms by their `path` only; the matched
   files are not read. Each castle folds its latest 20,000 events (a refold of that many measured a
-  median 18 ms under load) and says when older ones are left out.
+  median 18 ms under load) and says when older ones are left out. A unit walks only the room changes
+  the page saw in its trail: more than 12 inside one push leaves the oldest out, and a subagent or
+  session ending in the same push as its last calls walks out without them (README "Things to know").
 - **The context window is inferred from the model id** (`contextWindow` in `health.js`, rule shipped
   with the payload): `[1m]` or a documented native-1M family is 1M, else 200K. A new model family
   needs adding there.
