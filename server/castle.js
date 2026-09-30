@@ -48,6 +48,9 @@ export const WINDOWS = {
   heatHalfLifeMs: scaled(45_000),
   thrashWindowMs: scaled(10 * 60_000),
   thrashEdits: 4,
+  // How long a thrash stays up after the last edit of its file (#170, owner
+  // decision 2026-09-30: 2 minutes, while edits count over 10).
+  thrashLapseMs: scaled(2 * 60_000),
 };
 
 const MAX_SESSIONS = 6;
@@ -92,7 +95,7 @@ export const ROOM_STATES = [
     state: 'alarm',
     label: 'Alarm',
     glyph: '!',
-    rule: `A change to a file here failed; or a test or build run failed while this room had unproven changes; or one file here was edited ${WINDOWS.thrashEdits} or more times within ${secs(WINDOWS.thrashWindowMs)} with no passing test or build between. A failed change clears on a later successful call in the room; a failed run on a passing proof run (a failed build also on a passing build); thrash on any passing test or build.`,
+    rule: `A change to a file here failed; or a test or build run failed while this room had unproven changes; or one file here was edited ${WINDOWS.thrashEdits} or more times within ${secs(WINDOWS.thrashWindowMs)} with no passing test or build between. A failed change clears on a later successful call in the room; a failed run on a passing proof run (a failed build also on a passing build); thrash on any passing test or build, or once ${secs(WINDOWS.thrashLapseMs)} pass with no further edit of that file.`,
   },
   { state: 'construction', label: 'Construction', glyph: '⚒', rule: `A file here was edited or created in the last ${secs(WINDOWS.activeMs)}.` },
   { state: 'survey', label: 'Survey', glyph: '◎', rule: `Read, searched, or worked on by a shell command in the last ${secs(WINDOWS.activeMs)}, with no change.` },
@@ -115,6 +118,7 @@ export const CASTLE_RULES = [
   "A file's room comes from castle.json's patterns, else the built-in ones; a file no room claims is in the Wilds, and a file outside the project (the home folder, Claude's configuration, other projects) goes to the Citadel and is counted apart.",
   'A shell call is a test, build or migration run when a segment of its command starts with a rule\'s words. A run lights the room its rule names, else the first room of its type (Tests, Build, Database); any other shell call works in the first Build room, else the first Config room. A run passes or fails by its exit code, so `npm test | tail` reads as the exit code of tail. A run started in the background, or ending with no exit code (refused before it ran, timed out), has no verdict.',
   'A run judges every room with unproven changes (the scaffolded ones): a pass takes their scaffolding down, a failure raises their Alarm, and a failure with none to judge raises it in the run\'s own room.',
+  `No run can prove a ${ROOM_TYPES.filter((t) => t.provable === false).map((t) => t.label).join(' or ')} room: a change there puts up no scaffolding, no run judges it, and it has no thrash. A failed change there is still an Alarm.`,
   'A call that was denied, interrupted, rejected, or refused by Claude Code before it ran has no verdict: it is never an Alarm. From a transcript, an error counts as a failure only with evidence the tool ran (an exit code, or a system error code such as EACCES).',
   'Heat: read 1, search 1, shell 2, edit 3, create 4, halving every ' + secs(WINDOWS.heatHalfLifeMs) + '. It sets brightness within a state, never the state.',
 ];
@@ -288,6 +292,8 @@ function verdictText(v) {
 export function fold(events, map, locateCall) {
   const rooms = new Map(map.rooms.map((r) => [r.id, blankRoom()]));
   const proof = new Set(map.proof);
+  const unprovableTypes = new Set(ROOM_TYPES.filter((t) => t.provable === false).map((t) => t.type));
+  const unprovable = new Set(map.rooms.filter((r) => unprovableTypes.has(r.type)).map((r) => r.id));
   const calls = new Map();
   const files = new Map();
   const runs = [];
@@ -431,8 +437,12 @@ export function fold(events, map, locateCall) {
             const r = rooms.get(id);
             if (!r) continue;
             r.lastChange = e.at;
-            r.unproven = true;
-            r.proven = null;
+            // Documentation is never on trial (#170): no scaffolding, so no
+            // run judges it. Hand-offs left Docs in Alarm after every session.
+            if (!unprovable.has(id)) {
+              r.unproven = true;
+              r.proven = null;
+            }
             r.touchedAt = e.at;
             r.lastChangedFile = loc.rels[0] || null;
           }
@@ -444,11 +454,14 @@ export function fold(events, map, locateCall) {
             f.edits = f.edits.filter((t) => e.at - t < WINDOWS.thrashWindowMs);
             f.edits.push(e.at);
             files.set(rel, f);
-            if (f.edits.length >= WINDOWS.thrashEdits) {
-              for (const id of loc.roomsByRel[rel] || []) {
-                const r = rooms.get(id);
-                if (r) r.alarms.thrash = { kind: 'thrash', path: rel, edits: f.edits.length, at: e.at, sessionId: e.sessionId };
-              }
+            for (const id of loc.roomsByRel[rel] || []) {
+              const r = rooms.get(id);
+              if (!r || unprovable.has(id)) continue;
+              if (f.edits.length >= WINDOWS.thrashEdits) r.alarms.thrash = { kind: 'thrash', path: rel, edits: f.edits.length, at: e.at, sessionId: e.sessionId };
+              // A further edit of the file while its thrash is up keeps it up,
+              // however few now fall in the window: it lapses only after a
+              // window with none (roomState; #170). A lapsed one stays lapsed.
+              else if (r.alarms.thrash?.path === rel && e.at - r.alarms.thrash.at < WINDOWS.thrashLapseMs) r.alarms.thrash = { ...r.alarms.thrash, at: e.at };
             }
           }
         }
@@ -520,9 +533,20 @@ export function fold(events, map, locateCall) {
   };
 }
 
+/**
+ * A folded room's alarms at `now`. Thrash lapses once `thrashLapseMs` passes
+ * with no further edit of its file (#170, owner decisions 2026-09-30): it says
+ * a file is being edited again and again, which a quiet spell makes untrue. A
+ * failed change or a failed run stays until something clears it.
+ */
+function liveAlarms(r, now) {
+  const { tool, run, thrash } = r.alarms;
+  return { tool, run, thrash: thrash && now - thrash.at < WINDOWS.thrashLapseMs ? thrash : null };
+}
+
 /** Which room state a folded room shows at `now`, and why. */
 export function roomState(r, now, provenLive) {
-  const a = r.alarms;
+  const a = liveAlarms(r, now);
   const alarm = [a.tool, a.run, a.thrash].filter(Boolean).sort((x, y) => y.at - x.at)[0];
   if (alarm) return { state: 'alarm', cause: alarm };
   if (r.lastChange !== null && now - r.lastChange < WINDOWS.activeMs) return { state: 'construction', cause: { kind: 'change', path: r.lastChangedFile, at: r.lastChange } };
@@ -975,7 +999,7 @@ class Castle {
     if (id === 'outside') return { id, recent: this.folded.outside.recent };
     const r = this.folded.rooms.get(id);
     if (!r) return null;
-    return { id, recent: r.recent, alarms: r.alarms, proven: r.proven, heat: r.heat };
+    return { id, recent: r.recent, alarms: liveAlarms(r, Date.now()), proven: r.proven, heat: r.heat };
   }
 }
 

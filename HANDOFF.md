@@ -34,14 +34,26 @@ Smoke writes and deletes a throwaway `HKCU\Software\LayerCakeSmoke-*` key on Win
 
 2026-09-29, with the Castle: `node scripts/smoke.mjs` gave 477 passed, 0 failed, 3 skipped (the
 same three skips), the castle checks taking about 21 s of it. 2026-09-30: 482 with movement (#161),
-488 with typed rooms (#167), **494 passed, 0 failed, 3 skipped** with the hover card and the Citadel
-(f7a2a0c), the same three skips throughout. `ui-motion.mjs` (the walking checks, scratchpad below)
+488 with typed rooms (#167), 494 with the hover card and the Citadel (f7a2a0c), **500 passed, 0
+failed, 3 skipped** with #170 (113 s; HEAD before it 109 s), the same three skips throughout. `ui-motion.mjs` (the walking checks, scratchpad below)
 26 of 26 at every step.
 
 `dist\LayerCake.exe` is **current**: rebuilt from 86de474 on 2026-09-30 evening after the owner closed
 his copy, launch-checked headful with `exe-lifecycle-castle.ps1` (16 of 16, a Mason walking in the
 app window included) and started for him through Explorer. (It was rebuilt four times that day: after
 #161, #165, #167 with the art, and the hover card with the Citadel.)
+
+### 2026-09-30, night: Docs was always in Alarm (#170, fixed)
+
+The owner asked why Docs is always in Alarm. His running app (read with a scan, the castle stream and
+`/api/castle/room`, scratch `docs-alarm.mjs`) said: thrash on `HANDOFF.md`, four edits in ten
+minutes by the session that wrote the day's hand-off. Thrash cleared only on a passing test or
+build, never with time, and every session here ends by editing HANDOFF.md with no test after it.
+**Owner decisions:** a Docs room is never on trial (no scaffolding, no run judges it, no thrash;
+`provable: false` on the type), and thrash lapses once 2 minutes pass with no further edit of its
+file (`thrashLapseMs`), while edits still count over 10 minutes (`thrashWindowMs`). He accepted that
+in an edit, smoke, edit loop the Alarm goes dark during each 2-minute smoke run. Separately,
+castle.json now counts `node scripts/smoke.mjs` as a test run. The commit message has the checks.
 
 **For a new session, in one paragraph:** the Castle is mid-#162 (art). The first pass, hover card and
 Citadel are committed and in the owner's hands for review; #162 stays open for his changes. His

@@ -51,6 +51,9 @@ const FOLD = process.platform === 'win32';
  * and the roles fixed room ids used to carry: where test, build and migration
  * runs go when no rule names a room, where a plain shell call works, and where
  * the Raven waits. Shipped with the map so the page never keeps its own list.
+ * `provable: false` marks a type no test run can prove (#170, owner decision
+ * 2026-09-30): an edit there puts up no scaffolding, a run never judges it, and
+ * it has no thrash. Only a failed change raises its Alarm.
  */
 export const ROOM_TYPES = [
   { type: 'api', label: 'API', job: 'API endpoints and request entry points' },
@@ -68,7 +71,7 @@ export const ROOM_TYPES = [
   { type: 'build', label: 'Build', job: 'build, packaging, CI and scripts' },
   { type: 'config', label: 'Config', job: 'configuration' },
   { type: 'tests', label: 'Tests', job: 'tests' },
-  { type: 'docs', label: 'Docs', job: 'documentation' },
+  { type: 'docs', label: 'Docs', job: 'documentation', provable: false },
   { type: 'logs', label: 'Logs', job: 'logs and logging' },
 ];
 const TYPE_IDS = new Set(ROOM_TYPES.map((t) => t.type));

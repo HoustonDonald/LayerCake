@@ -213,6 +213,14 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     await call('toolu_c_build', 'Bash', { command: 'npm run build', description: 'Build' }, { response: { stdout: '', stderr: '' } });
     check('a passing build ends the thrash Alarm (spec: "no passing test or build in between")', await s1.untilState((st) => st.rooms.api.state !== 'alarm'));
     check('a passing build is not proof by default: the scaffolding stays up', s1.last('state')?.rooms?.api?.scaffolding === true);
+    // A thrash nothing will clear, in the room the Mason already stands in (so
+    // no trail below moves). No passing run follows under the built-in map, so
+    // it must lapse by time alone; checked before the fold oracle (#170).
+    for (let i = 1; i <= 4; i += 1) await call(`toolu_c_lapse${i}`, 'Edit', { file_path: P('scripts', 'deploy.sh'), old_string: 'a', new_string: 'b' }, { response: { filePath: P('scripts', 'deploy.sh') } });
+    const lapseFrom = Date.now();
+    check('four edits of a script raise a thrash Alarm in its room too',
+      await s1.untilState((st) => st.rooms.build.state === 'alarm' && st.rooms.build.cause?.kind === 'thrash' && st.rooms.build.cause.path === 'scripts/deploy.sh'),
+      JSON.stringify(s1.last('state')?.rooms?.build));
 
     // --- no verdict: a denial, a rejection, an interrupt ---------------------------
     await hook({ hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_use_id: 'toolu_c_deny', tool_input: { file_path: P('docs', 'x.md') } });
@@ -474,6 +482,19 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     check('with no Build or Config room, a plain shell call lights no room',
       await s1.untilLog((es) => es.find((e) => e.id === 'toolu_c_ls')?.where === 'shell'), JSON.stringify((s1.last('log')?.entries || []).find((e) => e.id === 'toolu_c_ls')));
 
+    // Documentation is never on trial (#170): Docs stayed in Alarm after every
+    // hand-off, from thrash on HANDOFF.md and from runs judging it.
+    for (let i = 1; i <= 4; i += 1) await call(`toolu_c_man${i}`, 'Edit', { file_path: P('manual', 'guide.md'), old_string: 'a', new_string: 'b' }, { response: { filePath: P('manual', 'guide.md') } });
+    await s1.untilLog((es) => es.find((e) => e.id === 'toolu_c_man4')?.verdict === 'ok', 3000);
+    await sleep(400);
+    check('four edits of one file in a Docs room light it as Construction, with no scaffolding and no thrash (#170)',
+      s1.last('state')?.rooms?.manual?.state === 'construction' && s1.last('state')?.rooms?.manual?.scaffolding === false,
+      JSON.stringify(s1.last('state')?.rooms?.manual));
+    await call('toolu_c_ownfail', 'Bash', { command: 'node run-tests.js', description: 'Own tests, failing' }, { fail: `Exit code 1\n${S.errorTail}` });
+    check("a failing test run does not judge the Docs room: with nothing else unproven, the Alarm goes up in the run's own room (#170)",
+      await s1.untilState((st) => st.runs.some((r) => r.id === 'toolu_c_ownfail' && r.ok === false && !r.judged.includes('manual')) && st.rooms['own-tests'].state === 'alarm' && st.rooms.manual.state !== 'alarm'),
+      JSON.stringify({ manual: s1.last('state')?.rooms?.manual, run: s1.last('state')?.runs?.find((r) => r.id === 'toolu_c_ownfail') }));
+
     await fs.writeFile(P('castle.json'), '{ "rooms": ');
     await postRaw(base, '/api/castle/reload', { scanId }, H);
     check('an invalid castle.json leaves the built-in map in force AND says why',
@@ -528,6 +549,27 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     bodies.push(roomRes.body);
     check("a room's recent files are served as paths", roomRes.status === 200 && JSON.parse(roomRes.body).recent.some((f) => f.path === 'db/schema.sql'), roomRes.body.slice(0, 300));
     check('the room route refuses a room that is not on the map, or not an id at all', (await get(base, `/api/castle/room?scanId=${scanId}&room=__proto__`, H)).status === 400 && (await get(base, `/api/castle/room?scanId=${scanId}&room=no-such-room`, H)).status === 400);
+
+    // --- thrash lapses (#170) ----------------------------------------------------------------
+    // Raised on scripts/deploy.sh above (seen up then). The control is that no
+    // test or build has passed since, so only time can have cleared it. Not a
+    // timed "still up" check: the lapse is 6 s here, and the checks between
+    // took 28.6 s beside two other smoke runs (the #170 mutation run).
+    const { thrashLapseMs: lapse, thrashWindowMs: countWindow } = s1.last('map')?.windows || {};
+    const passedSince = (s1.last('state')?.runs || []).filter((r) => r.ok === true && r.at >= lapseFrom);
+    check('no test or build has passed since the thrash on the script went up (the control for the next checks)',
+      lapse === 6000 && countWindow === 30_000 && passedSince.length === 0, `lapse ${lapse} ms, count ${countWindow} ms; passed since: ${JSON.stringify(passedSince)}`);
+    await sleep(Math.max(0, lapseFrom + (lapse || 6000) + 1000 - Date.now()));
+    check('a thrash Alarm lapses once 2 minutes (6 s here) pass with no further edit of that file (#170)',
+      await s1.untilState((st) => st.rooms.build.state !== 'alarm', 3000), JSON.stringify(s1.last('state')?.rooms?.build));
+    // Once its four edits have also left the 10-minute count, one more edit is
+    // just an edit: the lapsed thrash must not come back with it.
+    await sleep(Math.max(0, lapseFrom + (countWindow || 30_000) + 1000 - Date.now()));
+    await call('toolu_c_lapse5', 'Edit', { file_path: P('scripts', 'deploy.sh'), old_string: 'a', new_string: 'b' }, { response: { filePath: P('scripts', 'deploy.sh') } });
+    await s1.untilLog((es) => es.find((e) => e.id === 'toolu_c_lapse5')?.verdict === 'ok', 3000);
+    await sleep(400);
+    check('one more edit of that file after it lapsed, past the 10-minute count, is Construction, not the old thrash back (#170)',
+      s1.last('state')?.rooms?.build?.state === 'construction', JSON.stringify(s1.last('state')?.rooms?.build));
 
     // --- the fold is the spec: a fresh fold equals the long-running one -------------------
     await sleep(3500); // every 3 s window lapses

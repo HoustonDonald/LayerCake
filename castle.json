@@ -16,6 +16,6 @@
     { "id": "api", "name": "HTTP API", "type": "api", "col": 1, "row": 3, "patterns": ["server/app.js", "server/index.js", "server/session-routes.js", "server/castle-routes.js"] }
   ],
   "gate": 1,
-  "commands": [{ "words": "npm run smoke", "kind": "test" }, { "words": "npm run build:exe", "kind": "build" }],
+  "commands": [{ "words": "npm run smoke", "kind": "test" }, { "words": "node scripts/smoke.mjs", "kind": "test" }, { "words": "npm run build:exe", "kind": "build" }],
   "proof": ["test"]
 }

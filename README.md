@@ -913,6 +913,9 @@ the legend, or click a room); the rules come from the server with the data.
 
 - **Scaffolding** (poles, planks, a hatch and "unproven") marks a room changed since the last passing proof run,
   whatever its lighting: unverified work at a glance.
+- **Documentation is never on trial.** No run can prove a Docs room, so a change there puts up no
+  scaffolding, no run judges it, and editing one file there again and again is not thrash. It
+  lights as Construction, then Embers; only a failed change raises its Alarm.
 - **Runs.** A shell call is a test, build or migration run when a segment of its command starts with a
   rule's words (`npm test`, `npm run smoke`, `pytest`, `dotnet build`, ...; castle.json adds the
   project's own). It passes or fails by its exit code, so `npm test | tail` reads as `tail`'s. A run
@@ -926,7 +929,9 @@ the legend, or click a room); the rules come from the server with the data.
   error counts as a failure only with evidence the tool ran: an exit code, or a system error code
   such as EACCES.
 - **Alarm clears by cause:** a failed change on a later successful call in that room, a failed run
-  on a passing proof run (a failed build also on a passing build), thrash on any passing test or build.
+  on a passing proof run (a failed build also on a passing build), thrash on any passing test or build
+  or once 2 minutes pass with no further edit of that file. (In an edit, test, edit loop whose test
+  takes longer than that, the thrash Alarm goes dark during each run and comes back at the next edit.)
 - **Session end:** Construction, Survey and Proven fall to Embers; Alarm and scaffolding stay until
   their rule clears them, because they describe the code, not the session.
 - A room holds what it shows for 3 s before changing, except to Alarm, which shows at once; light
