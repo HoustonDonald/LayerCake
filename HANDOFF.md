@@ -77,8 +77,26 @@ walking). Castle room names and furniture go.
   - `ui-motion.mjs` 26/26; the exe 16/16. Scene and colour-vision renders come from
     `ui-art-demo.mjs`.
 
-**Next:** the owner's review of the art (#162), then #163 (polish), #168 when he picks it up, and the
-(b) queue.
+- **5387929 (#162):** a hover card per unit says what it stands for and what it is working on. It
+  covers the Mason's session, and now or last call; the Knight's type, task, now or last; the
+  Wizard's skill; the Raven's MCP server and tool; the Scout's URL or query; the Herald's wait. The
+  room drawer's "Here now" repeats it for keyboard and touch. It comes from `castleDescribe.js`.
+  Units carry `last`, `tool`, `caller` and `task`. Resting now counts from the last call's end, and
+  a unit with a call running never rests. Smoke 494/0/3.
+- **f7a2a0c (#162, the owner's idea):** "Outside the project" is now the Citadel, a tower beyond the
+  east wall at the end of a road. Its windows light once a file outside the project is touched. The
+  internal id stays `outside`.
+- **Animation budget, measured headful** (`bench-anim.mjs`; #169 and the comment on #163): smooth
+  60 fps animation costs 28% to 38% of a core however it is built, while a 6 fps flip-book on one
+  shared timer costs 3.7% to 5.9%, flat in unit count. **#169:** the earlier cost figures (walking,
+  cooling, idle) counted the renderer's main thread only; the GPU process dominates while anything
+  animates.
+
+`dist\LayerCake.exe` is from ba743fc: it lacks 5387929 (hover) and f7a2a0c (Citadel). Rebuild when
+the owner closes it.
+
+**Next:** the owner's review of the art (#162), then #163 (polish, flip-book verb animations), #169
+(re-measure with the GPU process), #168 when he picks it up, and the (b) queue.
 
 ### 2026-09-30: movement (#161; #165 and #166 found on the way)
 
