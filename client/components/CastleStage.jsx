@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-import { ArtDefs, Figure, FigureIcon, RoomLight, TypeIcon, WildsTrees } from './castleArt.jsx';
+import { ArtDefs, Citadel, Figure, FigureIcon, RoomLight, TypeIcon, WildsTrees } from './castleArt.jsx';
 import { describeUnit } from './castleDescribe.js';
 import { BAND, DOT, FADE_MS, HOP_MS, SLIDE_MS, W, keyframes, lastTrailKey, layout, newPlaces, placeUnits, planWalk, positionAt, replan, totalMs, waypoint } from './castleMotion.js';
 
@@ -518,13 +518,15 @@ export default function CastleStage({ map, state, generation, selected, onSelect
         className={`castle-band${selected === 'outside' ? ' selected' : ''}`}
         tabIndex={0}
         role="button"
-        aria-label={`Outside the project: ${state?.outside?.count ?? 0} files`}
+        aria-label={`The Citadel: ${state?.outside?.count ?? 0} files outside the project`}
         onClick={() => select('outside')}
         onKeyDown={keySelect('outside')}
       >
         <rect x={W - BAND + 26} y={0} width={BAND - 26} height={L.H} className="band-fill" />
-        <text className="band-label" transform={`translate(${W - (BAND - 26) / 2 + 5} ${L.H / 2}) rotate(90)`}>
-          Outside the project · {state?.outside?.count ?? 0}
+        {/* Files outside the project (home, Claude's configuration, other projects) are the Citadel's. */}
+        <Citadel cx={W - (BAND - 26) / 2} gateX={L.sideGates.outside.x} gy={L.sideGates.outside.y} lit={(state?.outside?.count ?? 0) > 0} />
+        <text className="band-label" transform={`translate(${W - (BAND - 26) / 2 + 5} ${L.H / 2 + 80}) rotate(90)`}>
+          The Citadel · {state?.outside?.count ?? 0}
         </text>
       </g>
 
@@ -536,7 +538,7 @@ export default function CastleStage({ map, state, generation, selected, onSelect
       </g>
       <rect className="castle-gate" x={L.gate.x - gateW / 2} y={L.wallBottom - 6} width={gateW} height={12} />
       <path className="castle-gate-arch" d={`M${L.gate.x - gateW / 2} ${L.wallBottom - 6} V${L.wallBottom - 14} Q${L.gate.x} ${L.wallBottom - 38} ${L.gate.x + gateW / 2} ${L.wallBottom - 14} V${L.wallBottom - 6}`} />
-      {/* The small gates units take to the Wilds (west) and outside the project (east). */}
+      {/* The small gates units take to the Wilds (west) and the Citadel (east). */}
       <rect className="castle-gate" x={L.sideGates.wilds.x - 6} y={L.sideGates.wilds.y - sideGate / 2} width={12} height={sideGate} />
       <rect className="castle-gate" x={L.sideGates.outside.x - 6} y={L.sideGates.outside.y - sideGate / 2} width={12} height={sideGate} />
       <text className="gate-label" x={L.gate.x + gateW / 2 + 10} y={L.wallBottom + 20}>

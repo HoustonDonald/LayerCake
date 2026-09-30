@@ -13,7 +13,8 @@
  * The corridors: one under each row of rooms (under the last row, the strip
  * inside the wall), one in each gap between columns, the gate in the south
  * wall, and small gates in the west wall (to the Wilds) and the east wall (to
- * outside the project). Every room's door opens onto the corridor below it.
+ * the Citadel, where files outside the project go). Every room's door opens
+ * onto the corridor below it.
  * A route is always the same path: out of the door onto that corridor, along
  * it to the nearest column gap, up or down the gap to the other room's
  * corridor, along, and in at that room's door.
@@ -95,9 +96,14 @@ function spots(L, rooms, place, n, perch) {
     const x = r ? centre(L.cell(r.col, r.row)).x : L.gate.x;
     return Array.from({ length: n }, (_, i) => ({ x: x + (i - (n - 1) / 2) * (DOT * 2 + 8), y: L.wallY }));
   }
-  if (place === 'wilds' || place === 'outside') {
-    const box = place === 'wilds' ? L.wildsBox : L.outsideBox;
+  if (place === 'wilds') {
+    const box = L.wildsBox;
     return Array.from({ length: n }, (_, i) => ({ x: box.x + box.w / 2 + 6, y: box.y + 40 + i * (DOT * 2 + 8) }));
+  }
+  if (place === 'outside') {
+    // Below the road to the Citadel, whose tower stands above it.
+    const box = L.outsideBox;
+    return Array.from({ length: n }, (_, i) => ({ x: box.x + box.w / 2 - 2, y: L.sideGates.outside.y + 36 + i * (DOT * 2 + 8) }));
   }
   return slots(place === 'beyond-gate' ? L.beyondBox : L.gateBox, n);
 }

@@ -888,8 +888,11 @@ patterns from folder and file names that usually mean the job:
 The built-in map is a starting point, not a picture of the project: on LayerCake's own repository it
 leaves 24 of the 28 files in `server/` in the Wilds, and a drafted map leaves none. The full lists
 are on the page (click a room). A file several rooms claim lights all of them. A file in the project
-that no room claims is counted in **the Wilds**, which is the sign the map needs a pattern; a file
-outside the project is counted apart, since no pattern could claim it.
+that no room claims is counted in **the Wilds**, which is the sign the map needs a pattern. A file
+outside the project (your home folder, Claude's configuration, other projects) belongs to **the
+Citadel**, a tower beyond the east wall at the end of a road; it is counted apart, since no pattern
+could claim it, and its windows light once any such file has been touched. A unit working on one
+walks out of the east gate to the Citadel. Clicking the Citadel lists its files.
 
 **Where runs go** comes from the types: a test run lights the first Tests room, a build run the first
 Build room, a migration the first Database room (a command rule can name a room instead), and any
@@ -941,8 +944,8 @@ waits for you, the one unit that pulses. Clicking a unit opens the room it stand
 **Movement.** Units walk; none jumps from room to room.
 
 - A Mason or Knight walks the corridors to the room of its call: out of its room's door onto the
-  corridor below, along to a gap between the columns, up or down, along, and in. The Wilds and
-  "outside the project" are reached through small gates in the west and east walls. One room to the
+  corridor below, along to a gap between the columns, up or down, along, and in. The Wilds and the
+  Citadel are reached through small gates in the west and east walls. One room to the
   next takes about 1 s.
 - Every room it worked in is walked through, in order, and none is skipped: parallel calls in three
   rooms send it through all three. When several are queued it speeds up to keep up (with n queued,

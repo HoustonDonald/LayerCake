@@ -221,7 +221,7 @@ function Drawer({ scanId, map, state, selected, onClose }) {
     return (
       <aside className="castle-drawer">
         <div className="drawer-head">
-          <h3>{wilds ? 'The Wilds' : 'Outside the project'}</h3>
+          <h3>{wilds ? 'The Wilds' : 'The Citadel'}</h3>
           <button className="btn btn-small" onClick={onClose}>
             Close
           </button>
@@ -229,7 +229,7 @@ function Drawer({ scanId, map, state, selected, onClose }) {
         <p className="drawer-note">
           {wilds
             ? 'Files in the project that no room claims. Activity here means the map needs a pattern: add one to castle.json (Copy prompt for Claude drafts it).'
-            : 'Files outside the project folder. No pattern can claim these; they are counted so nothing is silently dropped.'}
+            : "Files outside the project folder: your home folder, Claude's configuration, other projects. No room can claim these; the Citadel keeps count of them so nothing is silently dropped."}
         </p>
         <HereNow state={state} map={map} place={selected} />
         {error && <div className="castle-error">{error}</div>}

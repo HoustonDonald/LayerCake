@@ -2400,6 +2400,15 @@ pre.code {
 }
 
 .wilds-trees { pointer-events: none; }
+
+/* The Citadel: files outside the project. Its windows light once any such file has been touched. */
+.citadel { pointer-events: none; }
+.citadel-road { fill: none; stroke: #2b3440; stroke-width: 9; stroke-linejoin: round; }
+.citadel-tower { fill: #3a424e; }
+.citadel-spire { fill: #4a5361; }
+.citadel-window { fill: #232b36; }
+.citadel.lit .citadel-window { fill: var(--castle-proven-glow); }
+.citadel-door { fill: #0b0f13; }
 .tree-crown { fill: #1c2a28; }
 .tree-trunk { fill: #1a2020; }
 

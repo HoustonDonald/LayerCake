@@ -299,6 +299,31 @@ export function RoomLight({ id, box, state, scaffolding }) {
   );
 }
 
+/**
+ * The Citadel (owner's idea, 2026-09-30): where files outside the project are
+ * kept track of, such as the home folder, Claude's configuration and other
+ * projects. A tower beyond the east wall, with lit windows, reached by a road
+ * from the east gate at (gateX, gy); `cx` is the middle of its band.
+ */
+export function Citadel({ cx, gateX, gy, lit }) {
+  const base = gy - 16;
+  const top = base - 96;
+  return (
+    <g className={`citadel${lit ? ' lit' : ''}`} aria-hidden="true">
+      <path className="citadel-road" d={`M${gateX} ${gy} H${cx} V${base}`} />
+      <path className="citadel-spire" d={`M${cx - 15} ${top} L${cx} ${top - 30} L${cx + 15} ${top} Z`} />
+      <rect className="citadel-tower" x={cx - 12} y={top} width={24} height={base - top} />
+      {[-9, -1, 7].map((dx) => (
+        <rect key={dx} className="citadel-tower" x={cx + dx - 3} y={top - 5} width={4} height={6} />
+      ))}
+      {[top + 18, top + 44].map((wy) => (
+        <rect key={wy} className="citadel-window" x={cx - 3} y={wy} width={6} height={10} rx={3} />
+      ))}
+      <path className="citadel-door" d={`M${cx - 5} ${base} V${base - 10} A5 5 0 0 1 ${cx + 5} ${base - 10} V${base} Z`} />
+    </g>
+  );
+}
+
 /** Trees down the Wilds band. */
 export function WildsTrees({ height, width }) {
   const trees = [];

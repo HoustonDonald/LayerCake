@@ -17,7 +17,7 @@ export function sessionName(state, sessionId) {
   return s?.title ? `${s.title} (${short})` : short;
 }
 
-const PLACES = { gate: 'at the gate', 'beyond-gate': 'beyond the gate', wilds: 'in the Wilds', outside: 'outside the project', perch: 'on the wall' };
+const PLACES = { gate: 'at the gate', 'beyond-gate': 'beyond the gate', wilds: 'in the Wilds', outside: 'at the Citadel', perch: 'on the wall' };
 
 function placeName(map, room) {
   if (!room) return null;

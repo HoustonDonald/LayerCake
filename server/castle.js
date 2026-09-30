@@ -112,7 +112,7 @@ export const UNIT_KINDS = [
 
 export const CASTLE_RULES = [
   'Only real events move anything: hooks from sessions LayerCake started, and the transcripts of the others. When nothing is known, the castle shows less.',
-  "A file's room comes from castle.json's patterns, else the built-in ones; a file no room claims is in the Wilds, and a file outside the project is counted apart.",
+  "A file's room comes from castle.json's patterns, else the built-in ones; a file no room claims is in the Wilds, and a file outside the project (the home folder, Claude's configuration, other projects) goes to the Citadel and is counted apart.",
   'A shell call is a test, build or migration run when a segment of its command starts with a rule\'s words. A run lights the room its rule names, else the first room of its type (Tests, Build, Database); any other shell call works in the first Build room, else the first Config room. A run passes or fails by its exit code, so `npm test | tail` reads as the exit code of tail. A run started in the background, or ending with no exit code (refused before it ran, timed out), has no verdict.',
   'A run judges every room with unproven changes (the scaffolded ones): a pass takes their scaffolding down, a failure raises their Alarm, and a failure with none to judge raises it in the run\'s own room.',
   'A call that was denied, interrupted, rejected, or refused by Claude Code before it ran has no verdict: it is never an Alarm. From a transcript, an error counts as a failure only with evidence the tool ran (an exit code, or a system error code such as EACCES).',
@@ -785,7 +785,7 @@ class Castle {
       else if (loc.where === 'outside') out.outside.push(p);
     }
     const names = out.rooms.map((id) => map.rooms.find((r) => r.id === id)?.name || id);
-    out.label = names.length ? names.join(', ') : out.wilds.length ? 'the Wilds' : out.outside.length ? 'outside the project' : null;
+    out.label = names.length ? names.join(', ') : out.wilds.length ? 'the Wilds' : out.outside.length ? 'the Citadel' : null;
     return out;
   }
 
