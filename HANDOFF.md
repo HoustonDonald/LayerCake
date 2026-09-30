@@ -37,8 +37,8 @@ passed, 0 failed, 3 skipped.
 
 `dist\LayerCake.exe` was rebuilt from 8b79af5 (movement, #161) on 2026-09-30 after the owner closed
 his copy, and launch-checked headful with `exe-lifecycle-castle.ps1` (16 of 16, a Mason walking in
-the app window included). It lacks #165 (8f6ab71, one client constant), which was checked in an exe
-built from a tree copy while his copy ran; rebuild `dist` the next time he closes it.
+the app window included). Rebuilt again from 14afc15 (with #165) the same day, launch-checked
+headful (16 of 16) and started for the owner through Explorer; it is current.
 
 ### 2026-09-30: movement (#161; #165 and #166 found on the way)
 
