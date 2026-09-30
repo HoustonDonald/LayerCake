@@ -34,10 +34,9 @@ Smoke writes and deletes a throwaway `HKCU\Software\LayerCakeSmoke-*` key on Win
 2026-09-29, with the Castle: `node scripts/smoke.mjs` gave 477 passed, 0 failed, 3 skipped (the
 same three skips), the castle checks taking about 21 s of it.
 
-**`dist\LayerCake.exe` is STALE: built from e439593, before the Castle.** The owner's copy was open,
-so the Castle exe was built and launch-checked in a tree copy instead
-(`exe-lifecycle-castle.ps1`, all passed). Rebuild `dist` once the owner has closed LayerCake.
-Older "not rebuilt" notes below are history.
+`dist\LayerCake.exe` was rebuilt from abd1a61 (the Castle) on 2026-09-30, after the owner closed
+his copy, and launch-checked with `exe-lifecycle-castle.ps1` (all passed); it is current. Older
+"not rebuilt" notes below are history.
 
 ### 2026-09-29: the Castle view (#159, #160; #164 found on the way)
 
