@@ -823,13 +823,21 @@ and the Claude data folder read for sessions with `LAYERCAKE_CLAUDE_DATA_DIR`.
 ## Castle
 
 The **Castle** tab (after a scan) is a live picture of the Claude Code sessions working in the
-scanned project, meant to be read from across the desk: the project's functional areas are rooms
-that light up with what Claude does in them, and each session, subagent, skill, MCP call and web call
-is a lettered dot standing where it works. It follows the owner's Castle spec, which is kept outside
-this repository; this section is the spec for what is built. This build is the spec's Phase 1 (the
-wiring and an event log), Phase 2 (the plain castle: labelled boxes and dots) and Phase 3 (the dots
-walk, #161). Art and polish are issues #162 and #163. Everything shown comes from a real event: when
-LayerCake knows nothing, the castle shows less, never something invented.
+scanned project, meant to be read from across the desk: the project's own sections are rooms that
+light up with what Claude does in them, and each session, subagent, skill, MCP call and web call is a
+figure standing where it works. It follows the owner's Castle spec, which is kept outside this
+repository; this section is the spec for what is built. This build is the spec's Phase 1 (the wiring
+and an event log), Phase 2 (the plain castle), Phase 3 (the figures walk, #161) and Phase 4 (the art,
+#162: a castle at night, drawn flat, rooms as stone floors lit by what happens in them). Polish is
+#163. Everything shown comes from a real event: when LayerCake knows nothing, the castle shows less,
+never something invented.
+
+**The drawing.** Each room is a stone floor with its type's icon, its name and its state. A state is
+a pool of light and a mark in the room's corner: Alarm red with a "!" and a heavy edge, Construction
+amber with sparks, Survey blue with a lantern, Proven gold with a pennant, Embers dim orange with
+coals (brighter while the room is warm), Dark in moonlight with a crescent. The marks, the state's
+glyph and its name say the same as the colour, so no state rests on colour alone. Nothing moves on its
+own: a castle with nothing happening redraws nothing.
 
 **Full screen.** The Castle's **Full screen** button fills the screen with the Castle view alone:
 the header, the tabs and the watch bar go, and Esc or **Exit full screen** brings them back. (F11 is
@@ -900,7 +908,7 @@ the legend, or click a room); the rules come from the server with the data.
 | Embers | Touched by the current sessions, quiet now; brightness follows recent activity |
 | Dark | Not touched by the current sessions |
 
-- **Scaffolding** (a hatch and "unproven") marks a room changed since the last passing proof run,
+- **Scaffolding** (poles, planks, a hatch and "unproven") marks a room changed since the last passing proof run,
   whatever its lighting: unverified work at a glance.
 - **Runs.** A shell call is a test, build or migration run when a segment of its command starts with a
   rule's words (`npm test`, `npm run smoke`, `pytest`, `dotnet build`, ...; castle.json adds the
@@ -921,12 +929,14 @@ the legend, or click a room); the rules come from the server with the data.
 - A room holds what it shows for 3 s before changing, except to Alarm, which shows at once; light
   fades over 1.5 s. With reduced motion set, nothing pulses.
 
-**Units** (dots with a letter): **M** a session, in the room of its latest call, resting after 60 s
-without one; **K** a subagent (Knight), from its start to its stop; **W** a skill Claude invoked
-(Wizard), beside its caller until the caller's turn ends (a skill you type as `/name` is not seen);
-**R** an MCP call (Raven), on the wall above the first Integrations room (else above the gate); **S** a web fetch or search (Scout) beyond
-the gate; **H** the Herald at the gate while a launched session waits for you, the one unit that
-pulses. Clicking a unit opens the room it stands in.
+**Units** (a figure on a dark disc ringed in its session's colour, or a Knight's own): a **Mason**
+(with a hammer) is a session, in the room of its latest call, resting after 60 s without one (dimmed,
+with a "z"); a **Knight** (a helm and a banner in its own colour) is a subagent, from its start to its
+stop; a **Wizard** (hat and robe) is a skill Claude invoked, beside its caller until the caller's turn
+ends (a skill you type as `/name` is not seen); a **Raven** (a bird, no disc) is an MCP call, on the
+wall above the first Integrations room (else above the gate); a **Scout** (a horse) is a web fetch or
+search, beyond the gate; the **Herald** (a bell, with a ring) is at the gate while a launched session
+waits for you, the one unit that pulses. Clicking a unit opens the room it stands in.
 
 **Movement.** Units walk; none jumps from room to room.
 

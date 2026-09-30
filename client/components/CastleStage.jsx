@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+import { ArtDefs, Figure, RoomLight, TypeIcon, WildsTrees } from './castleArt.jsx';
 import { BAND, DOT, FADE_MS, HOP_MS, SLIDE_MS, W, keyframes, lastTrailKey, layout, newPlaces, placeUnits, planWalk, positionAt, replan, totalMs, waypoint } from './castleMotion.js';
 
 /**
@@ -139,28 +140,35 @@ function unitColour(u, sessionIndex) {
   return SESSION_COLOURS[sessionIndex % SESSION_COLOURS.length];
 }
 
-const LETTER = { mason: 'M', knight: 'K', wizard: 'W', raven: 'R', scout: 'S', herald: 'H' };
-
-function Unit({ u, x, y, colour, kinds, riders = [], colourOf, onClick }) {
+/**
+ * A unit (#162): its figure on a dark disc ringed in its colour, so a session
+ * or a Knight's banner reads at a glance and the figure says what it is. A
+ * Raven is a bird on the wall, with no disc (the disc stays, unseen, as its
+ * hit area). The disc is the unit's first circle: the page checks find units
+ * by it.
+ */
+function Unit({ u, x, y, colour, kinds, riders = [], colourOf, onClick, small = false }) {
   const label = kinds?.find((k) => k.kind === u.kind)?.label || u.kind;
   const title = [label, u.agentType, u.label, u.resting ? 'resting' : null].filter(Boolean).join(' · ');
+  const bird = u.kind === 'raven';
   return (
     <g className={`castle-unit unit-${u.kind}${u.resting ? ' resting' : ''}`} data-unit={x === undefined ? undefined : u.key} transform={x === undefined ? undefined : `translate(${x} ${y})`} onClick={onClick}>
       <title>{title}</title>
-      {u.kind === 'herald' && <circle className="herald-ring" r={DOT + 6} />}
-      <circle r={DOT} fill={colour} />
-      <text className="unit-letter" dy="5">
-        {LETTER[u.kind] || '?'}
-      </text>
+      {u.kind === 'herald' && <circle className="herald-ring" r={DOT + 9} />}
+      <circle className={`unit-disc${bird ? ' bare' : ''}`} r={small ? DOT - 3 : DOT + 2} style={bird ? undefined : { stroke: colour }} />
+      <g className="unit-figure">
+        <Figure kind={u.kind} size={bird ? 32 : small ? 18 : 24} />
+      </g>
+      {u.kind === 'knight' && <path className="unit-banner" d="M5.6 -10.6 L16 -6.8 L5.6 -3 Z" style={{ fill: colour }} />}
       {u.resting && (
-        <text className="unit-rest" x={DOT - 2} y={-DOT + 2}>
+        <text className="unit-rest" x={DOT} y={-DOT + 1}>
           z
         </text>
       )}
       {/* A Wizard stands beside the unit that called it and goes where it goes. */}
       {riders.map((w, i) => (
         <g key={w.key} className="castle-rider" transform={`translate(${(i + 1) * (DOT * 2 + 4)} ${-(DOT + 6)})`}>
-          <Unit u={w} colour={colourOf(w)} kinds={kinds} colourOf={colourOf} />
+          <Unit u={w} colour={colourOf(w)} kinds={kinds} colourOf={colourOf} small />
         </g>
       ))}
     </g>
@@ -437,11 +445,11 @@ export default function CastleStage({ map, state, generation, selected, onSelect
 
   return (
     <svg className={`castle-svg${pulse ? ' pulse-on' : ''}`} viewBox={`0 0 ${W} ${L.H}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="The castle: rooms by what Claude is doing in them">
-      <defs>
-        <pattern id="castle-hatch" width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-          <line x1="0" y1="0" x2="0" y2="12" className="hatch-line" />
-        </pattern>
-      </defs>
+      <ArtDefs />
+
+      {/* The ground outside the wall, and the road out of the gate. */}
+      <rect className="castle-ground" x={0} y={L.wallBottom} width={W} height={L.H - L.wallBottom} />
+      <path className="castle-road" d={`M${L.gate.x - 34} ${L.wallBottom} L${L.gate.x - 70} ${L.H} L${L.gate.x + 150} ${L.H} L${L.gate.x + 34} ${L.wallBottom} Z`} />
 
       {/* The Wilds and outside: bands beyond the wall, clickable for their lists. */}
       <g
@@ -453,6 +461,7 @@ export default function CastleStage({ map, state, generation, selected, onSelect
         onKeyDown={keySelect('wilds')}
       >
         <rect x={0} y={0} width={BAND - 26} height={L.H} className="band-fill" />
+        <WildsTrees height={L.H} width={BAND - 26} />
         <text className="band-label" transform={`translate(${(BAND - 26) / 2 + 5} ${L.H / 2}) rotate(-90)`}>
           The Wilds · {state?.wilds?.count ?? 0} unmapped
         </text>
@@ -472,7 +481,13 @@ export default function CastleStage({ map, state, generation, selected, onSelect
       </g>
 
       <rect className="castle-wall" x={L.wallX} y={L.wallY} width={wallW} height={wallH} rx={10} />
+      <g className="castle-crenels" aria-hidden="true">
+        {Array.from({ length: Math.floor((wallW - 20) / 28) + 1 }, (_, i) => (
+          <rect key={i} x={L.wallX + 6 + i * 28} y={L.wallY - 16} width={14} height={10} />
+        ))}
+      </g>
       <rect className="castle-gate" x={L.gate.x - gateW / 2} y={L.wallBottom - 6} width={gateW} height={12} />
+      <path className="castle-gate-arch" d={`M${L.gate.x - gateW / 2} ${L.wallBottom - 6} V${L.wallBottom - 14} Q${L.gate.x} ${L.wallBottom - 38} ${L.gate.x + gateW / 2} ${L.wallBottom - 14} V${L.wallBottom - 6}`} />
       {/* The small gates units take to the Wilds (west) and outside the project (east). */}
       <rect className="castle-gate" x={L.sideGates.wilds.x - 6} y={L.sideGates.wilds.y - sideGate / 2} width={12} height={sideGate} />
       <rect className="castle-gate" x={L.sideGates.outside.x - 6} y={L.sideGates.outside.y - sideGate / 2} width={12} height={sideGate} />
@@ -503,11 +518,15 @@ export default function CastleStage({ map, state, generation, selected, onSelect
             onKeyDown={keySelect(room.id)}
           >
             <title>{`${room.name} (${typeLabel}: ${type?.job || room.type})\n${def?.label || st}: ${def?.rule || ''}`}</title>
+            {/* Floor, the type's icon, then the light over them; the edge last so light never dims it. */}
             <rect x={box.x} y={box.y} width={box.w} height={box.h} rx={6} className="room-fill" />
+            <TypeIcon type={room.type} x={box.x + box.w - 74} y={box.y + 78} size={56} className="room-icon" />
             <rect x={box.x} y={box.y} width={box.w} height={box.h} rx={6} className="room-heat" style={{ opacity: glow }} />
-            {r?.scaffolding && <rect x={box.x} y={box.y} width={box.w} height={box.h} rx={6} className="room-scaffold" />}
+            <RoomLight id={room.id} box={box} state={st} scaffolding={Boolean(r?.scaffolding)} />
+            <rect x={box.x} y={box.y} width={box.w} height={box.h} rx={6} className="room-edge" />
             {/* The type over the name, the whole width to itself: the project names the room, the type says what kind of part it is. */}
-            <text className="room-type" x={box.x + 14} y={box.y + 22}>
+            <TypeIcon type={room.type} x={box.x + 14} y={box.y + 11} size={13} className="room-type-icon" />
+            <text className="room-type" x={box.x + 32} y={box.y + 22}>
               {typeLabel}
             </text>
             <text className="room-name" x={box.x + 14} y={box.y + 46}>

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { followCastle, getCastleRoom, reloadCastleMap } from '../api.js';
 import { duration } from '../sessionFormat.js';
+import { FigureIcon } from './castleArt.jsx';
 import CastleStage, { SESSION_COLOURS } from './CastleStage.jsx';
 
 /**
@@ -273,7 +274,10 @@ function Legend({ map }) {
       <span className="legend-sep" />
       {(map?.units || []).map((u) => (
         <span key={u.kind} className="legend-unit" title={u.rule}>
-          <b>{u.letter}</b> {u.label}
+          <span className="legend-figure">
+            <FigureIcon kind={u.kind} size={14} />
+          </span>{' '}
+          {u.label}
         </span>
       ))}
     </div>

@@ -2071,19 +2071,24 @@ pre.code {
   --castle-text: #d7dce4;
   --castle-dim: #8b93a1;
   --castle-bad: #ff7b72;
-  --castle-dark-fill: #1b1f26;
-  --castle-dark-line: #2f3640;
-  --castle-embers-fill: #2a1d17;
-  --castle-embers-line: #6a4128;
+  --castle-dark-fill: #19202a;
+  --castle-dark-line: #2c3440;
+  --castle-embers-fill: #3f312d;
+  --castle-embers-line: #6b3b22;
+  --castle-embers-glow: #d8743a;
   --castle-embers-heat: #e07b2e;
-  --castle-survey-fill: #173049;
-  --castle-survey-line: #4a8ccc;
-  --castle-construction-fill: #7a5410;
-  --castle-construction-line: #f2b632;
-  --castle-proven-fill: #3a3417;
-  --castle-proven-line: #cfae4c;
-  --castle-alarm-fill: #5e1713;
-  --castle-alarm-line: #ff5a4f;
+  --castle-survey-fill: #305177;
+  --castle-survey-line: #5aa9ff;
+  --castle-survey-glow: #5aa9ff;
+  --castle-construction-fill: #876227;
+  --castle-construction-line: #f2a93b;
+  --castle-construction-glow: #f5a524;
+  --castle-proven-fill: #4f4b36;
+  --castle-proven-line: #e8c65a;
+  --castle-proven-glow: #e8c65a;
+  --castle-alarm-fill: #673438;
+  --castle-alarm-line: #ff5a52;
+  --castle-alarm-glow: #ff5a52;
   flex: 1;
   min-height: 0;
   min-width: 0;
@@ -2280,17 +2285,21 @@ pre.code {
   background: var(--castle-line);
 }
 
-.legend-unit b {
-  display: inline-block;
-  width: 16px;
-  height: 16px;
-  line-height: 16px;
-  text-align: center;
+/* A unit's figure on its dark disc, as the castle draws it (#162). */
+.legend-figure {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
   border-radius: 50%;
-  background: #3a424e;
-  color: #fff;
-  font-size: 10px;
+  background: #0f1319;
+  border: 1.5px solid #3a424e;
+  color: #eef2f7;
 }
+
+.legend-figure svg { fill: currentColor; }
 
 .legend-state.st-dark .swatch { background: var(--castle-dark-fill); border-color: var(--castle-dark-line); }
 .legend-state.st-embers .swatch { background: var(--castle-embers-fill); border-color: var(--castle-embers-line); }
@@ -2303,22 +2312,34 @@ pre.code {
   border-color: var(--castle-dark-line);
 }
 
-/* The SVG. Fills and strokes transition over 1.5 s (spec: light fades, never
-   snaps); the 3 s hold is in CastleStage. */
+/* The SVG (#162, art direction A "Night keep"). A room is a stone floor with
+   its type's icon; its state is a pool of light, an edge and a corner mark, in
+   the state's colour, all from the tokens on .castle-view. Light and edges
+   fade over 1.5 s (spec: light fades, never snaps); the 3 s hold is in
+   CastleStage. Nothing here animates on its own: SVG is not composited, so a
+   running animation repaints the castle every frame (see usePulse). */
+.castle-ground { fill: #121820; }
+.castle-road { fill: #171e27; }
+
 .castle-band .band-fill {
-  fill: #0b0d11;
+  fill: #0b0f13;
 }
 
 .castle-band:hover .band-fill,
 .castle-band.selected .band-fill {
-  fill: #131820;
+  fill: #131a21;
 }
 
 .castle-band .band-label {
   fill: var(--castle-dim);
   font-size: 13px;
+  letter-spacing: 0.6px;
   text-anchor: middle;
 }
+
+.wilds-trees { pointer-events: none; }
+.tree-crown { fill: #1c2a28; }
+.tree-trunk { fill: #1a2020; }
 
 .castle-band,
 .castle-room {
@@ -2328,12 +2349,20 @@ pre.code {
 
 .castle-wall {
   fill: none;
-  stroke: #3a414c;
-  stroke-width: 6;
+  stroke: #3a424e;
+  stroke-width: 12;
 }
+
+.castle-crenels rect { fill: #3a424e; }
 
 .castle-gate {
   fill: var(--castle-bg);
+  stroke: #6c7686;
+  stroke-width: 2;
+}
+
+.castle-gate-arch {
+  fill: none;
   stroke: #6c7686;
   stroke-width: 2;
 }
@@ -2343,31 +2372,106 @@ pre.code {
   font-size: 13px;
 }
 
-.room-fill {
-  fill: var(--castle-dark-fill);
-  stroke: var(--castle-dark-line);
-  stroke-width: 2;
-  transition: fill 1.5s ease, stroke 1.5s ease, stroke-width 1.5s ease;
+/* Floor and the type's icon. */
+.room-fill { fill: url(#castle-floor); }
+.floor-stone { fill: var(--castle-dark-fill); }
+.floor-joint { fill: none; stroke: #212936; stroke-width: 2; }
+.floor-joint-fine { fill: none; stroke: #1d2530; stroke-width: 1; }
+
+.room-icon,
+.room-type-icon {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
 }
 
-.room-heat {
-  fill: var(--castle-embers-heat);
-  pointer-events: none;
+.room-icon { color: #3a4553; }
+.room-type-icon { color: var(--castle-dim); stroke-width: 2.2; }
+.icon-knob { fill: currentColor; }
+
+/* The pool of light. Its stop colours come from the state class, so a change fades. */
+.room-glow,
+.room-moon,
+.room-heat,
+.room-scaffolding,
+.room-edge,
+.mark { pointer-events: none; }
+
+.glow-core,
+.glow-edge {
+  stop-color: var(--castle-dark-line);
+  stop-opacity: 0;
+  transition: stop-color 1.5s ease, stop-opacity 1.5s ease;
+}
+
+.castle-room.st-construction .glow-core { stop-color: var(--castle-construction-glow); stop-opacity: 0.5; }
+.castle-room.st-construction .glow-edge { stop-color: var(--castle-construction-glow); }
+.castle-room.st-survey .glow-core { stop-color: var(--castle-survey-glow); stop-opacity: 0.36; }
+.castle-room.st-survey .glow-edge { stop-color: var(--castle-survey-glow); }
+.castle-room.st-proven .glow-core { stop-color: var(--castle-proven-glow); stop-opacity: 0.26; }
+.castle-room.st-proven .glow-edge { stop-color: var(--castle-proven-glow); }
+.castle-room.st-embers .glow-core { stop-color: var(--castle-embers-glow); stop-opacity: 0.14; }
+.castle-room.st-embers .glow-edge { stop-color: var(--castle-embers-glow); }
+.castle-room.st-alarm .glow-core { stop-color: var(--castle-alarm-glow); stop-opacity: 0.34; }
+.castle-room.st-alarm .glow-edge { stop-color: var(--castle-alarm-glow); }
+
+/* Moonlight, on a Dark room only. */
+.room-moon {
+  fill: url(#castle-moon);
+  opacity: 0;
   transition: opacity 1.5s ease;
 }
 
-.room-scaffold {
-  fill: url(#castle-hatch);
-  pointer-events: none;
+.castle-room.st-dark .room-moon { opacity: 1; }
+.moon-core { stop-color: #9fb4d8; stop-opacity: 0.08; }
+.moon-edge { stop-color: #9fb4d8; stop-opacity: 0; }
+
+/* Embers: brightness follows heat (the inline opacity CastleStage sets). */
+.room-heat {
+  fill: url(#castle-heat);
+  transition: opacity 1.5s ease;
 }
 
-.hatch-line {
-  stroke: #ffffff40;
+.heat-core { stop-color: var(--castle-embers-heat); stop-opacity: 0.5; }
+.heat-edge { stop-color: var(--castle-embers-heat); stop-opacity: 0; }
+.castle-room:not(.st-embers) .room-heat { opacity: 0 !important; }
+
+/* Scaffolding: unverified work, whatever the light. */
+.room-scaffold { fill: url(#castle-hatch); }
+.hatch-line { stroke: #caa56a; stroke-opacity: 0.32; stroke-width: 2; }
+.scaffold-pole { fill: #8a6a44; }
+.scaffold-plank { fill: #a07d52; }
+
+/* The edge, drawn last so the light never dims it. */
+.room-edge {
+  fill: none;
+  stroke: var(--castle-dark-line);
+  stroke-width: 2;
+  transition: stroke 1.5s ease, stroke-width 1.5s ease;
+}
+
+.castle-room.st-construction .room-edge { stroke: var(--castle-construction-line); stroke-width: 3; }
+.castle-room.st-survey .room-edge { stroke: var(--castle-survey-line); }
+.castle-room.st-proven .room-edge { stroke: var(--castle-proven-line); }
+.castle-room.st-embers .room-edge { stroke: var(--castle-embers-line); }
+.castle-room.st-alarm .room-edge { stroke: var(--castle-alarm-line); stroke-width: 5; }
+
+.castle-room:focus-visible .room-edge,
+.castle-room.selected .room-edge {
+  stroke: #f4f6fa;
   stroke-width: 3;
 }
 
+/* The slow pulse: CastleStage toggles pulse-on every 1.2 s (no CSS animation,
+   which cost a sixth of a core; see usePulse). No transition on stroke-opacity. */
+.castle-svg.pulse-on .castle-room.st-alarm .room-edge { stroke-opacity: 0.35; }
+
+/* Labels. */
 .room-name {
-  fill: var(--castle-text);
+  fill: #e6ebf2;
   font-size: 20px;
   font-weight: 600;
 }
@@ -2387,45 +2491,52 @@ pre.code {
 }
 
 .room-unproven {
-  fill: #ffffffb0;
+  fill: #e8d3a8;
   font-size: 12px;
 }
 
-.castle-room:focus-visible .room-fill,
-.castle-room.selected .room-fill {
-  stroke: #f4f6fa;
+.castle-room.st-construction .room-name,
+.castle-room.st-alarm .room-name { fill: #fffaf0; }
+.castle-room.st-construction .room-state { fill: #fff1cf; }
+.castle-room.st-survey .room-state { fill: #a9d3ff; }
+.castle-room.st-proven .room-state { fill: #efd98a; }
+.castle-room.st-embers .room-state { fill: #e8a47a; }
+.castle-room.st-alarm .room-state { fill: #ffd6d0; }
+
+/* The corner marks. */
+.mark-sparks path { fill: #ffd36a; }
+.lantern-halo { fill: var(--castle-survey-glow); opacity: 0.2; }
+.lantern-glass { fill: #bfe0ff; }
+.lantern-cap { fill: #8aa7c4; }
+.pennant-pole { stroke: #c9b46a; stroke-width: 3; }
+.pennant-flag { fill: var(--castle-proven-glow); }
+.mark-alarm circle { fill: var(--castle-alarm-glow); }
+
+.mark-alarm text {
+  fill: #1a0b0b;
+  font-size: 18px;
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+.mark-coals circle { fill: #ff8a3d; opacity: 0.85; }
+.mark-moon { fill: none; stroke: #8391a8; stroke-width: 1.6; }
+
+/* Units: a figure on a dark disc, ringed in its colour (set inline). */
+.unit-disc {
+  fill: #0f1319;
   stroke-width: 3;
 }
 
-.castle-room.st-dark .room-heat { opacity: 0 !important; }
-.castle-room.st-embers .room-fill { fill: var(--castle-embers-fill); stroke: var(--castle-embers-line); }
-.castle-room.st-embers .room-state { fill: #d9b8a0; }
-.castle-room.st-survey .room-fill { fill: var(--castle-survey-fill); stroke: var(--castle-survey-line); }
-.castle-room.st-survey .room-state { fill: #d6e8ff; }
-.castle-room.st-survey .room-heat,
-.castle-room.st-construction .room-heat,
-.castle-room.st-proven .room-heat,
-.castle-room.st-alarm .room-heat { opacity: 0 !important; }
-.castle-room.st-construction .room-fill { fill: var(--castle-construction-fill); stroke: var(--castle-construction-line); stroke-width: 3; }
-.castle-room.st-construction .room-name,
-.castle-room.st-construction .room-state { fill: #fff6df; }
-.castle-room.st-proven .room-fill { fill: var(--castle-proven-fill); stroke: var(--castle-proven-line); }
-.castle-room.st-proven .room-state { fill: #f3e7b8; }
-.castle-room.st-alarm .room-fill {
-  fill: var(--castle-alarm-fill);
-  stroke: var(--castle-alarm-line);
-  stroke-width: 5;
+.unit-disc.bare {
+  fill: transparent;
+  stroke: none;
 }
-/* The slow pulse: CastleStage toggles pulse-on every 1.2 s (no CSS animation,
-   which cost a sixth of a core; see usePulse). No transition on stroke-opacity. */
-.castle-svg.pulse-on .castle-room.st-alarm .room-fill { stroke-opacity: 0.35; }
-.castle-room.st-alarm .room-name,
-.castle-room.st-alarm .room-state { fill: #ffe3e0; }
 
-.castle-unit circle {
-  stroke: #ffffff;
-  stroke-width: 2;
-}
+.unit-figure,
+.unit-banner { pointer-events: none; }
+.unit-figure { fill: #eef2f7; color: #eef2f7; }
+.unit-raven .unit-figure { fill: #d8dee8; color: #d8dee8; }
 
 .castle-unit.resting {
   opacity: 0.55;
@@ -2440,32 +2551,29 @@ pre.code {
   from { opacity: 0; }
 }
 
-.unit-letter {
-  fill: #0b0d11;
-  font-size: 14px;
-  font-weight: 700;
-  text-anchor: middle;
-  pointer-events: none;
-}
-
 .unit-rest {
   fill: var(--castle-dim);
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 /* The Herald is the one unit allowed to demand attention. */
 .herald-ring {
   fill: none;
   stroke: #f4f6fa;
-  stroke-width: 3;
+  stroke-width: 2.5;
+  opacity: 0.6;
 }
 
 .castle-svg.pulse-on .herald-ring { opacity: 0.1; }
 
 /* The pulse is off with reduced motion (usePulse); the fades go too. */
 @media (prefers-reduced-motion: reduce) {
-  .room-fill,
-  .room-heat {
+  .room-edge,
+  .room-heat,
+  .room-moon,
+  .glow-core,
+  .glow-edge {
     transition: none !important;
   }
 }
