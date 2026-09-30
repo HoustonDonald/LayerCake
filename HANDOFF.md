@@ -44,6 +44,21 @@ the app window included) and started for him through Explorer; his Docs room the
 scaffolding, no alarms (`docs-alarm.mjs`). (It was rebuilt five times that day: after #161, #165, #167
 with the art, the hover card with the Citadel, #170, and #171.)
 
+### 2026-09-30, late night: the Castle simulator, and the Wall motif (#172)
+
+- **`npm run castle-sim -- stress|replay`** (`scripts/castle-sim.mjs`, owner request): the Castle
+  under a heavy-ish workload in a window of its own, opened on the Castle and closed at the end.
+  CLAUDE.md "Commands" says what it touches (nothing real). Checked headless with scratch
+  `sim-watch.mjs` (reads the castle stream): stress, 3 sessions, 9 units at once, every unit kind
+  but the Herald in that minute; replay, 3 of the owner's sessions from the transcript source, 9
+  units at once. Then a 3-minute stress in a window the owner watched: it opened the Castle itself
+  and closed cleanly (no Edge, port or scratch folder left). A **live** mode (a real `claude -p`
+  fan-out, capped) is still to build; it spends usage, so it stays a scratch script.
+- **#172, owner direction:** the Castle becomes a Castle Black analogue on a great Wall, with
+  original names; raiders from the Wilds loose arrows at the rooms a test run is testing; a village
+  takes the unclaimed files the Wilds hold now. Names, the Citadel's place and build runs are open
+  questions on the issue. Next: a style board for him to pick from.
+
 ### 2026-09-30, night: Docs was always in Alarm (#170, fixed)
 
 The owner asked why Docs is always in Alarm. His running app (read with a scan, the castle stream and

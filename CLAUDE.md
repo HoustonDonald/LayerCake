@@ -44,6 +44,8 @@ npm run cli -- session # the current Claude Code session here (no Claude usage)
 npm run dev:server # API only on 5178
 npm run dev:client # Vite HMR on 5179, proxying /api/ to 5178; needs dev:server and a built client
 npm run smoke      # end to end over the real HTTP API
+npm run castle-sim -- stress   # the Castle under a synthetic workload, in a window of its own
+npm run castle-sim -- replay   # your recent sessions here, replayed at 10x (options: top of scripts/castle-sim.mjs)
 npm run build:exe  # dist\LayerCake.exe, the single executable (Windows only)
 ```
 
@@ -56,6 +58,12 @@ one bug it missed was found by opening a browser. Its mapped-drive checks (#57) 
 unless `SMOKE_MAPPED_DRIVE=1`: they map a free drive letter to the admin share with `net use` for the
 run, which changes the machine's drive letters, so they are opt-in. Run them after touching drive
 detection or polling.
+
+**`castle-sim` never touches the real app or data.** It starts its own LayerCake (port 5190) with
+every data folder in a scratch folder and launches in dry run, spends no Claude usage, and drives
+its own app window through a DevTools port on 127.0.0.1 (open the Castle, close at the end).
+`replay` reads your real transcripts, read only, and copies them into the scratch folder as they
+happen again. It is a viewing and measuring tool, not a check: it asserts nothing.
 
 **Smoke never runs the exe.** It starts `server/index.js`, which serves `public/` from disk; the exe
 serves an embedded copy through `desktop/main.js`. After touching `server/app.js`, `desktop/` or

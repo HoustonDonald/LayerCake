@@ -74,7 +74,7 @@ function browserCandidates() {
   ];
 }
 
-function findBrowser() {
+export function findBrowser() {
   for (const candidate of browserCandidates()) {
     try {
       if (fs.statSync(candidate.exe).isFile()) return candidate;
@@ -191,7 +191,7 @@ export async function profileInUse() {
  * --disable-features on a command line, so any other feature goes in this one,
  * comma separated.
  */
-const APP_FLAGS = [
+export const APP_FLAGS = [
   '--no-first-run',
   '--no-default-browser-check',
   '--disable-sync',

@@ -15,6 +15,7 @@
     "app": "node scripts/launch.js",
     "cli": "node cli/index.js",
     "smoke": "node scripts/smoke.mjs",
+    "castle-sim": "node scripts/castle-sim.mjs",
     "build": "vite build",
     "build:exe": "node desktop/build.mjs",
     "server": "node server/index.js",
