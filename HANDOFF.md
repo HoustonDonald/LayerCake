@@ -4,7 +4,8 @@ Working state for picking this up in a new session. **Disposable.** Durable rule
 `CLAUDE.md`, user-facing spec in `README.md`. If something here contradicts those, they win and this
 file is stale.
 
-Last verified: **2026-09-30** (Castle movement, #161, section below). Write/snapshot work was done 2026-09-05; file watching 2026-09-15;
+Last verified: **2026-09-30, evening** (the Castle: movement #161, typed project rooms #167, art
+first pass with hover card and Citadel #162; sections below). Write/snapshot work was done 2026-09-05; file watching 2026-09-15;
 the single executable and the app-window isolation fix 2026-09-25; session history (Phase 1 of the
 session-wrap plan) 2026-09-26; testing against a copy of a real project, 2026-09-26 to 27 (see
 those sections below).
@@ -32,15 +33,24 @@ at `/tmp/layercake-linux-smoke`, lockfile unchanged so `rsync` the tree over it 
 Smoke writes and deletes a throwaway `HKCU\Software\LayerCakeSmoke-*` key on Windows (#147).
 
 2026-09-29, with the Castle: `node scripts/smoke.mjs` gave 477 passed, 0 failed, 3 skipped (the
-same three skips), the castle checks taking about 21 s of it. 2026-09-30, with movement (#161): 482
-passed, 0 failed, 3 skipped.
+same three skips), the castle checks taking about 21 s of it. 2026-09-30: 482 with movement (#161),
+488 with typed rooms (#167), **494 passed, 0 failed, 3 skipped** with the hover card and the Citadel
+(f7a2a0c), the same three skips throughout. `ui-motion.mjs` (the walking checks, scratchpad below)
+26 of 26 at every step.
 
-`dist\LayerCake.exe` was rebuilt from 8b79af5 (movement, #161) on 2026-09-30 after the owner closed
-his copy, and launch-checked headful with `exe-lifecycle-castle.ps1` (16 of 16, a Mason walking in
-the app window included). Rebuilt again from 14afc15 (with #165) the same day, launch-checked
-headful (16 of 16) and started for the owner through Explorer. Rebuilt again from ba743fc (#167
-typed rooms and #162's art, first pass) after he closed it, launch-checked headful (16 of 16) and
-started through Explorer; it is current.
+`dist\LayerCake.exe` is **current**: rebuilt from 86de474 on 2026-09-30 evening after the owner closed
+his copy, launch-checked headful with `exe-lifecycle-castle.ps1` (16 of 16, a Mason walking in the
+app window included) and started for him through Explorer. (It was rebuilt four times that day: after
+#161, #165, #167 with the art, and the hover card with the Citadel.)
+
+**For a new session, in one paragraph:** the Castle is mid-#162 (art). The first pass, hover card and
+Citadel are committed and in the owner's hands for review; #162 stays open for his changes. His
+product direction: every castle must be tuned to the specific project (rooms are its own sections,
+#167; a process for other users' projects is #168, deferred), and the audience is people used to
+video games, so activity should read at a glance. Animation is budgeted by measurement (#163's
+comment, #169): flip-book poses at 6 to 8 fps on one shared timer, only while a call runs; smooth
+motion only for walking. The scratchpad tools for this session are listed under "Tooling" in the
+sections below (`%TEMP%\claude\c--dev-layercake\f3eeffcb-...\scratchpad`).
 
 ### 2026-09-30, afternoon: rooms are the project's own sections (#167), then the art (#162)
 
@@ -134,7 +144,16 @@ Tooling, in this session's scratchpad (`%TEMP%\claude\c--dev-layercake\f3eeffcb-
 `TREE`, `PORT`, `IDLE=0`), `mutate-motion.mjs` (client mutants rebuilt in their copy and judged by
 ui-motion, server mutants by smoke), `route-check.mjs` (no route crosses a third room),
 `ui-cooling.mjs` (#165: idle cost while six rooms at different heats cool, real time scale, 3 min),
-`build-exe-copy.mjs`, `exe-lifecycle-castle.ps1` with `castle-exe-check.mjs`.
+`build-exe-copy.mjs`, `exe-lifecycle-castle.ps1` with `castle-exe-check.mjs` (`EXE_CHECK_HEADLESS=1`
+when the desktop is idle; headful needs the owner at the desk). Added later that day:
+`mutate-167.mjs` (map-rule mutants, judged by smoke), `ui-walkcost.mjs` (one Mason always walking;
+main thread only, see #169), `ui-art-demo.mjs` / `ui-citadel-demo.mjs` (every state and unit in one
+frame, plus colour-vision renders), `ui-hover-demo.mjs` (hovers each unit and prints its card),
+`bench-anim.mjs` (`HEADFUL=1`: renderer plus GPU process cost of 60 fps, HTML-layer and flip-book
+animation), `layercake-castle.json` (the drafted map, now committed as `castle.json`), and
+`art/gen-art.mjs` (the style board's generator).
+Writing scripts: use the Write or Edit tool, never a Bash heredoc. Heredocs ate backslashes five
+times that day (`\\'`, `\r`, `\s`, a Windows path), even with a quoted delimiter.
 
 **Next:** see the afternoon section above (#167 done; #162 art next). Then #163, and the (b) queue.
 
