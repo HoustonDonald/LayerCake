@@ -38,10 +38,11 @@ same three skips), the castle checks taking about 21 s of it. 2026-09-30: 482 wi
 failed, 3 skipped** with #170 (113 s; HEAD before it 109 s), the same three skips throughout. `ui-motion.mjs` (the walking checks, scratchpad below)
 26 of 26 at every step.
 
-`dist\LayerCake.exe` is **current**: rebuilt from 86de474 on 2026-09-30 evening after the owner closed
-his copy, launch-checked headful with `exe-lifecycle-castle.ps1` (16 of 16, a Mason walking in the
-app window included) and started for him through Explorer. (It was rebuilt four times that day: after
-#161, #165, #167 with the art, and the hover card with the Citadel.)
+`dist\LayerCake.exe` is **current**: rebuilt from a0444f3 (#170) on 2026-09-30 night after the owner
+closed his copy, launch-checked headful with `exe-lifecycle-castle.ps1` (16 of 16, a Mason walking in
+the app window included) and started for him through Explorer; his Docs room then read Embers, no
+scaffolding, no alarms (`docs-alarm.mjs`). (It was rebuilt five times that day: after #161, #165, #167
+with the art, the hover card with the Citadel, and #170.)
 
 ### 2026-09-30, night: Docs was always in Alarm (#170, fixed)
 
@@ -53,7 +54,11 @@ build, never with time, and every session here ends by editing HANDOFF.md with n
 `provable: false` on the type), and thrash lapses once 2 minutes pass with no further edit of its
 file (`thrashLapseMs`), while edits still count over 10 minutes (`thrashWindowMs`). He accepted that
 in an edit, smoke, edit loop the Alarm goes dark during each 2-minute smoke run. Separately,
-castle.json now counts `node scripts/smoke.mjs` as a test run. The commit message has the checks.
+castle.json now counts `node scripts/smoke.mjs` as a test run. The commit message (a0444f3) has the
+checks. This session's scratchpad (`%TEMP%\claude\c--dev-layercake\476797d3-...\scratchpad`) holds
+`docs-alarm.mjs` (read-only: a room's state and alarms from a running LayerCake; `ROOM`, `PORT`,
+`DIR`), `classify-smoke.mjs`, `mutate-170.mjs`, and `ui-cost.mjs` for #169 (written, not yet run:
+renderer plus GPU process cost of quiet, walking and cooling, headful).
 
 **For a new session, in one paragraph:** the Castle is mid-#162 (art). The first pass, hover card and
 Citadel are committed and in the owner's hands for review; #162 stays open for his changes. His
