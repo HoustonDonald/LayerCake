@@ -37,7 +37,8 @@ passed, 0 failed, 3 skipped.
 
 `dist\LayerCake.exe` was rebuilt from 8b79af5 (movement, #161) on 2026-09-30 after the owner closed
 his copy, and launch-checked headful with `exe-lifecycle-castle.ps1` (16 of 16, a Mason walking in
-the app window included); it is current.
+the app window included). It lacks #165 (8f6ab71, one client constant), which was checked in an exe
+built from a tree copy while his copy ran; rebuild `dist` the next time he closes it.
 
 ### 2026-09-30: movement (#161; #165 and #166 found on the way)
 
@@ -55,9 +56,11 @@ trail as part of the fold. The commit message lists the ripple and every check.
 - **Review** (an agent, read-only): three (a) findings, all fixed in the commit (a first sighting
   replayed its trail, a map reload replayed trails, the trail order flipped between the hook and
   transcript copies of a call). The (b) remainder is #166.
-- **#165, found measuring idle cost:** cooling Embers rooms keep the renderer about 2% busy for
-  minutes (a 1.5 s opacity transition restarted by the 2 s cooling render). Phase 2, not movement:
-  sampled over 19 s idle, only room-light CSS transitions ran, no unit animation. (a); not fixed.
+- **#165, found measuring idle cost:** cooling Embers rooms kept the renderer busy for minutes (a
+  1.5 s opacity transition restarted by the 2 s cooling render). Phase 2, not movement: sampled over
+  19 s idle, only room-light CSS transitions ran, no unit animation. Fixed the same day in 8f6ab71
+  (a 10 s cooling render; six cooling rooms 0.64% of a core before, 0.16% to 0.19% after, 0.05%
+  quiet, `ui-cooling.mjs`).
 - **Mutants** (`mutate-motion.mjs`, final tree): 19 of 20 caught, both controls clean. The survivor
   ("a ghost is cancelled before removal") is equivalent on this code: a finished walk out is no
   longer referenced, so the added cancel acts on nothing.
@@ -72,10 +75,11 @@ Tooling, in this session's scratchpad (`%TEMP%\claude\c--dev-layercake\f3eeffcb-
 `ui-motion.mjs` (headless Edge, hook-driven; positions read from the rendered circle every frame;
 `TREE`, `PORT`, `IDLE=0`), `mutate-motion.mjs` (client mutants rebuilt in their copy and judged by
 ui-motion, server mutants by smoke), `route-check.mjs` (no route crosses a third room),
+`ui-cooling.mjs` (#165: idle cost while six rooms at different heats cool, real time scale, 3 min),
 `build-exe-copy.mjs`, `exe-lifecycle-castle.ps1` with `castle-exe-check.mjs`.
 
-**Next:** #162 (art) needs the owner's direction first. #165 is a small (a) fix with a ready
-measurement (`ui-motion.mjs` prints the idle figures). Then #163, and the (b) queue.
+**Next:** #162 (art), with the owner at lunch (about noon Central, 2026-09-30). Then #163, and the
+(b) queue.
 
 ### 2026-09-29: the Castle view (#159, #160; #164 found on the way)
 
