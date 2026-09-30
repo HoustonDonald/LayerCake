@@ -62,10 +62,12 @@ renderer plus GPU process cost of quiet, walking and cooling, headful; `NOGPU=1`
 compositing).
 
 **#169, re-measured and closed.** Renderer plus GPU process, share of one core, headful on this
-machine (RTX 3070, display at 165.7 Hz), real GPU / GPU off: quiet 0.12% / 0.68%; one Mason walking
-non-stop 29.0% / 31.8%; a hop every 5 s 5.7% / 15.7%; six rooms cooling 4.7% / 5.8%. One run each;
-the table and method are on #169. The owner asked whether the Castle needs a GPU: it does not (SVG and
-CSS; with the GPU off Edge composites in software and draws the same, at more CPU). The first run was
+machine (RTX 3070, display at 165.7 Hz), real GPU (2 runs) / GPU off (runs 2 and 3): quiet 0.11% to
+0.12% / 0.10% to 0.11%; one Mason walking non-stop 29% to 30% / 21.5% to 23.7%; a hop every 5 s 5.7%
+to 5.9% / 4.4% to 4.6%; six rooms cooling 4.7% before #171. GPU-off run 1 was an outlier (quiet
+0.68%, a hop every 5 s 15.7%; cause not found); every run is on #169. The owner asked whether the
+Castle needs a GPU: it does not (SVG and CSS; with the GPU off Edge composites in software and draws
+the same, here at no more CPU). The first script run was
 void: the script counted frames with a `requestAnimationFrame` loop inside the measured windows,
 which made the page draw every frame (quiet read 14.5%). The owner then chose to cut cooling only
 (#171, below); walking stays drawn at the display's rate, to revisit with #163's flip-book work.
