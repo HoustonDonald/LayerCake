@@ -92,8 +92,8 @@ walking). Castle room names and furniture go.
   cooling, idle) counted the renderer's main thread only; the GPU process dominates while anything
   animates.
 
-`dist\LayerCake.exe` is from ba743fc: it lacks 5387929 (hover) and f7a2a0c (Citadel). Rebuild when
-the owner closes it.
+`dist\LayerCake.exe` was rebuilt from 86de474 (hover card and Citadel included) after the owner
+closed it, launch-checked headful (16 of 16) and started through Explorer; it is current.
 
 **Next:** the owner's review of the art (#162), then #163 (polish, flip-book verb animations), #169
 (re-measure with the GPU process), #168 when he picks it up, and the (b) queue.
