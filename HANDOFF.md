@@ -38,7 +38,36 @@ passed, 0 failed, 3 skipped.
 `dist\LayerCake.exe` was rebuilt from 8b79af5 (movement, #161) on 2026-09-30 after the owner closed
 his copy, and launch-checked headful with `exe-lifecycle-castle.ps1` (16 of 16, a Mason walking in
 the app window included). Rebuilt again from 14afc15 (with #165) the same day, launch-checked
-headful (16 of 16) and started for the owner through Explorer; it is current.
+headful (16 of 16) and started for the owner through Explorer. It lacks #167 (73c1055, typed project
+rooms), which was checked in an exe built from a tree copy while his copy ran; rebuild `dist` the
+next time he closes it.
+
+### 2026-09-30, afternoon: rooms are the project's own sections (#167), art next (#162)
+
+Starting #162 (art), a style board went up. It is private to the owner:
+https://claude.ai/artifact/J7eV32kcDr5AwECkVEQrg2. The owner chose direction A, Night keep. Then he
+stopped the art: the fixed castle rooms (Vault, Rookery...) lost the link to the project. **Owner
+decisions:** rooms are the project's real sections, drafted by Claude and reviewed once, each with a
+function type that will give it an icon. The castle frame stays (wall, gate, Wilds, units and
+walking). Castle room names and furniture go.
+
+- **73c1055 (#167):** castle.json version 2 is a list of rooms, each with an id, name, type from
+  `ROOM_TYPES`, col, row and patterns. Roles come from types (test, build and migration runs, the
+  shell, the Raven's perch). With no castle.json, the built-in map is the old 12 areas typed and
+  renamed. Version 1 is refused by name. The page shows the type over each name. The commit message
+  has the checks: smoke 488/0/3, ui-motion 26/26, 10 of 10 mutants (`mutate-167.mjs`), and the exe
+  from a tree copy 16/16.
+- **de7cb71:** `castle.json` for LayerCake itself, committed at the owner's request: 13 rooms, and
+  79 of 79 tracked files in a room. On the built-in map, 24 of the 28 files in `server/` sat in the
+  Wilds.
+- **The furniture draft** (`castleArt.jsx`, unwired) was set aside in this session's scratchpad
+  (`art-draft/`). Its unit figures (Mason's hammer, Knight's banner...) and the light pools carry
+  over to #162.
+
+**Next: #162 (art),** direction A, re-scoped on the issue. Each room type gets an icon in place of
+castle furniture. The rest is the plan in the issue's first comment: light pools, scaffolding, unit
+silhouettes, and the legend. The walking-cost baseline for it is 2.33% to 2.47% of a core with one
+Mason always walking (`ui-walkcost.mjs`), and `ui-cooling.mjs` measures the idle cost.
 
 ### 2026-09-30: movement (#161; #165 and #166 found on the way)
 
@@ -78,8 +107,7 @@ ui-motion, server mutants by smoke), `route-check.mjs` (no route crosses a third
 `ui-cooling.mjs` (#165: idle cost while six rooms at different heats cool, real time scale, 3 min),
 `build-exe-copy.mjs`, `exe-lifecycle-castle.ps1` with `castle-exe-check.mjs`.
 
-**Next:** #162 (art), with the owner at lunch (about noon Central, 2026-09-30). Then #163, and the
-(b) queue.
+**Next:** see the afternoon section above (#167 done; #162 art next). Then #163, and the (b) queue.
 
 ### 2026-09-29: the Castle view (#159, #160; #164 found on the way)
 
