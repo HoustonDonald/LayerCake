@@ -2663,6 +2663,26 @@ pre.code {
 .unit-figure { fill: #eef2f7; color: #eef2f7; }
 .unit-raven .unit-figure { fill: #d8dee8; color: #d8dee8; }
 
+/* Verb poses (#163): the figure keeps its colour; the light in the act takes the
+   room's (amber sparks for a change, blue for reading and searching), and stones
+   are the crane's. Strokes in the disc's colour separate a held thing from the body. */
+.pose-line { fill: none; stroke: currentColor; stroke-linecap: round; }
+.pose-stone { fill: #b9c2cd; stroke: #3d4652; stroke-width: 0.7; }
+.pose-stone-line { fill: none; stroke: #3d4652; stroke-width: 0.6; }
+.pose-spark { fill: none; stroke: #f5a524; stroke-width: 1.1; stroke-linecap: round; }
+.pose-parchment { fill: #efe2bf; stroke: #0f1319; stroke-width: 0.6; }
+.pose-ink { fill: none; stroke: #6b5a3a; stroke-width: 0.6; }
+.pose-reading { fill: #5aa9ff; opacity: 0.55; }
+.pose-roller { stroke: #0f1319; stroke-width: 0.5; }
+.pose-glow-survey { fill: #5aa9ff; opacity: 0.2; }
+.pose-flame { fill: #ffd98a; }
+.pose-glow-flame { fill: #ffd98a; opacity: 0.3; }
+.pose-dust { fill: #c9c2b4; }
+.pose-puff { fill: #d7dce4; }
+.pose-eye { fill: #0f1319; }
+.pose-sound { fill: none; stroke: currentColor; stroke-width: 1; stroke-linecap: round; opacity: 0.8; }
+.pose-sparkle { fill: #c3a6ff; }
+
 .castle-unit.resting {
   opacity: 0.55;
 }

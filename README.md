@@ -996,6 +996,28 @@ with reduced motion.
 - Walking costs nothing when nobody walks: each walk is one browser animation that ends on arrival,
   with no drawing loop running in between.
 
+**Poses** (#163). A Mason or Knight acts out its latest call once it is in the room: it hammers on
+a stone for an edit, lays a stone for a write, reads a scroll, swings a lantern for a search, and
+turns a crank for a shell command, with the room's light in the act (sparks off the hammer, the
+lantern's blue light, dust as the stone lands, steam off the crank). A working Knight holds its
+banner in its other hand.
+
+- A pose plays for as long as the call runs, and for at least 2 s from when the castle sees the
+  call. Most reads and searches end inside 60 to 150 ms, so without the minimum they would never
+  show; and a session read from its transcript is seen a few seconds late, often after the call
+  ended.
+- The walk comes first: a unit walks to the room, then acts. A later call takes over at once.
+- A call already over when the castle opens or reconnects plays nothing; one still running plays at
+  once.
+- A call a helper carries (a subagent, a skill, an MCP or web call) has no pose: the Knight, Wizard,
+  Raven or Scout is the one at work. A Raven beats its wings and a Scout trots for as long as they
+  are out, and a Wizard sparkles while the unit beside it acts.
+- The Herald swings its bell on the ring's slow pulse rather than on the flip-book, since it can
+  stand at the gate for hours while Claude waits for you.
+- Poses, arrows and stones step on one timer, 8 frames a second, which runs only while something on
+  screen is acting; a still castle runs no timer. With reduced motion set, a pose holds its first
+  frame for as long as it would have played.
+
 **castle.json.** A project describes its rooms with `castle.json` at its root. LayerCake reads it
 and never writes it. **Copy prompt for Claude** copies a prompt to paste into a Claude session in
 the project, so Claude drafts the file from the project's real layout (and, when the file exists,

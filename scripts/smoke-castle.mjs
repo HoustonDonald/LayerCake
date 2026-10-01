@@ -180,10 +180,10 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
       JSON.stringify(s1.last('state')?.rooms?.docs));
     // What the hover card says it is doing (#162): the call, as the log's one line, where, still running.
     const lastOf = (st, key) => st?.units?.find((u) => u.key === key)?.last;
-    check("the Mason carries the call it is on now: its tool, its one-line summary, where, and no end yet",
+    check("the Mason carries the call it is on now: its tool, its verb (what it acts out, #163), its one-line summary, where, and no end yet",
       await s1.untilState((st) => {
         const l = lastOf(st, `M:${sid}`);
-        return l && l.id === 'toolu_c_read' && l.tool === 'Read' && l.summary === P('docs', 'guide.md') && l.where === 'Docs' && l.endAt === null;
+        return l && l.id === 'toolu_c_read' && l.tool === 'Read' && l.verb === 'read' && l.summary === P('docs', 'guide.md') && l.where === 'Docs' && l.endAt === null;
       }), JSON.stringify(lastOf(s1.last('state'), `M:${sid}`)));
     await hook({ hook_event_name: 'PostToolUse', tool_name: 'Read', tool_use_id: 'toolu_c_read', tool_input: { file_path: P('docs', 'guide.md') }, tool_response: { type: 'text', file: { content: S.readBody } } });
     check('and when the call ends it says when', await s1.untilState((st) => typeof lastOf(st, `M:${sid}`)?.endAt === 'number'), JSON.stringify(lastOf(s1.last('state'), `M:${sid}`)));

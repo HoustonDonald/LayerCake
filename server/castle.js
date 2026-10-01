@@ -51,6 +51,10 @@ export const WINDOWS = {
   // How long a thrash stays up after the last edit of its file (#170, owner
   // decision 2026-09-30: 2 minutes, while edits count over 10).
   thrashLapseMs: scaled(2 * 60_000),
+  // The least time a unit acts out a call, from when the page sees it or the
+  // unit arrives, and longer while it runs (#163, owner decision 2026-10-01).
+  // Most reads end inside one 125 ms frame, so "only while it runs" hid them.
+  poseMinMs: scaled(2000),
 };
 
 const MAX_SESSIONS = 6;
@@ -108,12 +112,12 @@ export const ROOM_STATES = [
 ];
 
 export const UNIT_KINDS = [
-  { kind: 'mason', letter: 'M', label: 'Mason', rule: `A session. Walks the corridors to the room of its latest tool call, through each room it worked in on the way, in order; rests once ${secs(WINDOWS.restMs)} pass with no call running; walks out of the gate when the session ends.` },
-  { kind: 'knight', letter: 'K', label: 'Knight', rule: 'A subagent, from its start to its stop: enters by the gate, walks to the room of each tool call as a Mason does, and walks out of the gate when it stops.' },
-  { kind: 'wizard', letter: 'W', label: 'Wizard', rule: "A skill Claude invoked, beside the unit that called it, following it, until that unit's turn ends or it calls another skill. A skill you type as /name is not seen." },
-  { kind: 'raven', letter: 'R', label: 'Raven', rule: 'An MCP tool call: flies up to the wall above the first Integrations room (above the gate when there is none), and back when the call returns.' },
-  { kind: 'scout', letter: 'S', label: 'Scout', rule: 'A web fetch or search: walks out of the gate, and back when the call returns.' },
-  { kind: 'herald', letter: 'H', label: 'Herald', rule: 'Claude is waiting for you (a permission or input prompt). Only sessions started from LayerCake can report this.' },
+  { kind: 'mason', letter: 'M', label: 'Mason', rule: `A session. Walks the corridors to the room of its latest tool call, through each room it worked in on the way, in order, and there acts the call out: hammers for an edit, lays a stone for a write, reads a scroll, swings a lantern to search, turns a crank for a shell command, while the call runs and for at least ${secs(WINDOWS.poseMinMs)}. Rests once ${secs(WINDOWS.restMs)} pass with no call running; walks out of the gate when the session ends.` },
+  { kind: 'knight', letter: 'K', label: 'Knight', rule: 'A subagent, from its start to its stop: enters by the gate, walks to the room of each tool call and acts it out as a Mason does (its banner in its other hand), and walks out of the gate when it stops.' },
+  { kind: 'wizard', letter: 'W', label: 'Wizard', rule: "A skill Claude invoked, beside the unit that called it, following it, until that unit's turn ends or it calls another skill; it sparkles while that unit acts out a call. A skill you type as /name is not seen." },
+  { kind: 'raven', letter: 'R', label: 'Raven', rule: 'An MCP tool call: flies up to the wall above the first Integrations room (above the gate when there is none), beating its wings, and back when the call returns.' },
+  { kind: 'scout', letter: 'S', label: 'Scout', rule: 'A web fetch or search: trots out of the gate, and back when the call returns.' },
+  { kind: 'herald', letter: 'H', label: 'Herald', rule: 'Claude is waiting for you (a permission or input prompt): it rings its bell at the gate. Only sessions started from LayerCake can report this.' },
   { kind: 'raiders', letter: 'A', label: 'Raiders', rule: 'A test run, while it runs: a band out of the Wilds, or at the front, whichever is nearer, shooting over the wall at the rooms with unproven changes (the ones its verdict judges) and at the code its named test files are named after (a guess by name: scan.test.js points at scan.js, beside the test, mirrored out of a tests folder, or seen in this castle). With neither, it musters at the forest\'s edge and shoots at nothing. Leaves when the run ends or its turn is interrupted.' },
   { kind: 'crane', letter: 'C', label: 'Crane', rule: "A build run, while it runs: a treadwheel crane before the gate, hoisting stones along a cable onto the rooms with unproven changes (the ones its verdict judges). With none, it stands idle. Leaves when the run ends or its turn is interrupted." },
 ];
@@ -392,7 +396,8 @@ export function fold(events, map, locateCall) {
       const caller = ensureCaller(e);
       caller.lastCallAt = e.at;
       // What it is doing, for the page's hover card: its latest call, in the one line the log shows.
-      caller.last = { id: e.toolUseId || e.key, tool: e.tool || null, summary: e.summary || '', where: loc.label || null, at: e.at, endAt: null };
+      // Its verb is what the unit acts out (#163): served, so the page keeps no copy of verbOf.
+      caller.last = { id: e.toolUseId || e.key, tool: e.tool || null, verb, summary: e.summary || '', where: loc.label || null, at: e.at, endAt: null };
       const to = loc.rooms.length ? loc.rooms[0] : loc.village.length ? 'village' : loc.outside.length ? 'outside' : null;
       // The trail (#161): each room change, keyed by the call that caused it
       // (the same key from either source, so a refold gives the same ids).

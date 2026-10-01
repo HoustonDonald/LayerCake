@@ -1,7 +1,8 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import { ArtDefs, Citadel, Figure, FigureIcon, Hollowmere, RoomLight, TypeIcon, WildsForest } from './castleArt.jsx';
 import { describeUnit } from './castleDescribe.js';
+import { HeraldPose, KNIGHT_WORK_BANNER, POSE_VERBS, RavenPose, ScoutPose, WizardPose, WorkerPose } from './castlePoses.jsx';
 import { BAND, DOT, FADE_MS, FROST_H, HOP_MS, RUN_KINDS, SLIDE_MS, W, WILDS_H, keyframes, runSpot, lastTrailKey, layout, newPlaces, placeUnits, planWalk, positionAt, replan, totalMs, waypoint } from './castleMotion.js';
 
 /**
@@ -95,7 +96,9 @@ function useReducedMotion() {
 
 /**
  * The Alarm's slow pulse and the Herald's ring, as a class toggled every
- * 1.2 s rather than a CSS animation. An SVG stroke animation is not
+ * 1.2 s rather than a CSS animation; the Herald's bell swings side to side on
+ * the same toggle (#163), not on the flip-book, because a Herald can stand
+ * for hours while Claude waits for you. An SVG stroke animation is not
  * composited: a smooth one repainted the whole castle every frame, 16% of a
  * core for as long as an Alarm stood, and even a stepped one ticked every
  * frame (5.6%; ui-idle.mjs, headless Edge, 2026-09-29). A toggle is two
@@ -142,22 +145,99 @@ function unitColour(u, sessionIndex) {
 }
 
 /**
+ * One shared flip-book timer (#163's budget, #172): 8 frames a second, running
+ * only while something subscribed is active. The Raiders' arrows, the crane's
+ * stones and every unit's pose step on the same tick (React renders them in
+ * one pass), so the castle repaints once a frame however much moves. SVG is
+ * not composited, so each frame repaints the castle; a 6 fps flip-book
+ * measured 3.7% to 5.9% of a core, flat in how much moves, against 28% to 38%
+ * for smooth animation (#169). With nothing active no timer runs.
+ */
+const FLIP_MS = 125;
+const flip = { frame: 0, timer: null, listeners: new Set() };
+function onFlip(listener) {
+  flip.listeners.add(listener);
+  if (!flip.timer) {
+    flip.timer = setInterval(() => {
+      flip.frame += 1;
+      for (const l of flip.listeners) l();
+    }, FLIP_MS);
+  }
+  return () => {
+    flip.listeners.delete(listener);
+    if (!flip.listeners.size) {
+      clearInterval(flip.timer);
+      flip.timer = null;
+    }
+  };
+}
+const offFlip = () => () => {};
+function useFlipbook(active) {
+  return useSyncExternalStore(active ? onFlip : offFlip, () => (active ? flip.frame : 0));
+}
+
+/**
+ * Re-renders once at `at` (ms since the epoch): when a pose that waited for its
+ * unit's walk begins, and when one ends. The flip-book only steps frames; with
+ * reduced motion it never runs, and this is what still ends the pose.
+ */
+function useWakeAt(at) {
+  const [, wake] = useState(0);
+  useEffect(() => {
+    if (at === null || !Number.isFinite(at)) return undefined;
+    const timer = setTimeout(() => wake((n) => n + 1), Math.max(0, at - Date.now()) + 20);
+    return () => clearTimeout(timer);
+  }, [at]);
+}
+
+/**
+ * The verb a Mason or Knight acts out now (#163; owner decision 2026-10-01: at
+ * least `min` ms, longer while the call runs). `pose` is UnitLayer's note of
+ * the unit's latest call: its id, verb, and `from`, when the page saw it, or
+ * when the unit's walk to it ends. Null while it walks there, and after.
+ */
+function poseVerb(pose, u, now, min) {
+  if (!pose || !POSE_VERBS.has(pose.verb) || now < pose.from) return null;
+  return poseRunning(pose, u) || now < pose.from + min ? pose.verb : null;
+}
+const poseRunning = (pose, u) => u.last?.id === pose.key && u.last.endAt === null;
+
+/**
  * A unit (#162): its figure on a dark disc ringed in its colour, so a session
  * or a Knight's banner reads at a glance and the figure says what it is. A
  * Raven is a bird on the wall, with no disc (the disc stays, unseen, as its
  * hit area). The disc is the unit's first circle: the page checks find units
  * by it.
+ *
+ * Poses (#163): a Mason or Knight acts out its call (`pose`, `poseMin`); a
+ * Raven or Scout is animated for as long as it is on screen, since it exists
+ * only while its call runs; a Wizard sparkles while its caller works
+ * (`sparkle`); the Herald swings its bell on the ring's pulse (`swing`).
+ * Frames come from the shared flip-book; with reduced motion a pose holds its
+ * first frame.
  */
-function Unit({ u, x, y, colour, kinds, riders = [], colourOf, onClick, small = false, hover = true }) {
+function Unit({ u, x, y, colour, kinds, riders = [], colourOf, onClick, small = false, hover = true, pose = null, poseMin = 0, swing = 0, sparkle = false, reduce = false }) {
   const bird = u.kind === 'raven';
+  const now = Date.now();
+  const verb = poseVerb(pose, u, now, poseMin);
+  const waiting = Boolean(pose && POSE_VERBS.has(pose.verb) && now < pose.from);
+  useWakeAt(waiting ? pose.from : verb && !poseRunning(pose, u) ? pose.from + poseMin : null);
+  const animated = verb !== null || bird || u.kind === 'scout' || (u.kind === 'wizard' && sparkle);
+  const tick = useFlipbook(animated && !reduce);
+  const frame = reduce ? 0 : tick;
+  const size = bird ? 32 : small ? 18 : 24;
+  let art = null;
+  if (verb) art = <WorkerPose kind={u.kind} verb={verb} frame={frame} />;
+  else if (bird) art = <RavenPose frame={frame} />;
+  else if (u.kind === 'scout') art = <ScoutPose frame={frame} />;
+  else if (u.kind === 'herald' && swing) art = <HeraldPose swing={swing} />;
+  else if (u.kind === 'wizard' && sparkle) art = <WizardPose frame={frame} />;
   return (
-    <g className={`castle-unit unit-${u.kind}${u.resting ? ' resting' : ''}`} data-unit={x === undefined ? undefined : u.key} data-hover={hover ? u.key : undefined} transform={x === undefined ? undefined : `translate(${x} ${y})`} onClick={onClick}>
+    <g className={`castle-unit unit-${u.kind}${u.resting ? ' resting' : ''}`} data-unit={x === undefined ? undefined : u.key} data-hover={hover ? u.key : undefined} data-pose={verb || undefined} transform={x === undefined ? undefined : `translate(${x} ${y})`} onClick={onClick}>
       {u.kind === 'herald' && <circle className="herald-ring" r={DOT + 9} />}
       <circle className={`unit-disc${bird ? ' bare' : ''}`} r={small ? DOT - 3 : DOT + 2} style={bird ? undefined : { stroke: colour }} />
-      <g className="unit-figure">
-        <Figure kind={u.kind} size={bird ? 32 : small ? 18 : 24} />
-      </g>
-      {u.kind === 'knight' && <path className="unit-banner" d="M5.6 -10.6 L16 -6.8 L5.6 -3 Z" style={{ fill: colour }} />}
+      <g className="unit-figure">{art ? <g transform={`translate(${-size / 2} ${-size / 2}) scale(${size / 24})`}>{art}</g> : <Figure kind={u.kind} size={size} />}</g>
+      {u.kind === 'knight' && <path className="unit-banner" d={verb ? KNIGHT_WORK_BANNER : 'M5.6 -10.6 L16 -6.8 L5.6 -3 Z'} style={{ fill: colour }} />}
       {u.resting && (
         <text className="unit-rest" x={DOT} y={-DOT + 1}>
           z
@@ -166,7 +246,7 @@ function Unit({ u, x, y, colour, kinds, riders = [], colourOf, onClick, small = 
       {/* A Wizard stands beside the unit that called it and goes where it goes. */}
       {riders.map((w, i) => (
         <g key={w.key} className="castle-rider" transform={`translate(${(i + 1) * (DOT * 2 + 4)} ${-(DOT + 6)})`}>
-          <Unit u={w} colour={colourOf(w)} kinds={kinds} colourOf={colourOf} small />
+          <Unit u={w} colour={colourOf(w)} kinds={kinds} colourOf={colourOf} small sparkle={verb !== null} reduce={reduce} />
         </g>
       ))}
     </g>
@@ -219,10 +299,18 @@ const samePoint = (a, b) => Math.abs(a.x - b.x) < 0.01 && Math.abs(a.y - b.y) < 
  * it, kept on screen (a ghost) until it is out. A Raven flies from the Rookery to the wall above it and back; a
  * Scout walks out of the gate and back. With reduced motion nothing walks: a
  * unit that moves fades in at its new spot.
+ *
+ * A Mason or Knight then acts out its latest call (#163) once it is there:
+ * `poses` notes, per unit, the call it last saw and when its pose may start.
+ * A call first seen in a running castle starts on arrival, after any walk; a
+ * call already there when the castle opened (or reconnected) plays only if it
+ * is still running, since a pose nobody saw start would be invented too.
  */
-function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf, kinds, onSelect, onHover }) {
+function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf, kinds, poseMin, swing, onSelect, onHover }) {
   // key -> { key, unit, place, point, lastKey, legs, anim, fade, leaving, exit }
   const motion = useRef(new Map());
+  // key -> { key: the call's id, verb, from }
+  const poses = useRef(new Map());
   const frame = useRef({ generation: null, state: undefined, awaiting: false, mapVersion: undefined });
   const layerRef = useRef(null);
   const [, rerender] = useState(0);
@@ -287,6 +375,29 @@ function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf
       rec.fade = el.animate([{ opacity: 0, offset: 0 }], { duration: FADE_MS, easing: 'ease-out' });
     };
     const here = (rec) => (rec.anim && rec.legs ? positionAt(rec.legs, rec.anim.currentTime ?? 0)?.point : null) || rec.point;
+    // What is left of a unit's walk, in ms: its pose waits for it.
+    const walkLeft = (rec) => (rec?.anim && rec.legs ? Math.max(0, totalMs(rec.legs) - (rec.anim.currentTime ?? 0)) : 0);
+    // A unit's latest call, noted once per call; a re-render only when one is new.
+    const notePoses = (placing) => {
+      const now = Date.now();
+      let changed = false;
+      for (const u of units) {
+        const id = u.last?.id ?? null;
+        if ((poses.current.get(u.key)?.key ?? null) === id) continue;
+        changed = true;
+        if (id === null) poses.current.delete(u.key);
+        else poses.current.set(u.key, { key: id, verb: u.last.verb || null, from: placing ? (u.last.endAt === null ? now : -Infinity) : now + walkLeft(motion.current.get(u.key)) });
+      }
+      const present = new Set(units.map((u) => u.key));
+      for (const key of [...poses.current.keys()]) {
+        if (!present.has(key)) {
+          poses.current.delete(key);
+          changed = true;
+        }
+      }
+      // A layout effect's update renders again before paint; that render's effect returns early.
+      if (changed) rerender((n) => n + 1);
+    };
 
     const m = frameMode(frame.current, generation, state);
     if (m !== 'move') {
@@ -297,6 +408,7 @@ function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf
         if (p) motion.current.set(u.key, { key: u.key, unit: u, place: p.place, point: p.point, lastKey: lastTrailKey(u.trail), legs: null, anim: null, fade: null, leaving: false });
       }
       frame.current = { generation, state, awaiting: m === 'hold', mapVersion: state?.mapVersion };
+      notePoses(true);
       return;
     }
     // A re-render for something else (a held room, cooling, a ghost gone): nothing new to walk.
@@ -390,6 +502,8 @@ function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf
         rerender((n) => n + 1);
       };
     }
+
+    notePoses(false);
   });
 
   return (
@@ -408,28 +522,15 @@ function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf
             colourOf={colourOf}
             onClick={selectable ? () => onSelect(p.place) : undefined}
             hover={!ghost}
+            pose={ghost ? null : poses.current.get(u.key) || null}
+            poseMin={poseMin}
+            swing={u.kind === 'herald' ? swing : 0}
+            reduce={reduce}
           />
         );
       })}
     </g>
   );
-}
-
-/**
- * One shared flip-book timer (#163's budget, #172): 8 frames a second, and
- * only while `active`. SVG is not composited, so each frame repaints the
- * castle; a 6 fps flip-book measured 3.7% to 5.9% of a core, flat in how much
- * moves, against 28% to 38% for smooth animation (#169). Idle, it costs nothing.
- */
-const FLIP_MS = 125;
-function useFlipbook(active) {
-  const [frame, setFrame] = useState(0);
-  useEffect(() => {
-    if (!active) return undefined;
-    const timer = setInterval(() => setFrame((f) => f + 1), FLIP_MS);
-    return () => clearInterval(timer);
-  }, [active]);
-  return frame;
 }
 
 /** Where along a volley's arc projectile `k` of `n` is at `frame`: one flight a second, spaced along it. */
@@ -721,7 +822,7 @@ export default function CastleStage({ map, state, generation, selected, onSelect
       })}
 
       <RunLayer L={L} rooms={rooms} units={state?.units || []} reduce={reduce} onHover={setCard} />
-      <UnitLayer L={L} rooms={rooms} perch={map?.perch || null} units={(state?.units || []).filter((u) => !RUN_KINDS.has(u.kind))} generation={generation} state={state} reduce={reduce} colourOf={colourOf} kinds={map?.units} onSelect={select} onHover={setCard} />
+      <UnitLayer L={L} rooms={rooms} perch={map?.perch || null} units={(state?.units || []).filter((u) => !RUN_KINDS.has(u.kind))} generation={generation} state={state} reduce={reduce} colourOf={colourOf} kinds={map?.units} poseMin={map?.windows?.poseMinMs ?? 0} swing={reduce ? 0 : pulse ? 1 : -1} onSelect={select} onHover={setCard} />
     </svg>
     {card && <UnitCard card={card} state={state} map={map} />}
     </>
