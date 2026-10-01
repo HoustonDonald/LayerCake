@@ -951,8 +951,10 @@ the legend, or click a room); the rules come from the server with the data.
 (with a hammer) is a session, in the room of its latest call, resting once 60 s pass with no call running (dimmed,
 with a "z"); a **Knight** (a helm and a banner in its own colour) is a subagent, from its start to its
 stop; a **Wizard** (hat and robe) is a skill Claude invoked, beside its caller until the caller's turn
-ends (a skill you type as `/name` is not seen); a **Raven** (a bird, no disc) is an MCP call, on the
-Frostwall above the first Integrations room (else above the gate's column); a **Scout** (a horse) is
+ends (a skill you type as `/name` is not seen); a **Raven** (a bird on a disc ringed in its session's
+colour, larger than the rest, #182) is an MCP call, on the Frostwall above the first Integrations
+room (else above the gate's column), and the wall's name moves to the other end so it is not
+covered; a **Scout** (a horse) is
 a web fetch or search, down the road from the gate; the **Herald** (a bell, with a ring) is at the gate while a launched session
 waits for you, the one unit that pulses. Clicking a unit opens the room it stands in. Hovering one
 says what it is doing first (its latest call, where, a Knight's task), then the session it belongs
@@ -1015,7 +1017,8 @@ banner in its other hand.
   once.
 - A call a helper carries (a subagent, a skill, an MCP or web call) has no pose: the Knight, Wizard,
   Raven or Scout is the one at work. A Raven beats its wings and a Scout trots for as long as they
-  are out, and a Wizard sparkles while the unit beside it acts.
+  are out, and a Wizard sparkles while the unit beside it acts. A Raven drops five feathers along
+  each flight, up to the wall and back, which drift down and fade over about 2 s (#182).
 - The Herald swings its bell on the ring's slow pulse rather than on the flip-book, since it can
   stand at the gate for hours while Claude waits for you.
 - Poses, arrows and stones step on one timer, 8 frames a second, which runs only while something on

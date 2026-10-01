@@ -2425,6 +2425,10 @@ pre.code {
 .frostwall-face { fill: #5d6f86; }
 .frostwall-rime { fill: #dfe8f3; fill-opacity: 0.45; }
 .frostwall-label { fill: #eef3f9; font-size: 13px; font-weight: 700; letter-spacing: 3px; text-anchor: end; text-transform: uppercase; }
+.frostwall-label.at-start { text-anchor: start; }
+
+/* A Raven's feathers (#182). */
+.castle-feather { fill: #dfe8f3; pointer-events: none; }
 
 /* Hollowmere (#172): the village by the road for files no room claims. Its windows light once any file lands there. */
 .castle-village .village-label { text-anchor: start; }
@@ -2658,11 +2662,6 @@ pre.code {
 .unit-disc {
   fill: #0f1319;
   stroke-width: 3;
-}
-
-.unit-disc.bare {
-  fill: transparent;
-  stroke: none;
 }
 
 .unit-figure,

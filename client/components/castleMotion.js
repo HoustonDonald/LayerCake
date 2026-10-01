@@ -102,15 +102,26 @@ export function slots(box, count, { row = 'bottom' } = {}) {
 
 const centre = (b) => ({ x: b.x + b.w / 2, y: b.y + b.h / 2 });
 
+/**
+ * A Raven's disc (#182, owner's pick 2026-10-01: larger, on a disc ringed in
+ * its session's colour, like every other unit): bigger than a Mason's, since
+ * a bird on the wall is otherwise hard to see.
+ */
+export const RAVEN_R = 30;
+
+/** Where on the wall Ravens wait: above the first Integrations room, else above the gate. */
+export function perchX(L, rooms, perch) {
+  const r = perch ? rooms.get(perch) : null;
+  return r ? centre(L.cell(r.col, r.row)).x : L.gate.x;
+}
+
 /** The spots `n` units take at one place. `perch` is the room Ravens wait above (the map's), or null. */
 function spots(L, rooms, place, n, perch) {
   const room = rooms.get(place);
   if (room) return slots(L.cell(room.col, room.row), n);
   if (place === 'perch') {
-    // Ravens wait on the wall above the first Integrations room, else above the gate.
-    const r = perch ? rooms.get(perch) : null;
-    const x = r ? centre(L.cell(r.col, r.row)).x : L.gate.x;
-    return Array.from({ length: n }, (_, i) => ({ x: x + (i - (n - 1) / 2) * (DOT * 2 + 8), y: L.perchY }));
+    const x = perchX(L, rooms, perch);
+    return Array.from({ length: n }, (_, i) => ({ x: x + (i - (n - 1) / 2) * (RAVEN_R * 2 + 6), y: L.perchY }));
   }
   if (place === 'village') return slots(L.villageBox, n);
   if (place === 'wilds') return slots(L.wildsBox, n);

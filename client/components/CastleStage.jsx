@@ -3,7 +3,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState, useSyncExternalSto
 import { ArtDefs, Citadel, Figure, FigureIcon, Hollowmere, RoomLight, TypeIcon, WildsForest } from './castleArt.jsx';
 import { describeUnit } from './castleDescribe.js';
 import { HeraldPose, KNIGHT_WORK_BANNER, POSE_VERBS, RavenPose, ScoutPose, WizardPose, WorkerPose } from './castlePoses.jsx';
-import { BAND, DOT, FADE_MS, FROST_H, HOP_MS, RUN_KINDS, SLIDE_MS, W, WILDS_H, keyframes, runSpot, lastTrailKey, layout, newPlaces, placeUnits, planWalk, positionAt, replan, totalMs, waypoint } from './castleMotion.js';
+import { BAND, DOT, FADE_MS, FROST_H, HOP_MS, RAVEN_R, RUN_KINDS, SLIDE_MS, W, WILDS_H, keyframes, runSpot, lastTrailKey, layout, newPlaces, perchX, placeUnits, planWalk, positionAt, replan, totalMs, waypoint } from './castleMotion.js';
 
 /**
  * The castle itself (#160): one SVG with a fixed viewBox width, so full screen
@@ -140,7 +140,7 @@ function useCooling(rooms, halfLife) {
 function unitColour(u, sessionIndex) {
   if (u.kind === 'knight') return knightColour(u.agentId);
   if (u.kind === 'herald') return '#f4f6fa';
-  if (u.kind === 'raven') return '#8a93a3';
+  // A Raven, like a Mason, rings its disc in its session's colour (#182).
   return SESSION_COLOURS[sessionIndex % SESSION_COLOURS.length];
 }
 
@@ -205,9 +205,8 @@ const poseRunning = (pose, u) => u.last?.id === pose.key && u.last.endAt === nul
 /**
  * A unit (#162): its figure on a dark disc ringed in its colour, so a session
  * or a Knight's banner reads at a glance and the figure says what it is. A
- * Raven is a bird on the wall, with no disc (the disc stays, unseen, as its
- * hit area). The disc is the unit's first circle: the page checks find units
- * by it.
+ * Raven's disc is larger (RAVEN_R, #182): a bird on the pale wall was hard to
+ * see. The disc is the unit's first circle: the page checks find units by it.
  *
  * Poses (#163): a Mason or Knight acts out its call (`pose`, `poseMin`); a
  * Raven or Scout is animated for as long as it is on screen, since it exists
@@ -225,7 +224,7 @@ function Unit({ u, x, y, colour, kinds, riders = [], colourOf, onClick, small = 
   const animated = verb !== null || bird || u.kind === 'scout' || (u.kind === 'wizard' && sparkle);
   const tick = useFlipbook(animated && !reduce);
   const frame = reduce ? 0 : tick;
-  const size = bird ? 32 : small ? 18 : 24;
+  const size = bird ? 40 : small ? 18 : 24;
   let art = null;
   if (verb) art = <WorkerPose kind={u.kind} verb={verb} frame={frame} />;
   else if (bird) art = <RavenPose frame={frame} />;
@@ -235,7 +234,7 @@ function Unit({ u, x, y, colour, kinds, riders = [], colourOf, onClick, small = 
   return (
     <g className={`castle-unit unit-${u.kind}${u.resting ? ' resting' : ''}`} data-unit={x === undefined ? undefined : u.key} data-hover={hover ? u.key : undefined} data-pose={verb || undefined} transform={x === undefined ? undefined : `translate(${x} ${y})`} onClick={onClick}>
       {u.kind === 'herald' && <circle className="herald-ring" r={DOT + 9} />}
-      <circle className={`unit-disc${bird ? ' bare' : ''}`} r={small ? DOT - 3 : DOT + 2} style={bird ? undefined : { stroke: colour }} />
+      <circle className="unit-disc" r={bird ? RAVEN_R : small ? DOT - 3 : DOT + 2} style={{ stroke: colour }} />
       <g className="unit-figure">{art ? <g transform={`translate(${-size / 2} ${-size / 2}) scale(${size / 24})`}>{art}</g> : <Figure kind={u.kind} size={size} />}</g>
       {u.kind === 'knight' && <path className="unit-banner" d={verb ? KNIGHT_WORK_BANNER : 'M5.6 -10.6 L16 -6.8 L5.6 -3 Z'} style={{ fill: colour }} />}
       {u.resting && (
@@ -311,6 +310,8 @@ function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf
   const motion = useRef(new Map());
   // key -> { key: the call's id, verb, from }
   const poses = useRef(new Map());
+  // Each Raven flight, for its feathers (#182): { id, from, to, at, ms }
+  const flights = useRef([]);
   const frame = useRef({ generation: null, state: undefined, awaiting: false, mapVersion: undefined });
   const layerRef = useRef(null);
   const [, rerender] = useState(0);
@@ -377,6 +378,13 @@ function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf
     const here = (rec) => (rec.anim && rec.legs ? positionAt(rec.legs, rec.anim.currentTime ?? 0)?.point : null) || rec.point;
     // What is left of a unit's walk, in ms: its pose waits for it.
     const walkLeft = (rec) => (rec?.anim && rec.legs ? Math.max(0, totalMs(rec.legs) - (rec.anim.currentTime ?? 0)) : 0);
+    // A Raven's flight, noted for its feathers; spent ones are dropped here.
+    let flown = false;
+    flights.current = flights.current.filter((f) => Date.now() < featherEnd(f));
+    const flew = (leg) => {
+      flights.current.push({ id: `${leg.pts[0].x},${leg.pts[0].y}@${Date.now()}`, from: leg.pts[0], to: leg.pts[leg.pts.length - 1], at: Date.now(), ms: leg.ms });
+      flown = true;
+    };
     // A unit's latest call, noted once per call; a re-render only when one is new.
     const notePoses = (placing) => {
       const now = Date.now();
@@ -438,6 +446,7 @@ function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf
             else if (u.kind === 'raven') legs = [{ place: p.place, pts: [ravenHome, p.point], ms: HOP_MS }];
             else legs = [{ place: p.place, pts: [gateOpening, p.point], ms: HOP_MS }];
             play(rec, el, legs);
+            if (u.kind === 'raven') flew(legs[0]);
           }
           fadeIn(rec, el);
         }
@@ -478,6 +487,7 @@ function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf
           legs = (rec.anim && rec.legs && replan(L, rooms, rec.legs, rec.anim.currentTime ?? 0, ['gate'], L.gate.outer)) || planWalk(L, rooms, { place: rec.place, point: rec.point }, ['gate'], L.gate.outer);
         } else {
           legs = [{ place: rec.place, pts: [here(rec), rec.unit.kind === 'raven' ? ravenHome : gateOpening], ms: HOP_MS }];
+          if (rec.unit.kind === 'raven') flew(legs[0]);
         }
         play(rec, el, legs, 'forwards');
         const end = legs[legs.length - 1];
@@ -504,9 +514,12 @@ function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf
     }
 
     notePoses(false);
+    if (flown) rerender((n) => n + 1);
   });
 
   return (
+    <>
+    <Feathers flights={flights} />
     <g className="castle-units" ref={layerRef} onMouseOver={(e) => onHover(hoverAt(e.target))} onMouseLeave={() => onHover(null)}>
       {shown.map(({ u, p, ghost }) => {
         const selectable = !ghost && (rooms.has(p.place) || p.place === 'village' || p.place === 'outside');
@@ -529,6 +542,43 @@ function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf
           />
         );
       })}
+    </g>
+    </>
+  );
+}
+
+/**
+ * A Raven's contrail (#182, owner's pick 2026-10-01: feathers): five feathers
+ * dropped along each flight, up to the wall and back, each as the Raven
+ * passes, then drifting down and fading in five steps. It steps on the shared
+ * flip-book, which already runs while a Raven beats its wings, and stops once
+ * the last feather has gone. `flights` is UnitLayer's note of each flight.
+ */
+const FEATHERS = 5;
+const FEATHER_HOLD_MS = 500;
+const FEATHER_FADE_MS = 1500;
+const featherEnd = (f) => f.at + f.ms + FEATHER_HOLD_MS + FEATHER_FADE_MS;
+function Feathers({ flights }) {
+  const now = Date.now();
+  const live = flights.current.filter((f) => now < featherEnd(f));
+  useFlipbook(live.length > 0);
+  if (!live.length) return null;
+  const out = [];
+  for (const f of live) {
+    for (let i = 1; i <= FEATHERS; i += 1) {
+      const t = i / (FEATHERS + 1);
+      const age = now - (f.at + f.ms * t);
+      if (age < 0) continue;
+      const step = age < FEATHER_HOLD_MS ? 0 : Math.floor((age - FEATHER_HOLD_MS) / (FEATHER_FADE_MS / 5)) + 1;
+      if (step >= 5) continue;
+      const x = Math.round((f.from.x + (f.to.x - f.from.x) * t + (i % 2 ? 4 : -4)) * 10) / 10;
+      const y = Math.round((f.from.y + (f.to.y - f.from.y) * t + Math.min(14, age / 150)) * 10) / 10;
+      out.push(<ellipse key={`${f.id}-${i}`} className="castle-feather" cx={x} cy={y} rx={1.8} ry={5} transform={`rotate(${i % 2 ? 35 : -35} ${x} ${y})`} opacity={0.85 * (1 - step / 5)} />);
+    }
+  }
+  return (
+    <g className="castle-feathers" aria-hidden="true">
+      {out}
     </g>
   );
 }
@@ -691,6 +741,7 @@ export default function CastleStage({ map, state, generation, selected, onSelect
     }
   };
 
+  const ravensRight = perchX(L, rooms, map?.perch || null) > W / 2;
   const wallW = W - 2 * L.wallX;
   const wallH = L.wallBottom - L.wallY;
   const gateW = 96;
@@ -754,7 +805,8 @@ export default function CastleStage({ map, state, generation, selected, onSelect
         {Array.from({ length: Math.floor(W / 28) + 1 }, (_, i) => (
           <rect key={i} className="frostwall-face" x={6 + i * 28} y={WILDS_H - 10} width={14} height={10} />
         ))}
-        <text className="frostwall-label" x={W - 16} y={WILDS_H + FROST_H / 2 + 5}>
+        {/* Its name at the end away from the Ravens' perch, which once sat on it (#182). */}
+        <text className={`frostwall-label${ravensRight ? ' at-start' : ''}`} x={ravensRight ? 16 : W - 16} y={WILDS_H + FROST_H / 2 + 5}>
           The Frostwall
         </text>
       </g>
