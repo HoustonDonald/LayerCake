@@ -138,7 +138,10 @@ export default function App() {
       try {
         const result = await scan(value);
         setLineage(result);
-        setDir(result.projectDir);
+        // The box takes the scanned folder's own spelling, unless it was edited
+        // while the scan ran: the scan on load is not the user's, and replacing
+        // what they typed meanwhile submitted a path nobody typed (#180).
+        setDir((cur) => (cur.trim() === value ? result.projectDir : cur));
         localStorage.setItem(LAST_KEY, result.projectDir);
         setRecent((prev) => {
           const next = [result.projectDir, ...prev.filter((p) => p !== result.projectDir)].slice(
