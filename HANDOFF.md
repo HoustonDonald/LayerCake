@@ -4,8 +4,9 @@ Working state for picking this up in a new session. **Disposable.** Durable rule
 `CLAUDE.md`, user-facing spec in `README.md`. If something here contradicts those, they win and this
 file is stale.
 
-Last verified: **2026-10-01, afternoon** (the Castle: the Wall motif #172, the crane #173, legend
-tooltips #174, shell calls placed by files #176, Raiders' aim #177; sections below). Write/snapshot work was done 2026-09-05; file watching 2026-09-15;
+Last verified: **2026-10-01, evening** (the Castle's verb poses, #163, and the path box, #180;
+section below). Before that the afternoon: the Wall motif #172, the crane #173, legend
+tooltips #174, shell calls placed by files #176, Raiders' aim #177. Write/snapshot work was done 2026-09-05; file watching 2026-09-15;
 the single executable and the app-window isolation fix 2026-09-25; session history (Phase 1 of the
 session-wrap plan) 2026-09-26; testing against a copy of a real project, 2026-09-26 to 27 (see
 those sections below).
@@ -36,9 +37,9 @@ Smoke writes and deletes a throwaway `HKCU\Software\LayerCakeSmoke-*` key on Win
 same three skips), the castle checks taking about 21 s of it. 2026-09-30: 482 with movement (#161),
 488 with typed rooms (#167), 494 with the hover card and the Citadel (f7a2a0c), 500 with #170 (113
 s), 501 with #172 part A, 507 with Raiders and the crane, 511 with #176, 514 with #177 (2026-10-01; 137 to 170 s while the owner worked on beetle-etl beside
-it), **515 passed, 0 failed, 3 skipped** with #178, the
-same three skips throughout. `ui-motion.mjs` (the walking checks, scratchpad below)
-26 of 26 at every step.
+it), **515 passed, 0 failed, 3 skipped** with #178 and again with #163 (which tightened a check
+rather than adding one), the same three skips throughout. `ui-motion.mjs` (the walking checks,
+scratchpad below) 26 of 26 at every step, #163 included.
 
 **For a new session, in one paragraph (2026-10-01):** the owner uses LayerCake on beetle-etl (its
 `castle.json` was drafted by his own beetle-etl session; never write to that repo, memory
@@ -47,10 +48,20 @@ the Frostwall, the Wilds, Hollowmere for unclaimed files, Raiders for test runs)
 (#173), legend tooltips (#174), a plain shell call placed by the files it names (#176), Raiders aimed
 at what a run tests and mustering when nothing is on trial (#177), and the crane standing idle the
 same way when nothing is unproven (#178, owner: "Yes, the crane should act the same way").
-**Next: #163, chosen by the owner** (flip-book verb poses, on the same 8 fps timer as the volleys;
-he picks looks from pictures, memory `castle-product-direction`, so start with a picture of the
-options). Then #175 (the headful exe check cannot tell a covered window from a broken page), #168
-when he picks it up, #166's (b) queue.
+That evening: **#163's verb poses** (the owner picked them from a style board; section below) and
+**#180** (the path box, found on the way). **Open for the owner:** #179 (a hover card's "Session"
+row shows Claude Code's title, which read as the units' activity: "Session cleanup"; three options
+on the issue) and #181 (the test-and-build volleys now measure 13.4% of a core, not the 7.45%
+recorded; cause not found). #163 stays open for its other items (session rhythm, sound, replay,
+typed /skill, siege waves). Then #175 (the headful exe check cannot tell a covered window from a
+broken page), #168 when he picks it up, #166's (b) queue.
+The #163 session's scratchpad (`%TEMP%\claude\c--dev-layercake\41ed0760-...\scratchpad`) holds
+`ui-poses.mjs` (the poses' page check through castle-sim, 27 checks; `SHOTS=1` for pictures,
+`TREE=` for a copy), `ui-pathbox.mjs` (#180's), `mutate-163.mjs`, `ui-cost-poses.mjs` (the
+cost harness with a `pose` case), `cost-nopose.mjs`, `call-durations.mjs` and `ai-titles.mjs`
+(read-only: call times by verb, and Claude Code's session titles, from his transcripts), and the
+style board's source `keep-at-work.html` (published privately:
+https://claude.ai/artifact/WprF3y4yZbWCDigh6QQdyY).
 The #178 session's scratchpad (`%TEMP%\claude\c--dev-layercake\06df0862-...\scratchpad`) holds the
 current exe tools: `exe-lifecycle-castle.ps1 -ExePath <exe> -Port 5279` with `castle-exe-check.mjs`
 beside it (the headful launch check, 16 checks; `EXE_CHECK_HEADLESS=1` for an idle desktop),
@@ -64,7 +75,10 @@ castle log for a project), `docs-alarm.mjs`, `sim-watch.mjs`, `page-errors.mjs`,
 capped live run and its MCP server). Write scripts with the Write tool, never inline in a shell:
 backslashes and backticks were eaten five times today.
 
-`dist\LayerCake.exe` is **current**: built from ba528a9 (#178, the idle crane) on 2026-10-01
+`dist\LayerCake.exe` is **current**: built from 63cf6c8 (#163's poses, with #180) on 2026-10-01
+evening after the owner closed his copy, the binary grepped for the pose classes and `poseMinMs`,
+launch-checked headful 16 of 16 (`exe-lifecycle-castle.ps1`, port 5279), and started for him
+through Explorer. Before that from ba528a9 (#178, the idle crane) on 2026-10-01
 afternoon in a copy of the tree while his copy was still open, checked there (its card and rule text
 grepped in the binary; headful launch check 16 of 16, his window untouched), then copied into `dist`
 once he closed his (hashes equal) and started for him through Explorer. Before that from eb6f9f5 (#177, Raiders' aim) on 2026-10-01
@@ -78,6 +92,30 @@ drew the Castle from his running copy. Before that from 6ab127a (#172, #173) tha
 the app window included) and started for him through Explorer; his Docs room then read Embers, no
 scaffolding, no alarms (`docs-alarm.mjs`). (It was rebuilt five times that day: after #161, #165, #167
 with the art, the hover card with the Citadel, #170, and #171.)
+
+### 2026-10-01, evening: verb poses (#163), the path box (#180)
+
+- **The board** (owner's rule: he picks from pictures): three looks and three timing rules,
+  animated on the 8 fps step. Measured first, to make timing a real choice: across 420 of his
+  transcripts, reads end in a median 64 ms, searches 149 ms, writes 90 ms, shell 2.1 s, edits
+  2.3 s (the table is on #163). **His picks:** the whole figure acts, with the room's light in it;
+  a pose plays at least 2 s, and longer while the call runs.
+- **Built** (README "Poses" is the spec): `client/components/castlePoses.jsx` draws the frames;
+  CastleStage's one shared flip-book timer (a store read with `useSyncExternalStore`) now steps
+  arrows, stones and poses together and runs only while something acts; UnitLayer notes each
+  unit's latest call and starts its pose when the walk there ends. Server: `last.verb`,
+  `WINDOWS.poseMinMs` (2 s), the legend's unit rules. **My call, disclosed:** the Herald's bell
+  swings on the 1.2 s pulse, not at 8 fps, because a Herald can stand for hours.
+- **Cost, measured headful** (`ui-cost-poses.mjs`): a pose playing, 7.6% to 9.0% of a core
+  (renderer plus GPU, two runs), flat with two units, 0.12% to 0.15% after. The test-and-build
+  volleys read 13.4% with poses off and 14.6% with them on, the same session, against 7.45%
+  recorded on 2026-09-30: filed as #181, cause not found.
+- **#180, found by the page check:** the scan on load replaced a path typed while it ran
+  (`C:\dev\layercakeercake`). Fixed in its own commit; `ui-pathbox.mjs` holds the load's scan to
+  make the race certain.
+- **#179, the owner's question:** "Session cleanup" on every hover card is Claude Code's title for
+  his beetle-etl session `b053be6e`, set from the prompt "Ignore the last message it was for a
+  different session" and never changed. Options on the issue; nothing built.
 
 ### 2026-09-30, late night: the Castle simulator, and the Wall motif (#172)
 
