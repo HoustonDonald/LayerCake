@@ -57,8 +57,10 @@ castle log for a project), `docs-alarm.mjs`, `sim-watch.mjs`, `page-errors.mjs`,
 capped live run and its MCP server). Write scripts with the Write tool, never inline in a shell:
 backslashes and backticks were eaten five times today.
 
-`dist\LayerCake.exe` is **current except #177**: rebuilt from 9d6a1a4 (#176, shell calls placed by
-the files they name) on 2026-10-01 afternoon, launch-checked headful 16 of 16, and started for him. Before that from
+`dist\LayerCake.exe` is **current**: rebuilt from eb6f9f5 (#177, Raiders' aim) on 2026-10-01
+afternoon, launch-checked headful 16 of 16 (`exe-lifecycle-castle.ps1`, port 5279), and started for
+him through Explorer. Before that from 9d6a1a4 (#176, shell calls placed by
+the files they name) the same afternoon, launch-checked headful 16 of 16, and started for him. Before that from
 f952732 (#174, the legend tooltips) and started for him. Its headful launch check failed one check twice (the in-window Castle
 draw timed out; #175, likely a covered window); headless it passed 16 of 16, and a headless browser
 drew the Castle from his running copy. Before that from 6ab127a (#172, #173) that morning; before that from 95a3763 (#170 and
