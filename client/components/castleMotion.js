@@ -158,7 +158,7 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
  * the Wilds when their targets lie in the back half of the keep, else they
  * shoot from the front, out past Hollowmere; either way over the wall nearer
  * the targets (#172). A crane sits before the gate, on the side away from
- * Hollowmere, and lowers its stones onto the top of each room (#173).
+ * Hollowmere, and lowers its stones onto the centre of each room (#173).
  */
 export function runSpot(L, rooms, u) {
   const targets = (u.targets || []).map((id) => rooms.get(id)).filter(Boolean);
@@ -169,7 +169,8 @@ export function runSpot(L, rooms, u) {
   if (u.kind === 'crane') {
     const side = L.villageBox.x > L.gate.x ? -1 : 1;
     at = { x: L.gate.x + side * 130, y: L.wallBottom + 50 };
-    return { at, north, hits: cells.map((b) => ({ x: b.x + b.w / 2, y: b.y + 18 })) };
+    // The cable meets each room at its centre (owner, 2026-10-01).
+    return { at, north, hits: cells.map((b) => ({ x: b.x + b.w / 2, y: b.y + b.h / 2 })) };
   } else {
     const meanRow = targets.length ? targets.reduce((n, r) => n + r.row, 0) / targets.length : 0;
     north = meanRow <= (L.rows - 1) / 2;
