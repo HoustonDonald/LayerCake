@@ -188,6 +188,31 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     await hook({ hook_event_name: 'PostToolUse', tool_name: 'Read', tool_use_id: 'toolu_c_read', tool_input: { file_path: P('docs', 'guide.md') }, tool_response: { type: 'text', file: { content: S.readBody } } });
     check('and when the call ends it says when', await s1.untilState((st) => typeof lastOf(st, `M:${sid}`)?.endAt === 'number'), JSON.stringify(lastOf(s1.last('state'), `M:${sid}`)));
 
+    // --- what Raiders aim at while nothing is on trial (#177) -----------------------
+    // A subagent of its own runs these, so the Mason's trail checked below is untouched.
+    const unitOf = (st, key) => st?.units?.find((u) => u.key === key);
+    const prober = 'a1777777777777777';
+    const asProber = { agent_id: prober, agent_type: 'general-purpose' };
+    await hook({ hook_event_name: 'SubagentStart', ...asProber });
+    const wholeSuite = { command: 'npm test', description: 'Whole suite' };
+    await hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'toolu_c_muster', tool_input: wholeSuite, ...asProber });
+    check('with nothing unproven and no test file named, a test run brings Raiders that muster and shoot at nothing (#177)',
+      await s1.untilState((st) => {
+        const u = unitOf(st, 'X:toolu_c_muster');
+        return u?.kind === 'raiders' && u.room === 'wilds' && Array.isArray(u.targets) && u.targets.length === 0;
+      }),
+      JSON.stringify(unitOf(s1.last('state'), 'X:toolu_c_muster')));
+    await hook({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'toolu_c_muster', tool_input: wholeSuite, tool_response: { stdout: '' }, ...asProber });
+    const oneFile = { command: 'npx vitest run tests/app.test.js', description: 'One test file' };
+    await hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'toolu_c_named', tool_input: oneFile, ...asProber });
+    check('a test run naming tests/app.test.js aims at the code it is named after, app.* in the API room, not at the Tests room (#177)',
+      await s1.untilState((st) => JSON.stringify(unitOf(st, 'X:toolu_c_named')?.targets) === JSON.stringify(['api'])),
+      JSON.stringify(unitOf(s1.last('state'), 'X:toolu_c_named')));
+    await hook({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'toolu_c_named', tool_input: oneFile, tool_response: { stdout: '' }, ...asProber });
+    await hook({ hook_event_name: 'SubagentStop', ...asProber });
+    // These runs lit the Tests room; let it settle so the run below lights it anew.
+    await s1.untilState((st) => st.rooms.tests.state !== 'survey', 6000);
+
     // --- change, scaffolding, a failing and a passing run -------------------------
     await call('toolu_c_edit', 'Edit', { file_path: P('db', 'schema.sql'), old_string: S.oldString, new_string: S.newString }, { response: { filePath: P('db', 'schema.sql'), oldString: S.oldString, newString: S.newString } });
     check('an edit lights its room as Construction and puts up scaffolding',
@@ -196,7 +221,6 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     const testCmd = { command: `${S.commandHead} --flag && npm test`, description: 'Run the tests' };
     await hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'toolu_c_t1', tool_input: testCmd });
     check('a running test run lights the Tests room', await s1.untilState((st) => st.rooms.tests.state === 'survey'));
-    const unitOf = (st, key) => st?.units?.find((u) => u.key === key);
     check('a running test run brings Raiders out of the Wilds, aimed at the room with unproven changes, the one it will judge (#172)',
       await s1.untilState((st) => {
         const u = unitOf(st, 'X:toolu_c_t1');
@@ -445,6 +469,21 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     check('a test run that fails with no exit code (a timeout) has no verdict (#164)',
       await s1.untilState((st) => st.runs.some((r) => r.id === 'toolu_c_timeout' && r.ok === null && r.noVerdict === 'no exit code')),
       JSON.stringify(s1.last('state')?.runs));
+
+    // Name matching through a file this castle has seen (#177): the session
+    // above read src/lib/core.js; tests/unit/core.test.js mirrors to
+    // unit/core.js, which no room claims, so only the seen file can find Core.
+    const coreTests = { command: 'npx jest tests/unit/core.test.js', description: 'Core tests' };
+    await hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'toolu_c_seen', tool_input: coreTests });
+    check('a test run naming core.test.js aims at the room of src/lib/core.js, a file this castle has seen, and still at the rooms with unproven changes (#177)',
+      await s1.untilState((st) => {
+        const t = unitOf(st, 'X:toolu_c_seen')?.targets || [];
+        return t.includes('core') && t.includes('api');
+      }),
+      JSON.stringify(unitOf(s1.last('state'), 'X:toolu_c_seen')));
+    // Ended with no verdict (a timeout): a pass here would prove the rooms
+    // that later checks need still unproven, and clear #170's thrash.
+    await hook({ hook_event_name: 'PostToolUseFailure', tool_name: 'Bash', tool_use_id: 'toolu_c_seen', tool_input: coreTests, error: 'Command timed out after 2m 0s' });
 
     // --- the launched session's own transcript: dedupe and backfill ---------------------
     await fs.writeFile(

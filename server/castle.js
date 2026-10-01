@@ -33,7 +33,7 @@ import { isInsideDir, projectSlug, samePathKey } from './paths.js';
 import { liveFrom } from './session-routes.js';
 import { discoverSessions, getReader, liveSessions, readSubagentMeta, subagentFiles } from './sessions.js';
 import { SHELL_TOOLS, SubagentReader } from './transcript.js';
-import { ROOM_TYPES, classifyCommand, draftPrompt, loadMap, locate, locateFolder } from './castlemap.js';
+import { ROOM_TYPES, classifyCommand, draftPrompt, loadMap, locate, locateFolder, testedBy } from './castlemap.js';
 
 /**
  * Every time window, scaled for the smoke test only (LAYERCAKE_CASTLE_TIME_SCALE,
@@ -64,6 +64,8 @@ const TICK_MS = 1000;
 const SELECT_EVERY_TICKS = Math.max(1, Math.round(5 * SCALE));
 const FLUSH_MS = 250;
 const MAX_CACHE = 20_000;
+/** File names the fold remembers for name matching (#177); past it, new names are not indexed. */
+const MAX_SEEN = 5_000;
 const MAX_LAGS = 20;
 /**
  * Room changes kept per Mason and Knight, for the page to walk (#161). A frame
@@ -112,7 +114,7 @@ export const UNIT_KINDS = [
   { kind: 'raven', letter: 'R', label: 'Raven', rule: 'An MCP tool call: flies up to the wall above the first Integrations room (above the gate when there is none), and back when the call returns.' },
   { kind: 'scout', letter: 'S', label: 'Scout', rule: 'A web fetch or search: walks out of the gate, and back when the call returns.' },
   { kind: 'herald', letter: 'H', label: 'Herald', rule: 'Claude is waiting for you (a permission or input prompt). Only sessions started from LayerCake can report this.' },
-  { kind: 'raiders', letter: 'A', label: 'Raiders', rule: "A test run, while it runs: a band out of the Wilds, or at the front, whichever is nearer, shooting over the wall at the rooms the run will judge (those with unproven changes, else the run's own room). Leaves when the run ends or its turn is interrupted." },
+  { kind: 'raiders', letter: 'A', label: 'Raiders', rule: 'A test run, while it runs: a band out of the Wilds, or at the front, whichever is nearer, shooting over the wall at the rooms with unproven changes (the ones its verdict judges) and at the code its named test files are named after (a guess by name: scan.test.js points at scan.js, beside the test, mirrored out of a tests folder, or seen in this castle). With neither, it musters at the forest\'s edge and shoots at nothing. Leaves when the run ends or its turn is interrupted.' },
   { kind: 'crane', letter: 'C', label: 'Crane', rule: "A build run, while it runs: a treadwheel crane before the gate, hoisting stones along a cable onto the rooms the build covers (those with unproven changes, else the run's own room). Leaves when the run ends or its turn is interrupted." },
 ];
 
@@ -297,6 +299,9 @@ export function fold(events, map, locateCall) {
   const proof = new Set(map.proof);
   const unprovableTypes = new Set(ROOM_TYPES.filter((t) => t.provable === false).map((t) => t.type));
   const unprovable = new Set(map.rooms.filter((r) => unprovableTypes.has(r.type)).map((r) => r.id));
+  // Rooms of the code under test, for name matching (#177): not a Tests room, not one no run can prove.
+  const codeRoom = (id) => !unprovable.has(id) && map.rooms.find((r) => r.id === id)?.type !== 'tests';
+  const seen = new Map();
   const calls = new Map();
   const files = new Map();
   const runs = [];
@@ -406,6 +411,16 @@ export function fold(events, map, locateCall) {
         for (const p of loc.rels) pushRecent(r.recent, { path: p, at: e.at, verb, sessionId: e.sessionId, agentId: e.agentId || null }, MAX_RECENT);
       }
       for (const p of loc.village) village.set(p, { path: p, at: e.at, verb });
+      // Every project file a call located, by name: what a named test file is
+      // for may be a file this castle has seen (#177).
+      for (const rel of loc.rels) {
+        const name = rel.slice(rel.lastIndexOf('/') + 1).toLowerCase();
+        if (!seen.has(name)) {
+          if (seen.size >= MAX_SEEN) continue;
+          seen.set(name, new Map());
+        }
+        seen.get(name).set(rel, loc.roomsByRel[rel] || []);
+      }
       for (const p of loc.outside) outside.set(p, { path: p, at: e.at, verb });
       if (verb === 'skill') {
         dropWizardsOf(caller.key);
@@ -420,7 +435,7 @@ export function fold(events, map, locateCall) {
         // build (it builds, #173), while it runs. Their targets are set once
         // the fold is done (below).
         const kind = loc.command.kind === 'test' ? 'raiders' : 'crane';
-        units.set(`X:${e.toolUseId}`, { key: `X:${e.toolUseId}`, kind, sessionId: e.sessionId, caller: caller.key, room: kind === 'raiders' ? 'wilds' : 'gate', label: e.summary || loc.command.rule, tool: e.tool || null, runRoom: loc.command.room, since: e.at });
+        units.set(`X:${e.toolUseId}`, { key: `X:${e.toolUseId}`, kind, sessionId: e.sessionId, caller: caller.key, room: kind === 'raiders' ? 'wilds' : 'gate', label: e.summary || loc.command.rule, tool: e.tool || null, runRoom: loc.command.room, tested: loc.tested || null, since: e.at });
         runs.push({ id: e.toolUseId, kind: loc.command.kind, rule: loc.command.rule, room: loc.command.room, summary: e.summary, at: e.at, endAt: null, ok: null, exitCode: null, sessionId: e.sessionId, background: Boolean(e.targets?.background), judged: [] });
         if (runs.length > MAX_RUNS) runs.shift();
       }
@@ -532,11 +547,24 @@ export function fold(events, map, locateCall) {
   }
 
   // What a running test or build would judge if it ended now, which is what
-  // finishRun will judge: every room with unproven changes, else the run's
-  // own room (#172). Raiders aim there, and a crane hoists there (#173).
+  // finishRun will judge: every room with unproven changes (#172).
   const unprovenNow = [...rooms.entries()].filter(([, r]) => r.unproven).map(([id]) => id);
   for (const u of units.values()) {
-    if (u.kind === 'raiders' || u.kind === 'crane') u.targets = unprovenNow.length ? unprovenNow : u.runRoom && rooms.has(u.runRoom) ? [u.runRoom] : [];
+    if (u.kind === 'crane') {
+      // A crane builds onto those rooms, else onto the build's own room (#173).
+      u.targets = unprovenNow.length ? unprovenNow : u.runRoom && rooms.has(u.runRoom) ? [u.runRoom] : [];
+    } else if (u.kind === 'raiders') {
+      // Raiders shoot at those rooms and at the code the run's named test
+      // files are named after (#177, owner decisions: name matching, added to
+      // the unproven rooms because those are where the verdict lands). With
+      // neither, they muster and shoot at nothing: a run's own Tests room is
+      // not what it tests.
+      const named = new Set(u.tested?.rooms || []);
+      for (const name of u.tested?.names || []) {
+        for (const ids of (seen.get(name) || new Map()).values()) for (const id of ids) if (codeRoom(id)) named.add(id);
+      }
+      u.targets = [...new Set([...unprovenNow, ...named])];
+    }
   }
 
   // Trim Hollowmere to the most recent, keeping the count honest.
@@ -806,6 +834,8 @@ class Castle {
       if (cmd.kind) {
         const room = map.rooms.find((r) => r.id === cmd.room);
         if (room) out.rooms.push(room.id);
+        // What its named test files are for, for its Raiders to aim at (#177).
+        if (cmd.kind === 'test') out.tested = testedBy(map, this.projectDir, e.targets?.shellPaths || []);
         out.label = `${cmd.kind} run (${cmd.rule})${room ? ` in ${room.name}` : ''}`;
         return out;
       }

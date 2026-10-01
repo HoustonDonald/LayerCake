@@ -958,10 +958,16 @@ waits for you, the one unit that pulses. Clicking a unit opens the room it stand
 
 **Raiders** (three hooded archers, on dark discs ringed in ice) are a test run while it runs (#172).
 They come out of the Wilds, or stand out at the front past Hollowmere, whichever side is nearer the
-rooms they aim at, and loose arrows over the wall at the rooms the run will judge: those with
-unproven changes, else the run's own room. A **crane** (a treadwheel crane, ringed in wood) is a
+rooms they aim at, and loose arrows over the wall at the rooms with unproven changes (the ones the
+run's verdict judges) and at the code the command's named test files are for (#177). That is a
+guess by name: `scan.test.js`, `scan.spec.ts`, `test_scan.py`, `scan_test.go` and `ScanTests.cs` point
+at `scan`, looked for beside the test, mirrored out of a tests folder (`tests/server/scan.test.js`:
+`server/scan.js`), and among files of that name the castle has seen calls touch; Tests and Docs rooms
+are left out. A bare `npm test` names nothing. With no unproven changes and no named test file, the
+band musters at the forest's edge and shoots at nothing: the run's own Tests room is not what it
+tests. A **crane** (a treadwheel crane, ringed in wood) is a
 build run (#173: a build builds, it does not attack), before the gate, hoisting stones along a cable
-onto the same rooms. Both leave when the run ends, or when its turn is interrupted, and the verdict
+onto the rooms with unproven changes, else onto the build's own room. Both leave when the run ends, or when its turn is interrupted, and the verdict
 lands as the rules say: a passing proof run takes the scaffolding down (a test run; a build too where
 `proof` includes builds), and a failure raises the Alarm. Their arrows and stones are drawn as a
 flip-book, 8 frames a second on one shared timer, only while a run is on screen, and they hold still

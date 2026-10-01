@@ -448,6 +448,63 @@ export function classifyCommand(map, heads) {
 }
 
 /**
+ * A test file's name, to the code it is named after (#177): x.test.js and
+ * x.spec.ts name x.js and x.ts, test_x.py and x_test.py name x.py, x_test.go
+ * names x.go, XTests.cs names X.cs. Null for a name that marks no test. The
+ * name is at most 260 characters (commandPaths), so no pattern here costs
+ * more than a pass or two over it.
+ */
+const TEST_NAMES = [
+  [/^(.+)\.(?:test|spec)\.([A-Za-z0-9]+)$/i, (m) => `${m[1]}.${m[2]}`],
+  [/^test_(.+\.py)$/i, (m) => m[1]],
+  [/^(.+)_test\.(py|go)$/i, (m) => `${m[1]}.${m[2]}`],
+  [/^(.+?)(?:Tests?|Spec)\.(cs|java|kt|swift|scala)$/, (m) => `${m[1]}.${m[2]}`],
+];
+export function codeNameOf(base) {
+  for (const [re, to] of TEST_NAMES) {
+    const m = re.exec(base);
+    if (m && m[1]) return to(m);
+  }
+  return null;
+}
+
+/** Folders a project keeps tests in, left out of a test's path to mirror it onto the code's. */
+const TEST_DIRS = new Set(['test', 'tests', '__tests__', 'spec', 'specs']);
+
+/**
+ * What a test run's named test files are for (#177, owner decision: name
+ * matching, a heuristic and said so). For each path inside the project whose
+ * name marks a test: the code name it is named after (lowercased, for
+ * castle.js to look up among files it has seen), and the rooms that claim that
+ * code beside the test or where the path mirrors out of a test folder
+ * (tests/a/x.test.js: a/x.js). Rooms of a test type or of a type no run can
+ * prove are left out: the aim is the code under test.
+ */
+export function testedBy(map, projectDir, paths) {
+  const names = [];
+  const rooms = [];
+  const typeOf = new Map(map.rooms.map((r) => [r.id, r.type]));
+  const unprovable = new Set(ROOM_TYPES.filter((t) => t.provable === false).map((t) => t.type));
+  const isCode = (id) => typeOf.get(id) !== 'tests' && !unprovable.has(typeOf.get(id));
+  for (const p of paths || []) {
+    if (!isInsideDir(p, projectDir)) continue;
+    const rel = path.relative(projectDir, p).split(path.sep).join('/');
+    const parts = rel.split('/');
+    const code = codeNameOf(parts.pop());
+    if (!code) continue;
+    if (!names.includes(code.toLowerCase())) names.push(code.toLowerCase());
+    const candidates = [[...parts, code].join('/')];
+    const mirrored = parts.filter((s) => !TEST_DIRS.has(s.toLowerCase()));
+    if (mirrored.length !== parts.length) candidates.push([...mirrored, code].join('/'));
+    for (const c of candidates) {
+      const loc = locate(map, projectDir, path.join(projectDir, c));
+      if (loc.where === 'room') for (const id of loc.rooms) if (isCode(id) && !rooms.includes(id)) rooms.push(id);
+    }
+  }
+  return { names, rooms };
+}
+
+/**
  * The prompt the page copies for "Copy prompt for Claude". Built here, from
  * the same type list and limits the loader checks, so the page never keeps a
  * copy of the schema that could drift from the validator.

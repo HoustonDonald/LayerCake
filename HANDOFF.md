@@ -4,8 +4,8 @@ Working state for picking this up in a new session. **Disposable.** Durable rule
 `CLAUDE.md`, user-facing spec in `README.md`. If something here contradicts those, they win and this
 file is stale.
 
-Last verified: **2026-09-30, evening** (the Castle: movement #161, typed project rooms #167, art
-first pass with hover card and Citadel #162; sections below). Write/snapshot work was done 2026-09-05; file watching 2026-09-15;
+Last verified: **2026-10-01, afternoon** (the Castle: the Wall motif #172, the crane #173, legend
+tooltips #174, shell calls placed by files #176, Raiders' aim #177; sections below). Write/snapshot work was done 2026-09-05; file watching 2026-09-15;
 the single executable and the app-window isolation fix 2026-09-25; session history (Phase 1 of the
 session-wrap plan) 2026-09-26; testing against a copy of a real project, 2026-09-26 to 27 (see
 those sections below).
@@ -34,12 +34,31 @@ Smoke writes and deletes a throwaway `HKCU\Software\LayerCakeSmoke-*` key on Win
 
 2026-09-29, with the Castle: `node scripts/smoke.mjs` gave 477 passed, 0 failed, 3 skipped (the
 same three skips), the castle checks taking about 21 s of it. 2026-09-30: 482 with movement (#161),
-488 with typed rooms (#167), 494 with the hover card and the Citadel (f7a2a0c), **500 passed, 0
-failed, 3 skipped** with #170 (113 s; HEAD before it 109 s), the same three skips throughout. `ui-motion.mjs` (the walking checks, scratchpad below)
+488 with typed rooms (#167), 494 with the hover card and the Citadel (f7a2a0c), 500 with #170 (113
+s), 501 with #172 part A, 507 with Raiders and the crane, 511 with #176, **514 passed, 0 failed, 3
+skipped** with #177 (2026-10-01; 137 to 170 s while the owner worked on beetle-etl beside it), the
+same three skips throughout. `ui-motion.mjs` (the walking checks, scratchpad below)
 26 of 26 at every step.
 
-`dist\LayerCake.exe` is **current**: rebuilt from 9d6a1a4 (#176, shell calls placed by the files they
-name) on 2026-10-01 afternoon, launch-checked headful 16 of 16, and started for him. Before that from
+**For a new session, in one paragraph (2026-10-01):** the owner uses LayerCake on beetle-etl (its
+`castle.json` was drafted by his own beetle-etl session; never write to that repo, memory
+`beetle-etl-copy-only`). Today's Castle work, all pushed and closed: the Wall motif (#172: Duskhold,
+the Frostwall, the Wilds, Hollowmere for unclaimed files, Raiders for test runs), a crane for builds
+(#173), legend tooltips (#174), a plain shell call placed by the files it names (#176), Raiders aimed
+at what a run tests and mustering when nothing is on trial (#177). **Open for the owner:** should the
+crane idle the same way when nothing is unproven (it builds onto the Build room now; asked on #177)?
+**Next:** #163 (flip-book verb poses, on the same 8 fps timer as the volleys), #175 (the headful exe
+check cannot tell a covered window from a broken page), #168 when he picks it up, #166's (b) queue.
+This session's scratchpad (`%TEMP%\claude\c--dev-layercake\476797d3-...\scratchpad`) holds the tools
+below: `ui-cost.mjs` (`CASES=quiet,siege`, `NOGPU=1`), `ui-siege-demo.mjs` (`FRONT=1`),
+`ui-legend-check.mjs`, `route-check-172.mjs`, `castle-log-stats.mjs` (read-only: a running app's
+castle log for a project), `docs-alarm.mjs`, `sim-watch.mjs`, `page-errors.mjs`, `stream-raw.mjs`,
+`command-paths-check.mjs`, `mutate-170/172/176/177.mjs` with `mutate-engine.part`, and `live/` (the
+capped live run and its MCP server). Write scripts with the Write tool, never inline in a shell:
+backslashes and backticks were eaten five times today.
+
+`dist\LayerCake.exe` is **current except #177**: rebuilt from 9d6a1a4 (#176, shell calls placed by
+the files they name) on 2026-10-01 afternoon, launch-checked headful 16 of 16, and started for him. Before that from
 f952732 (#174, the legend tooltips) and started for him. Its headful launch check failed one check twice (the in-window Castle
 draw timed out; #175, likely a covered window); headless it passed 16 of 16, and a headless browser
 drew the Castle from his running copy. Before that from 6ab127a (#172, #173) that morning; before that from 95a3763 (#170 and
@@ -112,14 +131,10 @@ runs while rooms cool, and the fade into Embers was still seen (`ui-cost.mjs`). 
 of 26; the exe built from a tree copy 16 of 16. dist was rebuilt with it once the owner closed his
 copy (16 of 16) and started for him.
 
-**For a new session, in one paragraph:** the Castle is mid-#162 (art). The first pass, hover card and
-Citadel are committed and in the owner's hands for review; #162 stays open for his changes. His
-product direction: every castle must be tuned to the specific project (rooms are its own sections,
-#167; a process for other users' projects is #168, deferred), and the audience is people used to
-video games, so activity should read at a glance. Animation is budgeted by measurement (#163's
-comment, #169): flip-book poses at 6 to 8 fps on one shared timer, only while a call runs; smooth
-motion only for walking. The scratchpad tools for this session are listed under "Tooling" in the
-sections below (`%TEMP%\claude\c--dev-layercake\f3eeffcb-...\scratchpad`).
+(2026-09-30's summary, superseded by the one at the top.) His product direction: every castle tuned
+to the specific project (#167; a process for other users' projects is #168, deferred), an audience
+used to video games, animation budgeted by measurement (#163's comment, #169). The 2026-09-30
+session's scratchpad tools are listed under "Tooling" below (`f3eeffcb-...\scratchpad`).
 
 ### 2026-09-30, afternoon: rooms are the project's own sections (#167), then the art (#162)
 
