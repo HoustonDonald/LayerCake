@@ -47,9 +47,16 @@ the Frostwall, the Wilds, Hollowmere for unclaimed files, Raiders for test runs)
 (#173), legend tooltips (#174), a plain shell call placed by the files it names (#176), Raiders aimed
 at what a run tests and mustering when nothing is on trial (#177), and the crane standing idle the
 same way when nothing is unproven (#178, owner: "Yes, the crane should act the same way").
-**Next:** #163 (flip-book verb poses, on the same 8 fps timer as the volleys), #175 (the headful exe
-check cannot tell a covered window from a broken page), #168 when he picks it up, #166's (b) queue.
-This session's scratchpad (`%TEMP%\claude\c--dev-layercake\476797d3-...\scratchpad`) holds the tools
+**Next: #163, chosen by the owner** (flip-book verb poses, on the same 8 fps timer as the volleys;
+he picks looks from pictures, memory `castle-product-direction`, so start with a picture of the
+options). Then #175 (the headful exe check cannot tell a covered window from a broken page), #168
+when he picks it up, #166's (b) queue.
+The #178 session's scratchpad (`%TEMP%\claude\c--dev-layercake\06df0862-...\scratchpad`) holds the
+current exe tools: `exe-lifecycle-castle.ps1 -ExePath <exe> -Port 5279` with `castle-exe-check.mjs`
+beside it (the headful launch check, 16 checks; `EXE_CHECK_HEADLESS=1` for an idle desktop),
+`exe-tree-build.mjs` (builds the exe in a tree copy while his is open; `clean` removes the copy),
+`ui-crane-idle.mjs` (a page check through castle-sim, a template for #163's), and `mutate-178.mjs`.
+The earlier scratchpad (`%TEMP%\claude\c--dev-layercake\476797d3-...\scratchpad`) holds the tools
 below: `ui-cost.mjs` (`CASES=quiet,siege`, `NOGPU=1`), `ui-siege-demo.mjs` (`FRONT=1`),
 `ui-legend-check.mjs`, `route-check-172.mjs`, `castle-log-stats.mjs` (read-only: a running app's
 castle log for a project), `docs-alarm.mjs`, `sim-watch.mjs`, `page-errors.mjs`, `stream-raw.mjs`,
