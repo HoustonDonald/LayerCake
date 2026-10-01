@@ -35,8 +35,8 @@ Smoke writes and deletes a throwaway `HKCU\Software\LayerCakeSmoke-*` key on Win
 2026-09-29, with the Castle: `node scripts/smoke.mjs` gave 477 passed, 0 failed, 3 skipped (the
 same three skips), the castle checks taking about 21 s of it. 2026-09-30: 482 with movement (#161),
 488 with typed rooms (#167), 494 with the hover card and the Citadel (f7a2a0c), 500 with #170 (113
-s), 501 with #172 part A, 507 with Raiders and the crane, 511 with #176, **514 passed, 0 failed, 3
-skipped** with #177 (2026-10-01; 137 to 170 s while the owner worked on beetle-etl beside it), the
+s), 501 with #172 part A, 507 with Raiders and the crane, 511 with #176, 514 with #177 (2026-10-01; 137 to 170 s while the owner worked on beetle-etl beside
+it), **515 passed, 0 failed, 3 skipped** with #178, the
 same three skips throughout. `ui-motion.mjs` (the walking checks, scratchpad below)
 26 of 26 at every step.
 
@@ -45,8 +45,8 @@ same three skips throughout. `ui-motion.mjs` (the walking checks, scratchpad bel
 `beetle-etl-copy-only`). Today's Castle work, all pushed and closed: the Wall motif (#172: Duskhold,
 the Frostwall, the Wilds, Hollowmere for unclaimed files, Raiders for test runs), a crane for builds
 (#173), legend tooltips (#174), a plain shell call placed by the files it names (#176), Raiders aimed
-at what a run tests and mustering when nothing is on trial (#177). **Open for the owner:** should the
-crane idle the same way when nothing is unproven (it builds onto the Build room now; asked on #177)?
+at what a run tests and mustering when nothing is on trial (#177), and the crane standing idle the
+same way when nothing is unproven (#178, owner: "Yes, the crane should act the same way").
 **Next:** #163 (flip-book verb poses, on the same 8 fps timer as the volleys), #175 (the headful exe
 check cannot tell a covered window from a broken page), #168 when he picks it up, #166's (b) queue.
 This session's scratchpad (`%TEMP%\claude\c--dev-layercake\476797d3-...\scratchpad`) holds the tools
@@ -57,7 +57,8 @@ castle log for a project), `docs-alarm.mjs`, `sim-watch.mjs`, `page-errors.mjs`,
 capped live run and its MCP server). Write scripts with the Write tool, never inline in a shell:
 backslashes and backticks were eaten five times today.
 
-`dist\LayerCake.exe` is **current**: rebuilt from eb6f9f5 (#177, Raiders' aim) on 2026-10-01
+`dist\LayerCake.exe` is **current except #178** (the idle crane; the exe embeds both the server and
+the client it touched, so it needs a rebuild once the owner closes his copy): rebuilt from eb6f9f5 (#177, Raiders' aim) on 2026-10-01
 afternoon, launch-checked headful 16 of 16 (`exe-lifecycle-castle.ps1`, port 5279), and started for
 him through Explorer. Before that from 9d6a1a4 (#176, shell calls placed by
 the files they name) the same afternoon, launch-checked headful 16 of 16, and started for him. Before that from

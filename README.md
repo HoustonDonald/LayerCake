@@ -967,7 +967,8 @@ are left out. A bare `npm test` names nothing. With no unproven changes and no n
 band musters at the forest's edge and shoots at nothing: the run's own Tests room is not what it
 tests. A **crane** (a treadwheel crane, ringed in wood) is a
 build run (#173: a build builds, it does not attack), before the gate, hoisting stones along a cable
-onto the rooms with unproven changes, else onto the build's own room. Both leave when the run ends, or when its turn is interrupted, and the verdict
+onto the rooms with unproven changes. With none, it stands idle, no cable out: the build's own room
+is not what it builds (#178). Both leave when the run ends, or when its turn is interrupted, and the verdict
 lands as the rules say: a passing proof run takes the scaffolding down (a test run; a build too where
 `proof` includes builds), and a failure raises the Alarm. Their arrows and stones are drawn as a
 flip-book, 8 frames a second on one shared timer, only while a run is on screen, and they hold still

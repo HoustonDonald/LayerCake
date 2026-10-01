@@ -209,6 +209,15 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
       await s1.untilState((st) => JSON.stringify(unitOf(st, 'X:toolu_c_named')?.targets) === JSON.stringify(['api'])),
       JSON.stringify(unitOf(s1.last('state'), 'X:toolu_c_named')));
     await hook({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'toolu_c_named', tool_input: oneFile, tool_response: { stdout: '' }, ...asProber });
+    const idleBuild = { command: 'npm run build', description: 'Build, nothing unproven' };
+    await hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'toolu_c_idle', tool_input: idleBuild, ...asProber });
+    check("with nothing unproven, a build's crane stands idle at the gate, building onto no room, not the Build room (#178)",
+      await s1.untilState((st) => {
+        const u = unitOf(st, 'X:toolu_c_idle');
+        return u?.kind === 'crane' && u.room === 'gate' && Array.isArray(u.targets) && u.targets.length === 0;
+      }),
+      JSON.stringify(unitOf(s1.last('state'), 'X:toolu_c_idle')));
+    await hook({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'toolu_c_idle', tool_input: idleBuild, tool_response: { stdout: '' }, ...asProber });
     await hook({ hook_event_name: 'SubagentStop', ...asProber });
     // These runs lit the Tests room; let it settle so the run below lights it anew.
     await s1.untilState((st) => st.rooms.tests.state !== 'survey', 6000);

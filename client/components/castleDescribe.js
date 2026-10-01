@@ -98,7 +98,7 @@ export function describeUnit(u, { state, map }) {
     case 'crane':
       tags.push('running');
       add(u.kind === 'raiders' ? 'Test run' : 'Build', u.label);
-      add(u.kind === 'raiders' ? 'Testing' : 'Building', (u.targets || []).map((id) => placeName(map, id)).join(', ') || (u.kind === 'raiders' ? 'nothing on trial: mustering' : 'no room'));
+      add(u.kind === 'raiders' ? 'Testing' : 'Building', (u.targets || []).map((id) => placeName(map, id)).join(', ') || (u.kind === 'raiders' ? 'nothing on trial: mustering' : 'nothing unproven: idle'));
       add('For', caller(u.caller));
       add('Since', ago(u.since));
       break;

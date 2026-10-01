@@ -115,7 +115,7 @@ export const UNIT_KINDS = [
   { kind: 'scout', letter: 'S', label: 'Scout', rule: 'A web fetch or search: walks out of the gate, and back when the call returns.' },
   { kind: 'herald', letter: 'H', label: 'Herald', rule: 'Claude is waiting for you (a permission or input prompt). Only sessions started from LayerCake can report this.' },
   { kind: 'raiders', letter: 'A', label: 'Raiders', rule: 'A test run, while it runs: a band out of the Wilds, or at the front, whichever is nearer, shooting over the wall at the rooms with unproven changes (the ones its verdict judges) and at the code its named test files are named after (a guess by name: scan.test.js points at scan.js, beside the test, mirrored out of a tests folder, or seen in this castle). With neither, it musters at the forest\'s edge and shoots at nothing. Leaves when the run ends or its turn is interrupted.' },
-  { kind: 'crane', letter: 'C', label: 'Crane', rule: "A build run, while it runs: a treadwheel crane before the gate, hoisting stones along a cable onto the rooms the build covers (those with unproven changes, else the run's own room). Leaves when the run ends or its turn is interrupted." },
+  { kind: 'crane', letter: 'C', label: 'Crane', rule: "A build run, while it runs: a treadwheel crane before the gate, hoisting stones along a cable onto the rooms with unproven changes (the ones its verdict judges). With none, it stands idle. Leaves when the run ends or its turn is interrupted." },
 ];
 
 export const CASTLE_RULES = [
@@ -435,7 +435,7 @@ export function fold(events, map, locateCall) {
         // build (it builds, #173), while it runs. Their targets are set once
         // the fold is done (below).
         const kind = loc.command.kind === 'test' ? 'raiders' : 'crane';
-        units.set(`X:${e.toolUseId}`, { key: `X:${e.toolUseId}`, kind, sessionId: e.sessionId, caller: caller.key, room: kind === 'raiders' ? 'wilds' : 'gate', label: e.summary || loc.command.rule, tool: e.tool || null, runRoom: loc.command.room, tested: loc.tested || null, since: e.at });
+        units.set(`X:${e.toolUseId}`, { key: `X:${e.toolUseId}`, kind, sessionId: e.sessionId, caller: caller.key, room: kind === 'raiders' ? 'wilds' : 'gate', label: e.summary || loc.command.rule, tool: e.tool || null, tested: loc.tested || null, since: e.at });
         runs.push({ id: e.toolUseId, kind: loc.command.kind, rule: loc.command.rule, room: loc.command.room, summary: e.summary, at: e.at, endAt: null, ok: null, exitCode: null, sessionId: e.sessionId, background: Boolean(e.targets?.background), judged: [] });
         if (runs.length > MAX_RUNS) runs.shift();
       }
@@ -551,8 +551,10 @@ export function fold(events, map, locateCall) {
   const unprovenNow = [...rooms.entries()].filter(([, r]) => r.unproven).map(([id]) => id);
   for (const u of units.values()) {
     if (u.kind === 'crane') {
-      // A crane builds onto those rooms, else onto the build's own room (#173).
-      u.targets = unprovenNow.length ? unprovenNow : u.runRoom && rooms.has(u.runRoom) ? [u.runRoom] : [];
+      // A crane builds onto those rooms (#173). With none it stands idle, as
+      // Raiders muster: the build's own room is not what it builds (#178,
+      // owner decision).
+      u.targets = unprovenNow;
     } else if (u.kind === 'raiders') {
       // Raiders shoot at those rooms and at the code the run's named test
       // files are named after (#177, owner decisions: name matching, added to
