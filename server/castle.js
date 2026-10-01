@@ -993,6 +993,8 @@ class Castle {
         sessionId: entry.sessionId,
         index: entry.index,
         title: entry.reader ? entry.reader.model.customTitle || entry.reader.model.aiTitle || null : null,
+        // Who named it, so the page can say the title is a name, not an activity (#179).
+        titleBy: entry.reader?.model.customTitle ? 'you' : entry.reader?.model.aiTitle ? 'claude-code' : null,
         // Launched: its hooks drive it (the transcript only backfills).
         source: w ? 'hooks' : 'transcript',
         live,

@@ -954,7 +954,11 @@ stop; a **Wizard** (hat and robe) is a skill Claude invoked, beside its caller u
 ends (a skill you type as `/name` is not seen); a **Raven** (a bird, no disc) is an MCP call, on the
 Frostwall above the first Integrations room (else above the gate's column); a **Scout** (a horse) is
 a web fetch or search, down the road from the gate; the **Herald** (a bell, with a ring) is at the gate while a launched session
-waits for you, the one unit that pulses. Clicking a unit opens the room it stands in.
+waits for you, the one unit that pulses. Clicking a unit opens the room it stands in. Hovering one
+says what it is doing first (its latest call, where, a Knight's task), then the session it belongs
+to: its name in quotes, with who named it, Claude Code or you, because a title Claude Code chose
+("Session cleanup") otherwise reads as what the unit is doing (#179). The room's "Here now" says the
+same.
 
 **Raiders** (three hooded archers, on dark discs ringed in ice) are a test run while it runs (#172).
 They come out of the Wilds, or stand out at the front past Hollowmere, whichever side is nearer the

@@ -4,17 +4,27 @@ import { duration } from '../sessionFormat.js';
  * What a unit stands for, in words (#162): the hover card and the room
  * drawer's "Here now" both read this, so they never disagree. Everything
  * comes from the state frame the server sent (castle.js): the session's
- * title, a worker's latest call as the one line the event log shows, a
+ * title and who named it, a worker's latest call as the one line the event log shows, a
  * subagent's task, a skill's name, an MCP or web call's tool and target.
  */
 
 const ago = (ms) => (typeof ms === 'number' ? `${duration(Math.max(0, Date.now() - ms))} ago` : null);
 
-/** A session by its title, with the start of its id so two alike stay apart. */
+/**
+ * A session by its title, with the start of its id so two alike stay apart.
+ * The title is quoted (#179, owner decision 2026-10-01): it is the session's
+ * name, and Claude Code's own titles ("Session cleanup") read as an activity.
+ */
 export function sessionName(state, sessionId) {
   const s = state?.sessions?.find((x) => x.sessionId === sessionId);
   const short = String(sessionId || '').slice(0, 8);
-  return s?.title ? `${s.title} (${short})` : short;
+  return s?.title ? `“${s.title}” · ${short}` : short;
+}
+
+/** Who named the session, shown under its name (#179). */
+function namedBy(state, sessionId) {
+  const by = state?.sessions?.find((x) => x.sessionId === sessionId)?.titleBy;
+  return by === 'claude-code' ? 'named by Claude Code' : by === 'you' ? 'your title' : null;
 }
 
 const PLACES = { gate: 'at the gate', 'beyond-gate': 'down the road', village: 'in Hollowmere', wilds: 'in the Wilds', outside: 'at the Citadel', perch: 'on the Frostwall' };
@@ -44,13 +54,13 @@ function doing(last, map) {
 /** Claude Code's notification types, in words (the kind only reaches the page, never the message). */
 const WAITING = { permission_prompt: 'your permission', idle_prompt: 'your next prompt', elicitation_dialog: 'an answer from you' };
 
-/** { title, tags, rows: [label, value][] } for one unit of the state frame. */
+/** { title, tags, rows: [label, value, note?][] } for one unit of the state frame. */
 export function describeUnit(u, { state, map }) {
   const title = map?.units?.find((k) => k.kind === u.kind)?.label || u.kind;
   const tags = [];
   const rows = [];
-  const add = (label, value) => {
-    if (value) rows.push([label, value]);
+  const add = (label, value, note = null) => {
+    if (value) rows.push([label, value, note]);
   };
   const caller = (key) => {
     const c = state?.units?.find((x) => x.key === key);
@@ -63,16 +73,17 @@ export function describeUnit(u, { state, map }) {
     case 'knight': {
       const d = doing(u.last, map);
       if (d && d[0] === 'Now') tags.push('working');
+      // What it is doing first, and the session's name last (#179).
+      if (d) add(d[0], d[1]);
+      else add('Doing', 'no call seen yet');
+      add('Where', placeName(map, u.room));
       if (u.kind === 'knight') {
         add('Subagent', u.agentType || 'type not reported');
         add('Task', u.task);
-        add('For', sessionName(state, u.sessionId));
+        add('For', sessionName(state, u.sessionId), namedBy(state, u.sessionId));
       } else {
-        add('Session', sessionName(state, u.sessionId));
+        add('Session', sessionName(state, u.sessionId), namedBy(state, u.sessionId));
       }
-      add('Where', placeName(map, u.room));
-      if (d) add(d[0], d[1]);
-      else add('Doing', 'no call seen yet');
       break;
     }
     case 'wizard':
@@ -105,7 +116,7 @@ export function describeUnit(u, { state, map }) {
     case 'herald':
       tags.push('waiting');
       add('Waiting for', WAITING[u.label] || u.label || 'you');
-      add('Session', sessionName(state, u.sessionId));
+      add('Session', sessionName(state, u.sessionId), namedBy(state, u.sessionId));
       break;
     default:
       break;

@@ -2342,6 +2342,13 @@ pre.code {
   overflow-wrap: anywhere;
 }
 
+/* Who named a session, under its name (#179). */
+.unit-card-note {
+  display: block;
+  color: var(--castle-dim);
+  font-size: 0.9em;
+}
+
 .drawer-units {
   list-style: none;
   margin: 0 0 8px;

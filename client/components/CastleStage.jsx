@@ -654,10 +654,13 @@ function UnitCard({ card, state, map }) {
         ))}
       </div>
       <dl>
-        {d.rows.map(([k, v]) => (
+        {d.rows.map(([k, v, note]) => (
           <React.Fragment key={k}>
             <dt>{k}</dt>
-            <dd>{v}</dd>
+            <dd>
+              {v}
+              {note && <span className="unit-card-note">{note}</span>}
+            </dd>
           </React.Fragment>
         ))}
       </dl>
