@@ -38,8 +38,9 @@ same three skips), the castle checks taking about 21 s of it. 2026-09-30: 482 wi
 failed, 3 skipped** with #170 (113 s; HEAD before it 109 s), the same three skips throughout. `ui-motion.mjs` (the walking checks, scratchpad below)
 26 of 26 at every step.
 
-`dist\LayerCake.exe` is **current**: rebuilt from f952732 (#174, the legend tooltips) on 2026-10-01
-afternoon and started for him. Its headful launch check failed one check twice (the in-window Castle
+`dist\LayerCake.exe` is **current**: rebuilt from 9d6a1a4 (#176, shell calls placed by the files they
+name) on 2026-10-01 afternoon, launch-checked headful 16 of 16, and started for him. Before that from
+f952732 (#174, the legend tooltips) and started for him. Its headful launch check failed one check twice (the in-window Castle
 draw timed out; #175, likely a covered window); headless it passed 16 of 16, and a headless browser
 drew the Castle from his running copy. Before that from 6ab127a (#172, #173) that morning; before that from 95a3763 (#170 and
 #171) on 2026-09-30 night after the owner closed his copy, launch-checked headful with `exe-lifecycle-castle.ps1` (16 of 16, a Mason walking in
