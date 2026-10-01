@@ -38,8 +38,9 @@ same three skips), the castle checks taking about 21 s of it. 2026-09-30: 482 wi
 failed, 3 skipped** with #170 (113 s; HEAD before it 109 s), the same three skips throughout. `ui-motion.mjs` (the walking checks, scratchpad below)
 26 of 26 at every step.
 
-`dist\LayerCake.exe` is **current**: rebuilt from 95a3763 (#170 and #171) on 2026-09-30 night after the
-owner closed his copy, launch-checked headful with `exe-lifecycle-castle.ps1` (16 of 16, a Mason walking in
+`dist\LayerCake.exe` is **current**: rebuilt from 6ab127a (#172, #173, the crane at room centres) on
+2026-10-01 morning, launch-checked 16 of 16 and started for him; before that from 95a3763 (#170 and
+#171) on 2026-09-30 night after the owner closed his copy, launch-checked headful with `exe-lifecycle-castle.ps1` (16 of 16, a Mason walking in
 the app window included) and started for him through Explorer; his Docs room then read Embers, no
 scaffolding, no alarms (`docs-alarm.mjs`). (It was rebuilt five times that day: after #161, #165, #167
 with the art, the hover card with the Citadel, #170, and #171.)
