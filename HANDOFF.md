@@ -51,8 +51,11 @@ same way when nothing is unproven (#178, owner: "Yes, the crane should act the s
 That evening: **#163's verb poses** (the owner picked them from a style board; section below) and
 **#180** (the path box, found on the way), then **#179** (the owner's pick: a hover card says what
 a unit is doing first, and the session's name last, quoted, with who named it). **Open for the
-owner:** #181 (the test-and-build volleys now measure 13.4% of a core, not the 7.45% recorded;
-cause not found) and the window that closed during the last exe check (dist paragraph below). #163 stays open for its other items (session rhythm, sound, replay,
+owner:** nothing from today. #181 (the volleys measured 13.4%, not the 7.45% recorded) was bisected
+and closed: six builds since that measurement cost the same within run-to-run spread (headless,
+two rounds, the table is on #181), so the gap is between days, not code. Then **#182**, the owner's
+Raven picks: on a larger disc in its session's colour, feathers along each flight, the wall's name
+moved clear of its perch. #163 stays open for its other items (session rhythm, sound, replay,
 typed /skill, siege waves). Then #175 (the headful exe check cannot tell a covered window from a
 broken page), #168 when he picks it up, #166's (b) queue.
 The #163 session's scratchpad (`%TEMP%\claude\c--dev-layercake\41ed0760-...\scratchpad`) holds
@@ -75,14 +78,16 @@ castle log for a project), `docs-alarm.mjs`, `sim-watch.mjs`, `page-errors.mjs`,
 capped live run and its MCP server). Write scripts with the Write tool, never inline in a shell:
 backslashes and backticks were eaten five times today.
 
-`dist\LayerCake.exe` is **current**: built from 6d34785 (#179, the hover card) on 2026-10-01
+`dist\LayerCake.exe` is **one commit behind**: b68e915 (#182, the Raven) was built in a tree copy
+(`exe-tree-build.mjs`, the 06df0862 scratchpad's `exe-tree\dist`), grepped for the feathers, and
+launch-checked headful 16 of 16 with his window untouched; it waits for him to close his copy, then
+goes into `dist` the same way (hashes compared, `fix-sea-config.mjs`). `dist` itself was built from
+6d34785 (#179, the hover card) on 2026-10-01
 evening in a copy of the tree while his copy ran (`exe-tree-build.mjs`), grepped for "named by
-Claude Code", launch-checked headful there: 15 of 16. **The one failure is unexplained:** "no other
-LayerCake window was touched (1 before, 0 after)". His own app window's Edge shut down cleanly at
-17:38:37 (its profile's last writes), inside that test run, and his exe followed it out. Nothing in
-the test or the exe can address his window that I found (the test closes and kills only processes
-on its own profiles; `desktop/` is unchanged since runs that passed this check with his window
-open). Asked him whether he closed it; if not, it needs an issue. The tested binary was then copied
+Claude Code", launch-checked headful there: 15 of 16. The one failure, "no other LayerCake window was touched (1
+before, 0 after)", was the owner: his app window's Edge shut down cleanly at 17:38:37, inside that
+test run, and he says he most likely closed it himself while the test window was up ("I wasn't
+paying attn"). Not a defect. The tested binary was then copied
 into `dist` (hashes equal, `sea-config.json` repointed) and started for him through Explorer at
 17:41. Before that from 63cf6c8 (#163's poses, with #180) the same evening after the owner closed
 his copy, launch-checked headful 16 of 16. Before that from ba528a9 (#178, the idle crane) on 2026-10-01
@@ -131,6 +136,15 @@ with the art, the hover card with the Citadel, #170, and #171.)
   so for that long there was nothing to read; LayerCake follows transcripts as they grow (the castle
   each second, the list every 15 s). No polling added. Whether an idle session writes a rename at
   once is not checked.
+- **#182, the Raven** (owner: "hard to see", then "larger and a fading contrail"): measured first
+  (30 pixels, pale on the pale wall, on the wall's name), a board of options
+  (https://claude.ai/artifact/QqquDYgM8GQGtAzoz4huvJ), his picks built in b68e915. My extension:
+  the wall's name goes to the end away from the perch, not always the left. `ui-raven.mjs` 11 of
+  11, 6 of 6 mutants caught.
+- **#181, closed:** `cost-bisect.mjs` (exports each commit, builds, runs the cost harness's siege
+  case headless, alternating order) found no commit raising the cost. Today's headful figures are
+  the budget: 13.4% for a test and a build together, 14.6% with the Mason's crank, a pose alone
+  7.6% to 9.0%.
 
 ### 2026-09-30, late night: the Castle simulator, and the Wall motif (#172)
 
