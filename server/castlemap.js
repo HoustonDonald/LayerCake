@@ -54,8 +54,9 @@ const FOLD = process.platform === 'win32';
 /**
  * Room types (#167): what a room does. The type gives a room its icon (#162)
  * and the roles fixed room ids used to carry: where test, build and migration
- * runs go when no rule names a room, where a plain shell call works, and where
- * the Raven waits. Shipped with the map so the page never keeps its own list.
+ * runs go when no rule names a room, and where the Raven waits. (A plain shell
+ * call has no room of its own: it works in the rooms of the files it names,
+ * #176.) Shipped with the map so the page never keeps its own list.
  * `provable: false` marks a type no test run can prove (#170, owner decision
  * 2026-09-30): an edit there puts up no scaffolding, a run never judges it, and
  * it has no thrash. Only a failed change raises its Alarm.
@@ -83,8 +84,6 @@ const TYPE_IDS = new Set(ROOM_TYPES.map((t) => t.type));
 /** The room type a kind of run lights up when no rule names a room. */
 const KIND_TYPE = { test: 'tests', build: 'build', migration: 'database' };
 export const COMMAND_KINDS = Object.keys(KIND_TYPE);
-/** A plain shell call works in the first room of these types, in this order (spec: "it works a crank or bellows"). */
-const SHELL_TYPES = ['build', 'config'];
 /** The Raven waits on the wall above the first room of this type, else above the gate. */
 const PERCH_TYPE = 'integrations';
 
@@ -300,7 +299,6 @@ function rolesOf(rooms) {
     test: first([KIND_TYPE.test]),
     build: first([KIND_TYPE.build]),
     migration: first([KIND_TYPE.migration]),
-    shell: first(SHELL_TYPES),
     perch: first([PERCH_TYPE]),
   };
 }
@@ -432,8 +430,8 @@ export function locateFolder(map, projectDir, absDir) {
 /**
  * What a shell call is, from its command heads: the strongest kind any
  * segment matches (test, then build, then migration), and its room; else a
- * plain shell call, in the map's shell room (the first Build room, else the
- * first Config room, else none).
+ * plain shell call (kind null), which castle.js places by the files it names
+ * (#176).
  */
 export function classifyCommand(map, heads) {
   let best = null;
@@ -446,7 +444,7 @@ export function classifyCommand(map, heads) {
       break;
     }
   }
-  return best || { kind: null, room: map.roles.shell, rule: null };
+  return best || { kind: null, room: null, rule: null };
 }
 
 /**

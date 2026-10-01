@@ -288,7 +288,9 @@ A tool call keeps a one-line summary: its description, or for a shell call with 
 here), the first 160 characters of the command line, which can therefore reach the page. For the
 Castle it also keeps the file paths the call names and the first four words of each segment of a
 shell command ("command heads", `toolTargets`), which are matched against test and build rules and
-never sent to the page; smoke plants a command word and searches every castle frame for it.
+never sent to the page; smoke plants a command word and searches every castle frame for it. The
+path-like words of a shell command (`shellPaths`, `commandPaths`, #176) only choose the rooms a plain
+shell call works in, and are never listed among a room's files; smoke plants one too.
 Subagent transcripts are read for their tool calls only (`SubagentReader`), found by listing the
 folder and pattern-checking each name, never from a record field.
 

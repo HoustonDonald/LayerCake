@@ -32,6 +32,9 @@ const S = {
   transcriptOutput: 'SMOKE-CASTLE-TRANSCRIPT-OUTPUT',
   // A command's own first word: command heads are matched, never served.
   commandHead: 'smokecastleheadword',
+  // A file a plain shell command names (#176): it chooses the room, and is never served.
+  // No "smoke" in it: the built-in Tests room claims **/*smoke*.
+  shellPath: 'castlegitpathsentinel',
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -344,6 +347,22 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     check("a Mason's trail is bounded: the latest 12 visits, still in order",
       JSON.stringify(trailOf(s1.last('state'), `M:${sid}`)) === JSON.stringify(kept), JSON.stringify(trailOf(s1.last('state'), `M:${sid}`)));
 
+    // #176: a plain shell call works in the rooms of the files it names; one that names none moves no one.
+    const masonRoom = () => s1.last('state')?.units?.find((u) => u.key === `M:${sid}`)?.room;
+    const roomBefore = masonRoom();
+    await call('toolu_c_gitstatus', 'Bash', { command: 'git status', description: 'Status' }, { response: { stdout: '' } });
+    await s1.untilLog((es) => es.some((e) => e.id === 'toolu_c_gitstatus' && e.endAt), 3000);
+    await sleep(400);
+    check('a plain shell call that names no file lights no room and moves no one (#176)',
+      (s1.last('log')?.entries || []).find((e) => e.id === 'toolu_c_gitstatus')?.where === 'shell' && masonRoom() === roomBefore,
+      JSON.stringify({ where: (s1.last('log')?.entries || []).find((e) => e.id === 'toolu_c_gitstatus')?.where, roomBefore, now: masonRoom() }));
+    await call('toolu_c_gitadd', 'Bash', { command: `git add db/${S.shellPath}.sql origin/main`, description: 'Stage the schema' }, { response: { stdout: '' } });
+    check("a plain shell call that names a project file works in that file's room, and the Mason walks there (#176)",
+      (await s1.untilState((st) => st.units.find((u) => u.key === `M:${sid}`)?.room === 'database')) &&
+        (await s1.untilLog((es) => es.find((e) => e.id === 'toolu_c_gitadd')?.where === 'shell in Database', 3000)),
+      JSON.stringify({ where: (s1.last('log')?.entries || []).find((e) => e.id === 'toolu_c_gitadd')?.where, room: masonRoom() }));
+    check('a word no room claims (origin/main) sends nothing to Hollowmere (#176)', s1.last('state')?.village?.count === 1, JSON.stringify(s1.last('state')?.village));
+
     // Resting (#162's hover card showed "resting" beside "working"): a call
     // still running past the rest window (3 s here) is work; once it ends, the
     // window counts from its end.
@@ -502,7 +521,7 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     check("castle.json's patterns are the only ones: docs/ now lies in Hollowmere",
       await s1.untilLog((es) => es.find((e) => e.id === 'toolu_c_moved')?.where === 'Hollowmere'), JSON.stringify((s1.last('log')?.entries || []).find((e) => e.id === 'toolu_c_moved')));
     await call('toolu_c_ls', 'Bash', { command: 'ls -la', description: 'List' }, { response: { stdout: '' } });
-    check('with no Build or Config room, a plain shell call lights no room',
+    check('a plain shell call that names no file lights no room, on a castle.json map too',
       await s1.untilLog((es) => es.find((e) => e.id === 'toolu_c_ls')?.where === 'shell'), JSON.stringify((s1.last('log')?.entries || []).find((e) => e.id === 'toolu_c_ls')));
 
     // Documentation is never on trial (#170): Docs stayed in Alarm after every

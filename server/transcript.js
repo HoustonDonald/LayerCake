@@ -235,8 +235,48 @@ export function toolTargets(name, input, cwd) {
     else if (base && path.isAbsolute(base)) p = path.resolve(base, raw);
     if (p && !paths.includes(p)) paths.push(p);
   }
-  const heads = SHELL_TOOLS.has(str(name)) ? commandHeads(str(i.command)) : [];
-  return { paths, heads, background: i.run_in_background === true };
+  const shell = SHELL_TOOLS.has(str(name));
+  const heads = shell ? commandHeads(str(i.command)) : [];
+  // The files a shell call names, to place a plain one in their rooms (#176).
+  // Like heads, held in memory and never sent to the page.
+  const shellPaths = shell ? commandPaths(str(i.command), base) : [];
+  return { paths, heads, shellPaths, background: i.run_in_background === true };
+}
+
+const MAX_SHELL_PATHS = 16;
+
+/**
+ * The path-like words of a command line (#176): a word with a slash or a
+ * backslash, or ending in a file extension, that is not a flag, a URL, a
+ * variable or a home path. Quotes are stripped and `--opt=value` gives its
+ * value. A relative word resolves against the caller's cwd (none without one),
+ * and a Git Bash `/c/...` reads as `C:\...` on Windows. Words that are not files
+ * (`origin/main`) come through too: castle.js keeps only those a room's
+ * patterns claim. Bounded: the first 4000 characters, at most 16 paths, and no
+ * pattern here can backtrack.
+ */
+export function commandPaths(command, cwd) {
+  if (typeof command !== 'string' || !command) return [];
+  const base = typeof cwd === 'string' && path.isAbsolute(cwd) ? cwd : null;
+  const out = [];
+  for (let w of command.slice(0, 4000).split(/[\s;|&<>()`]+/)) {
+    if (out.length >= MAX_SHELL_PATHS) break;
+    w = w.replace(/^["']+/, '').replace(/["',:]+$/, '');
+    if (w.startsWith('-')) {
+      const eq = w.indexOf('=');
+      if (eq === -1) continue;
+      w = w.slice(eq + 1).replace(/^["']+/, '');
+    }
+    if (!w || w.length > 260 || w.includes('://') || w.includes('$') || w.startsWith('~')) continue;
+    if (!/[\\/]/.test(w) && !/\.[A-Za-z0-9]{1,8}$/.test(w)) continue;
+    const drive = /^\/([A-Za-z])\/(.*)$/.exec(w);
+    if (drive && process.platform === 'win32') w = `${drive[1].toUpperCase()}:\\${drive[2]}`;
+    let p = null;
+    if (path.isAbsolute(w)) p = path.normalize(w);
+    else if (base) p = path.resolve(base, w);
+    if (p && !out.includes(p)) out.push(p);
+  }
+  return out;
 }
 
 /**

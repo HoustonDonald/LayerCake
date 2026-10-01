@@ -900,8 +900,12 @@ it, and its windows light once any such file has been touched. A unit working on
 east gate to it. Clicking Hollowmere or the Citadel lists its files.
 
 **Where runs go** comes from the types: a test run lights the first Tests room, a build run the first
-Build room, a migration the first Database room (a command rule can name a room instead), and any
-other shell call works in the first Build room, else the first Config room, else nowhere. MCP calls
+Build room, a migration the first Database room (a command rule can name a room instead). Any other
+shell call works in the rooms of the project files its command names (`git add server/scan.js` works
+in that file's room; only names a room's patterns claim count, so `origin/main` is no file), and one
+that names none (`git status`, a push) moves no one and lights nothing: it used to send every such
+call to the first Build room, which then filled with units doing git work there (#176). Those names
+only choose rooms; none is listed among a room's files. MCP calls
 wait on the Frostwall above the first Integrations room, else above the gate's column.
 
 **Room states**, highest priority first. The page shows each rule beside the state (hover a state in

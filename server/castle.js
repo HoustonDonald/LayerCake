@@ -119,7 +119,7 @@ export const UNIT_KINDS = [
 export const CASTLE_RULES = [
   'Only real events move anything: hooks from sessions LayerCake started, and the transcripts of the others. When nothing is known, the castle shows less.',
   "A file's room comes from castle.json's patterns, else the built-in ones; a file no room claims is in Hollowmere, the village south of the gate, and a file outside the project (the home folder, Claude's configuration, other projects) goes to the Citadel and is counted apart.",
-  'A shell call is a test, build or migration run when a segment of its command starts with a rule\'s words. A run lights the room its rule names, else the first room of its type (Tests, Build, Database); any other shell call works in the first Build room, else the first Config room. A run passes or fails by its exit code, so `npm test | tail` reads as the exit code of tail. A run started in the background, or ending with no exit code (refused before it ran, timed out), has no verdict.',
+  'A shell call is a test, build or migration run when a segment of its command starts with a rule\'s words. A run lights the room its rule names, else the first room of its type (Tests, Build, Database). Any other shell call works in the rooms of the project files its command names (only names a room claims count), and one that names none moves no one and lights nothing. A run passes or fails by its exit code, so `npm test | tail` reads as the exit code of tail. A run started in the background, or ending with no exit code (refused before it ran, timed out), has no verdict.',
   'A run judges every room with unproven changes (the scaffolded ones): a pass takes their scaffolding down, a failure raises their Alarm, and a failure with none to judge raises it in the run\'s own room.',
   `No run can prove a ${ROOM_TYPES.filter((t) => t.provable === false).map((t) => t.label).join(' or ')} room: a change there puts up no scaffolding, no run judges it, and it has no thrash. A failed change there is still an Alarm.`,
   'A call that was denied, interrupted, rejected, or refused by Claude Code before it ran has no verdict: it is never an Alarm. From a transcript, an error counts as a failure only with evidence the tool ran (an exit code, or a system error code such as EACCES).',
@@ -802,11 +802,32 @@ class Castle {
     const out = { rooms: [], rels: [], village: [], outside: [], roomsByRel: {}, command: null, label: null };
     if (verb === 'shell') {
       const cmd = classifyCommand(map, e.targets?.heads || []);
-      const room = map.rooms.find((r) => r.id === cmd.room);
       out.command = cmd;
-      if (room) out.rooms.push(room.id);
-      out.label = cmd.kind ? `${cmd.kind} run (${cmd.rule})` : 'shell';
-      if (out.rooms.length) out.label += ` in ${room.name}`;
+      if (cmd.kind) {
+        const room = map.rooms.find((r) => r.id === cmd.room);
+        if (room) out.rooms.push(room.id);
+        out.label = `${cmd.kind} run (${cmd.rule})${room ? ` in ${room.name}` : ''}`;
+        return out;
+      }
+      // A plain shell call works in the rooms of the project files it names,
+      // and only those a room's patterns claim: a word like `origin/main` is
+      // no file, so it lights nothing and sends no one to Hollowmere. One that
+      // names none moves no unit and lights no room (#176; it used to work in
+      // the first Build room, which then filled with every git command). The
+      // words choose rooms only: none joins a room's recent files, so nothing
+      // from a command line reaches the page.
+      for (const p of e.targets?.shellPaths || []) {
+        const cacheKey = `f|${samePathKey(p)}`;
+        let loc = this.cache.get(cacheKey);
+        if (!loc) {
+          loc = locate(map, this.projectDir, p);
+          if (this.cache.size > MAX_CACHE) this.cache.clear();
+          this.cache.set(cacheKey, loc);
+        }
+        if (loc.where === 'room') for (const id of loc.rooms) if (!out.rooms.includes(id)) out.rooms.push(id);
+      }
+      const names = out.rooms.map((id) => map.rooms.find((r) => r.id === id)?.name || id);
+      out.label = names.length ? `shell in ${names.join(', ')}` : 'shell';
       return out;
     }
     if (!['read', 'search', 'edit', 'create'].includes(verb)) return out;
