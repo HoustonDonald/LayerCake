@@ -2285,6 +2285,13 @@ pre.code {
   background: var(--castle-line);
 }
 
+/* Each legend item explains itself on hover or focus (#174). */
+.castle-legend .legend-state,
+.castle-legend .legend-unit { cursor: help; border-radius: 4px; outline: none; }
+.castle-legend .legend-state:focus-visible,
+.castle-legend .legend-unit:focus-visible { box-shadow: 0 0 0 2px var(--castle-survey-line); }
+.castle-unit-card.legend-tip { position: fixed; z-index: 50; }
+
 /* What a unit stands for (#162): the hover card over the stage. It never takes the pointer, so it
    cannot hide the unit it describes or stop the next hover. */
 .castle-unit-card {

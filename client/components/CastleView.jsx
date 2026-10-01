@@ -303,29 +303,77 @@ function Drawer({ scanId, map, state, selected, onClose }) {
   );
 }
 
+const TIP_W = 320;
+
+/**
+ * The legend: each state and unit says what it means at once on hover or
+ * keyboard focus, in the hover card's style (#174; the native title waited a
+ * second and never showed on focus). The words are the server's rules
+ * (ROOM_STATES, UNIT_KINDS), shipped with the map, so the page keeps no list.
+ */
 function Legend({ map }) {
+  const [tip, setTip] = useState(null);
+  const show = (title, text) => (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setTip({ title, text, x: r.left + r.width / 2, y: r.top });
+  };
+  const hide = () => setTip(null);
+  const item = (key, className, title, text, children) => (
+    <span
+      key={key}
+      className={className}
+      tabIndex={0}
+      aria-describedby={tip?.title === title ? 'castle-legend-tip' : undefined}
+      onMouseEnter={show(title, text)}
+      onMouseLeave={hide}
+      onFocus={show(title, text)}
+      onBlur={hide}
+    >
+      {children}
+    </span>
+  );
   return (
     <div className="castle-legend">
-      {(map?.states || []).map((s) => (
-        <span key={s.state} className={`legend-state st-${s.state}`} title={s.rule}>
+      {(map?.states || []).map((s) =>
+        item(s.state, `legend-state st-${s.state}`, s.label, s.rule, (
+          <>
+            <span className="swatch" />
+            {s.glyph ? `${s.glyph} ` : ''}
+            {s.label}
+          </>
+        ))
+      )}
+      {item('unproven', 'legend-state scaffold', 'Unproven (scaffolding)', 'Changed since the last passing proof run: unverified work. A Docs room is never unproven.', (
+        <>
           <span className="swatch" />
-          {s.glyph ? `${s.glyph} ` : ''}
-          {s.label}
-        </span>
+          unproven
+        </>
       ))}
-      <span className="legend-state scaffold" title="Changed since the last passing proof run: unverified work.">
-        <span className="swatch" />
-        unproven
-      </span>
       <span className="legend-sep" />
-      {(map?.units || []).map((u) => (
-        <span key={u.kind} className="legend-unit" title={u.rule}>
-          <span className="legend-figure">
-            <FigureIcon kind={u.kind} size={14} />
-          </span>{' '}
-          {u.label}
-        </span>
-      ))}
+      {(map?.units || []).map((u) =>
+        item(u.kind, 'legend-unit', u.label, u.rule, (
+          <>
+            <span className="legend-figure">
+              <FigureIcon kind={u.kind} size={14} />
+            </span>{' '}
+            {u.label}
+          </>
+        ))
+      )}
+      {tip && (
+        // Above the item, centred on it, kept inside the window.
+        <div
+          id="castle-legend-tip"
+          className="castle-unit-card legend-tip"
+          role="tooltip"
+          style={{ left: Math.max(8, Math.min(tip.x - TIP_W / 2, window.innerWidth - TIP_W - 8)), bottom: window.innerHeight - tip.y + 8, width: TIP_W }}
+        >
+          <div className="unit-card-head">
+            <strong>{tip.title}</strong>
+          </div>
+          <div>{tip.text}</div>
+        </div>
+      )}
     </div>
   );
 }
