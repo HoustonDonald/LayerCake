@@ -57,8 +57,10 @@ castle log for a project), `docs-alarm.mjs`, `sim-watch.mjs`, `page-errors.mjs`,
 capped live run and its MCP server). Write scripts with the Write tool, never inline in a shell:
 backslashes and backticks were eaten five times today.
 
-`dist\LayerCake.exe` is **current except #178** (the idle crane; the exe embeds both the server and
-the client it touched, so it needs a rebuild once the owner closes his copy): rebuilt from eb6f9f5 (#177, Raiders' aim) on 2026-10-01
+`dist\LayerCake.exe` is **current**: built from ba528a9 (#178, the idle crane) on 2026-10-01
+afternoon in a copy of the tree while his copy was still open, checked there (its card and rule text
+grepped in the binary; headful launch check 16 of 16, his window untouched), then copied into `dist`
+once he closed his (hashes equal) and started for him through Explorer. Before that from eb6f9f5 (#177, Raiders' aim) on 2026-10-01
 afternoon, launch-checked headful 16 of 16 (`exe-lifecycle-castle.ps1`, port 5279), and started for
 him through Explorer. Before that from 9d6a1a4 (#176, shell calls placed by
 the files they name) the same afternoon, launch-checked headful 16 of 16, and started for him. Before that from
