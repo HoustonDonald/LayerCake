@@ -955,11 +955,13 @@ waits for you, the one unit that pulses. Clicking a unit opens the room it stand
 **Raiders** (three hooded archers, on dark discs ringed in ice) are a test run while it runs (#172).
 They come out of the Wilds, or stand out at the front past Hollowmere, whichever side is nearer the
 rooms they aim at, and loose arrows over the wall at the rooms the run will judge: those with
-unproven changes, else the run's own room. A **siege engine** (a trebuchet, ringed in wood) is a
-build run, before the gate, lobbing stones at the rooms the build will judge. Both leave when the run
-ends, or when its turn is interrupted, and the verdict lands as the rules say: a pass takes the
-scaffolding down, a failure raises the Alarm. Their volleys are drawn as a flip-book, 8 frames a
-second on one shared timer, only while a run is on screen, and they hold still with reduced motion.
+unproven changes, else the run's own room. A **crane** (a treadwheel crane, ringed in wood) is a
+build run (#173: a build builds, it does not attack), before the gate, hoisting stones along a cable
+onto the same rooms. Both leave when the run ends, or when its turn is interrupted, and the verdict
+lands as the rules say: a passing proof run takes the scaffolding down (a test run; a build too where
+`proof` includes builds), and a failure raises the Alarm. Their arrows and stones are drawn as a
+flip-book, 8 frames a second on one shared timer, only while a run is on screen, and they hold still
+with reduced motion.
 
 **Movement.** Units walk; none jumps from room to room.
 
@@ -978,7 +980,7 @@ second on one shared timer, only while a run is on screen, and they hold still w
 - What was already there when the castle opens, or reconnects (a rescan, a hidden tab shown again),
   stands where it is: a walk nobody saw would be invented. So does every unit when the map is
   reloaded, since the rooms changed and nobody walked.
-- Raiders and siege engines do not walk: they appear with their run and go with it.
+- Raiders and cranes do not walk: they appear with their run and go with it.
 - With reduced motion set, nothing walks: a unit that moves fades in at its new place.
 - Walking costs nothing when nobody walks: each walk is one browser animation that ends on arrival,
   with no drawing loop running in between.

@@ -64,11 +64,15 @@ with the art, the hover card with the Citadel, #170, and #171.)
   engine at the gate for build runs. The build plan is a comment on #172. **Commit A (done):**
   Hollowmere (id `village`) holds unclaimed files; the Frostwall and the Wilds run across the north;
   Duskhold's name is on the road. **Commit B (done):** Raiders for test runs and a siege engine for
-  build runs: folded units (`X:<call>`) with `targets` (what the run would judge now), drawn by
-  `SiegeLayer` as a flip-book on one shared 8 fps timer (`useFlipbook`). While a test and a build
-  both run: 7.45% of a core with the GPU, 6.54% without; 0.35% once they end (`ui-cost.mjs
-  CASES=quiet,siege`). Pictures: scratch `ui-siege-demo.mjs` (`FRONT=1` for front-row targets).
-  Next: the owner's look at it in the real app, then #163's verb poses on the same timer.
+  build runs: folded units (`X:<call>`) with `targets` (what the run would judge now), drawn as a
+  flip-book on one shared 8 fps timer (`useFlipbook`). While a test and a build both run: 7.45% of
+  a core with the GPU, 6.54% without; 0.35% once they end (`ui-cost.mjs CASES=quiet,siege`).
+  Pictures: scratch `ui-siege-demo.mjs` (`FRONT=1` for front-row targets).
+- **#173 (2026-10-01, owner):** "Does it make sense for the Trebuchet to be assaulting the castle?"
+  No: a build builds. The siege engine became a **crane** (kind `crane`): a treadwheel crane before
+  the gate, hoisting stones along a cable onto the rooms the build covers. `RunLayer` and `runSpot`
+  (were SiegeLayer, siegeSpot). Next: the owner's look in the real app, then #163's verb poses on
+  the same timer.
 
 ### 2026-09-30, night: Docs was always in Alarm (#170, fixed)
 

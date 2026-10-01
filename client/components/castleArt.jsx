@@ -57,16 +57,16 @@ const FIGURES = {
       <path d="M16.6 3.6 V20.4" stroke="currentColor" strokeWidth="0.7" />
     </>
   ),
-  // #172: a siege engine, a trebuchet with a stone in its sling.
-  siege: (
+  // #173: a build is a treadwheel crane, a stone hanging from its jib.
+  crane: (
     <>
-      <path d="M3.6 20.6 H20.4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      <path d="M7 20.6 L12 9 L17 20.6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-      <path d="M4.6 14 L20.2 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <rect x="2.8" y="13.4" width="4.2" height="4.2" rx="0.6" />
-      <circle cx="20.2" cy="5" r="1.9" />
-      <circle cx="6.4" cy="21" r="1.7" />
-      <circle cx="17.6" cy="21" r="1.7" />
+      <path d="M3 21.2 H20.6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="7.6" cy="15.6" r="4.6" fill="none" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M3 15.6 H12.2 M7.6 11 V20.2" stroke="currentColor" strokeWidth="1" />
+      <path d="M12.6 21.2 L14.6 4.8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M10.8 9.4 L21.4 3" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <path d="M21.4 3 V10.4" stroke="currentColor" strokeWidth="0.9" />
+      <rect x="19.6" y="10.4" width="3.6" height="3.1" rx="0.4" />
     </>
   ),
 };

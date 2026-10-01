@@ -2422,20 +2422,23 @@ pre.code {
 .house-window { fill: #10151d; }
 .hollowmere.lit .house-window { fill: var(--castle-construction-glow); fill-opacity: 0.85; }
 
-/* Raiders and siege engines (#172): pale fur against the dark, a wooden engine; their volleys. */
-.siege-unit { cursor: default; }
+/* What a run brings: Raiders for a test (#172), pale fur against the dark, and their arrows;
+   a crane for a build (#173), wooden, with its cable and the stones it lowers. */
+.run-unit { cursor: default; }
 .raider-figure { color: #eef3f9; fill: currentColor; }
-.siege-figure { color: #d9b37a; fill: currentColor; }
+.crane-figure { color: #d9b37a; fill: currentColor; }
 /* Their discs keep the shared disc fill, not the figure's. */
 .raider-figure .unit-disc,
-.siege-figure .unit-disc { fill: #0f1319; }
-.castle-siege .raider-disc { stroke: #b9c9de; }
-.castle-siege .siege-disc { stroke: #c9a36b; }
+.crane-figure .unit-disc { fill: #0f1319; }
+.castle-runs .raider-disc { stroke: #b9c9de; }
+.castle-runs .crane-disc { stroke: #c9a36b; }
 .volley-arrow line { stroke: #f4f7fb; stroke-width: 2.2; stroke-linecap: round; }
 .volley-arrow path { fill: #f4f7fb; }
-.volley-stone { fill: #c3ccd7; stroke: #3d4652; stroke-width: 2; }
-.castle-siege { pointer-events: none; }
-.castle-siege .siege-unit { pointer-events: auto; }
+.crane-cable { fill: none; stroke: #c9a36b; stroke-opacity: 0.55; stroke-width: 1.6; stroke-dasharray: 6 5; }
+.crane-rope { stroke: #c9a36b; stroke-width: 1.4; }
+.crane-stone { fill: #b9c2cd; stroke: #3d4652; stroke-width: 1.5; }
+.castle-runs { pointer-events: none; }
+.castle-runs .run-unit { pointer-events: auto; }
 
 /* The keep's name, on the road below its gate. */
 .keep-name {

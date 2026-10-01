@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { ArtDefs, Citadel, Figure, FigureIcon, Hollowmere, RoomLight, TypeIcon, WildsForest } from './castleArt.jsx';
 import { describeUnit } from './castleDescribe.js';
-import { BAND, DOT, FADE_MS, FROST_H, HOP_MS, SIEGE_KINDS, SLIDE_MS, W, WILDS_H, keyframes, siegeSpot, lastTrailKey, layout, newPlaces, placeUnits, planWalk, positionAt, replan, totalMs, waypoint } from './castleMotion.js';
+import { BAND, DOT, FADE_MS, FROST_H, HOP_MS, RUN_KINDS, SLIDE_MS, W, WILDS_H, keyframes, runSpot, lastTrailKey, layout, newPlaces, placeUnits, planWalk, positionAt, replan, totalMs, waypoint } from './castleMotion.js';
 
 /**
  * The castle itself (#160): one SVG with a fixed viewBox width, so full screen
@@ -442,50 +442,73 @@ function volleyPoint(from, to, frame, k, n) {
   return { x: at(from.x, peak.x, to.x), y: at(from.y, peak.y, to.y), deg: (Math.atan2(dy, dx) * 180) / Math.PI };
 }
 
+/** Where a crane's stone is at `frame`: along the cable to above the room, then lowered onto it; one trip every 2 s. */
+function hoistPoint(tip, hit, frame, offset) {
+  const t = ((frame * FLIP_MS) / 2000 + offset) % 1;
+  const above = { x: hit.x, y: hit.y - 28 };
+  if (t < 0.8) return { x: tip.x + ((above.x - tip.x) * t) / 0.8, y: tip.y + ((above.y - tip.y) * t) / 0.8 };
+  return { x: above.x, y: above.y + ((hit.y - above.y) * (t - 0.8)) / 0.2 };
+}
+
 /**
- * Raiders and siege engines (#172): a test or build run while it runs, aimed
- * at the rooms it will judge. They stand still (they are not walked) and their
- * volleys are a flip-book on the one shared timer. With reduced motion the
- * volleys hold still, mid-flight.
+ * The units a run brings, while it runs, aimed at the rooms it will judge:
+ * Raiders for a test, loosing arrows over the wall (#172); a crane for a build,
+ * hoisting stones along a cable onto those rooms (#173: a build builds, it does
+ * not attack). They stand still (they are not walked), and their arrows and
+ * stones are a flip-book on the one shared timer. With reduced motion they
+ * hold still, mid-way.
  */
-function SiegeLayer({ L, rooms, units, reduce, onHover }) {
-  const list = units.filter((u) => SIEGE_KINDS.has(u.kind));
+function RunLayer({ L, rooms, units, reduce, onHover }) {
+  const list = units.filter((u) => RUN_KINDS.has(u.kind));
   const frame = useFlipbook(list.length > 0 && !reduce);
   if (!list.length) return null;
+  const f = reduce ? 3 : frame;
   return (
-    <g className="castle-siege" onMouseOver={(e) => onHover(hoverAt(e.target))} onMouseLeave={() => onHover(null)}>
+    <g className="castle-runs" onMouseOver={(e) => onHover(hoverAt(e.target))} onMouseLeave={() => onHover(null)}>
       {list.map((u) => {
-        const { at, hits } = siegeSpot(L, rooms, u);
-        const raiders = u.kind === 'raiders';
-        const per = raiders ? 3 : 2;
-        const shots = hits.flatMap((hit, i) => Array.from({ length: per }, (_, k) => ({ key: `${i}-${k}`, p: volleyPoint(at, hit, reduce ? 3 : frame, k + i * 0.37, per) })));
-        return (
-          <g key={u.key} className={`castle-${u.kind}`}>
-            {shots.map(({ key, p }) =>
-              raiders ? (
+        const { at, hits } = runSpot(L, rooms, u);
+        if (u.kind === 'raiders') {
+          const arrows = hits.flatMap((hit, i) => [0, 1, 2].map((k) => ({ key: `${i}-${k}`, p: volleyPoint(at, hit, f, k + i * 0.37, 3) })));
+          return (
+            <g key={u.key} className="castle-raiders">
+              {arrows.map(({ key, p }) => (
                 <g key={key} className="volley-arrow" transform={`translate(${p.x} ${p.y}) rotate(${p.deg}) scale(1.6)`}>
                   <line x1={-10} y1={0} x2={7} y2={0} />
                   <path d="M8 0 l-5 -3 v6 Z" />
                 </g>
-              ) : (
-                <circle key={key} className="volley-stone" cx={p.x} cy={p.y} r={6.5} />
-              )
-            )}
-            {/* Like every unit: a figure on a dark disc, here ringed in ice (Raiders) or wood (the engine). */}
-            <g className="siege-unit" data-hover={u.key} transform={`translate(${at.x} ${at.y})`}>
-              {raiders ? (
-                [-38, 0, 38].map((dx, i) => (
+              ))}
+              {/* Like every unit: a figure on a dark disc, here ringed in ice. */}
+              <g className="run-unit" data-hover={u.key} transform={`translate(${at.x} ${at.y})`}>
+                {[-38, 0, 38].map((dx, i) => (
                   <g key={dx} className="raider-figure" transform={`translate(${dx} ${i === 1 ? -6 : 4})`}>
                     <circle className="unit-disc raider-disc" r={DOT + 2} />
                     <Figure kind="raiders" size={26} />
                   </g>
-                ))
-              ) : (
-                <g className="siege-figure">
-                  <circle className="unit-disc siege-disc" r={DOT + 14} />
-                  <Figure kind="siege" size={42} />
+                ))}
+              </g>
+            </g>
+          );
+        }
+        // The jib's tip, where the figure (42 across, drawn in a 24 box) hangs its stone.
+        const tip = { x: at.x + 16, y: at.y - 16 };
+        return (
+          <g key={u.key} className="castle-crane">
+            {hits.map((hit, i) => {
+              const p = hoistPoint(tip, hit, f, i * 0.37);
+              return (
+                <g key={i}>
+                  <path className="crane-cable" d={`M${tip.x} ${tip.y} L${hit.x} ${hit.y - 28}`} />
+                  <line className="crane-rope" x1={p.x} y1={p.y - 12} x2={p.x} y2={p.y} />
+                  <rect className="crane-stone" x={p.x - 8} y={p.y} width={16} height={13} rx={2} />
                 </g>
-              )}
+              );
+            })}
+            {/* Like every unit: a figure on a dark disc, here ringed in wood. */}
+            <g className="run-unit" data-hover={u.key} transform={`translate(${at.x} ${at.y})`}>
+              <g className="crane-figure">
+                <circle className="unit-disc crane-disc" r={DOT + 14} />
+                <Figure kind="crane" size={42} />
+              </g>
             </g>
           </g>
         );
@@ -697,8 +720,8 @@ export default function CastleStage({ map, state, generation, selected, onSelect
         );
       })}
 
-      <SiegeLayer L={L} rooms={rooms} units={state?.units || []} reduce={reduce} onHover={setCard} />
-      <UnitLayer L={L} rooms={rooms} perch={map?.perch || null} units={(state?.units || []).filter((u) => !SIEGE_KINDS.has(u.kind))} generation={generation} state={state} reduce={reduce} colourOf={colourOf} kinds={map?.units} onSelect={select} onHover={setCard} />
+      <RunLayer L={L} rooms={rooms} units={state?.units || []} reduce={reduce} onHover={setCard} />
+      <UnitLayer L={L} rooms={rooms} perch={map?.perch || null} units={(state?.units || []).filter((u) => !RUN_KINDS.has(u.kind))} generation={generation} state={state} reduce={reduce} colourOf={colourOf} kinds={map?.units} onSelect={select} onHover={setCard} />
     </svg>
     {card && <UnitCard card={card} state={state} map={map} />}
     </>

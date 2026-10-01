@@ -220,10 +220,10 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
       JSON.stringify(s1.last('state')?.rooms?.api));
     const buildCmd = { command: 'npm run build', description: 'Build' };
     await hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'toolu_c_build', tool_input: buildCmd });
-    check('a running build brings a siege engine to the gate, aimed at the room with unproven changes (#172)',
+    check('a running build brings a crane to the gate, building onto the room with unproven changes (#173)',
       await s1.untilState((st) => {
         const u = unitOf(st, 'X:toolu_c_build');
-        return u?.kind === 'siege' && u.room === 'gate' && JSON.stringify(u.targets) === JSON.stringify(['api']);
+        return u?.kind === 'crane' && u.room === 'gate' && JSON.stringify(u.targets) === JSON.stringify(['api']);
       }),
       JSON.stringify(unitOf(s1.last('state'), 'X:toolu_c_build')));
     await hook({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'toolu_c_build', tool_input: buildCmd, tool_response: { stdout: '', stderr: '' } });
