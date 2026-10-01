@@ -49,10 +49,10 @@ the Frostwall, the Wilds, Hollowmere for unclaimed files, Raiders for test runs)
 at what a run tests and mustering when nothing is on trial (#177), and the crane standing idle the
 same way when nothing is unproven (#178, owner: "Yes, the crane should act the same way").
 That evening: **#163's verb poses** (the owner picked them from a style board; section below) and
-**#180** (the path box, found on the way). **Open for the owner:** #179 (a hover card's "Session"
-row shows Claude Code's title, which read as the units' activity: "Session cleanup"; three options
-on the issue) and #181 (the test-and-build volleys now measure 13.4% of a core, not the 7.45%
-recorded; cause not found). #163 stays open for its other items (session rhythm, sound, replay,
+**#180** (the path box, found on the way), then **#179** (the owner's pick: a hover card says what
+a unit is doing first, and the session's name last, quoted, with who named it). **Open for the
+owner:** #181 (the test-and-build volleys now measure 13.4% of a core, not the 7.45% recorded;
+cause not found) and the window that closed during the last exe check (dist paragraph below). #163 stays open for its other items (session rhythm, sound, replay,
 typed /skill, siege waves). Then #175 (the headful exe check cannot tell a covered window from a
 broken page), #168 when he picks it up, #166's (b) queue.
 The #163 session's scratchpad (`%TEMP%\claude\c--dev-layercake\41ed0760-...\scratchpad`) holds
@@ -75,10 +75,17 @@ castle log for a project), `docs-alarm.mjs`, `sim-watch.mjs`, `page-errors.mjs`,
 capped live run and its MCP server). Write scripts with the Write tool, never inline in a shell:
 backslashes and backticks were eaten five times today.
 
-`dist\LayerCake.exe` is **current**: built from 63cf6c8 (#163's poses, with #180) on 2026-10-01
-evening after the owner closed his copy, the binary grepped for the pose classes and `poseMinMs`,
-launch-checked headful 16 of 16 (`exe-lifecycle-castle.ps1`, port 5279), and started for him
-through Explorer. Before that from ba528a9 (#178, the idle crane) on 2026-10-01
+`dist\LayerCake.exe` is **current**: built from 6d34785 (#179, the hover card) on 2026-10-01
+evening in a copy of the tree while his copy ran (`exe-tree-build.mjs`), grepped for "named by
+Claude Code", launch-checked headful there: 15 of 16. **The one failure is unexplained:** "no other
+LayerCake window was touched (1 before, 0 after)". His own app window's Edge shut down cleanly at
+17:38:37 (its profile's last writes), inside that test run, and his exe followed it out. Nothing in
+the test or the exe can address his window that I found (the test closes and kills only processes
+on its own profiles; `desktop/` is unchanged since runs that passed this check with his window
+open). Asked him whether he closed it; if not, it needs an issue. The tested binary was then copied
+into `dist` (hashes equal, `sea-config.json` repointed) and started for him through Explorer at
+17:41. Before that from 63cf6c8 (#163's poses, with #180) the same evening after the owner closed
+his copy, launch-checked headful 16 of 16. Before that from ba528a9 (#178, the idle crane) on 2026-10-01
 afternoon in a copy of the tree while his copy was still open, checked there (its card and rule text
 grepped in the binary; headful launch check 16 of 16, his window untouched), then copied into `dist`
 once he closed his (hashes equal) and started for him through Explorer. Before that from eb6f9f5 (#177, Raiders' aim) on 2026-10-01
@@ -115,7 +122,15 @@ with the art, the hover card with the Citadel, #170, and #171.)
   make the race certain.
 - **#179, the owner's question:** "Session cleanup" on every hover card is Claude Code's title for
   his beetle-etl session `b053be6e`, set from the prompt "Ignore the last message it was for a
-  different session" and never changed. Options on the issue; nothing built.
+  different session" and never changed. His pick, built in 6d34785: Now / Where first, the
+  session's name last in quotes with "named by Claude Code" or "your title" (server `titleBy`).
+  `ui-card179.mjs` 8 of 8, 3 of 3 mutants caught.
+- **A rename (owner, the same evening):** he renamed this session "Westeros" and did not see it.
+  His app already showed it in the Sessions list and the castle when asked. Claude Code wrote the
+  `custom-title` record with the session's next transcript write, during a two-minute tool run here,
+  so for that long there was nothing to read; LayerCake follows transcripts as they grow (the castle
+  each second, the list every 15 s). No polling added. Whether an idle session writes a rename at
+  once is not checked.
 
 ### 2026-09-30, late night: the Castle simulator, and the Wall motif (#172)
 
