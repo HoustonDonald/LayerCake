@@ -142,9 +142,10 @@ with the art, the hover card with the Citadel, #170, and #171.)
   the wall's name goes to the end away from the perch, not always the left. `ui-raven.mjs` 11 of
   11, 6 of 6 mutants caught.
 - **#181, closed:** `cost-bisect.mjs` (exports each commit, builds, runs the cost harness's siege
-  case headless, alternating order) found no commit raising the cost. Today's headful figures are
-  the budget: 13.4% for a test and a build together, 14.6% with the Mason's crank, a pose alone
-  7.6% to 9.0%.
+  case headless, alternating order) found no commit raising the cost; reopened at the owner's
+  request for a headful pair (`HEADFUL=1`), which agreed: the oldest build 11.4% / 17.1%, today's
+  with poses off 10.5% / 14.4%. The 7.45% was a low reading. Budget, this machine: a test and a
+  build together about 10% to 17% of a core (wide run-to-run spread), a pose alone 7.6% to 9.0%.
 
 ### 2026-09-30, late night: the Castle simulator, and the Wall motif (#172)
 
