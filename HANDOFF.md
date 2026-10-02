@@ -78,11 +78,11 @@ castle log for a project), `docs-alarm.mjs`, `sim-watch.mjs`, `page-errors.mjs`,
 capped live run and its MCP server). Write scripts with the Write tool, never inline in a shell:
 backslashes and backticks were eaten five times today.
 
-`dist\LayerCake.exe` is **one commit behind**: b68e915 (#182, the Raven) was built in a tree copy
-(`exe-tree-build.mjs`, the 06df0862 scratchpad's `exe-tree\dist`), grepped for the feathers, and
-launch-checked headful 16 of 16 with his window untouched; it waits for him to close his copy, then
-goes into `dist` the same way (hashes compared, `fix-sea-config.mjs`). `dist` itself was built from
-6d34785 (#179, the hover card) on 2026-10-01
+`dist\LayerCake.exe` is **current**: b68e915 (#182, the Raven), built in a tree copy
+(`exe-tree-build.mjs`, the 06df0862 scratchpad's `exe-tree\dist`), grepped for the feathers,
+launch-checked headful 16 of 16 with his window untouched, copied into `dist` once he closed his
+(hashes equal, `fix-sea-config.mjs`) and started for him through Explorer on 2026-10-02 at 09:33.
+Before that from 6d34785 (#179, the hover card) on 2026-10-01
 evening in a copy of the tree while his copy ran (`exe-tree-build.mjs`), grepped for "named by
 Claude Code", launch-checked headful there: 15 of 16. The one failure, "no other LayerCake window was touched (1
 before, 0 after)", was the owner: his app window's Edge shut down cleanly at 17:38:37, inside that
