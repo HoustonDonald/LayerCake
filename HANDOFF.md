@@ -4,8 +4,9 @@ Working state for picking this up in a new session. **Disposable.** Durable rule
 `CLAUDE.md`, user-facing spec in `README.md`. If something here contradicts those, they win and this
 file is stale.
 
-Last verified: **2026-10-01, evening** (the Castle's verb poses, #163, and the path box, #180;
-section below). Before that the afternoon: the Wall motif #172, the crane #173, legend
+Last verified: **2026-10-02** (the Castle's session rhythm, #163: the portcullis, the torches and
+the Scribe; section below). Before that 2026-10-01 evening: verb poses (#163) and the path box
+(#180). Before that the afternoon: the Wall motif #172, the crane #173, legend
 tooltips #174, shell calls placed by files #176, Raiders' aim #177. Write/snapshot work was done 2026-09-05; file watching 2026-09-15;
 the single executable and the app-window isolation fix 2026-09-25; session history (Phase 1 of the
 session-wrap plan) 2026-09-26; testing against a copy of a real project, 2026-09-26 to 27 (see
@@ -40,6 +41,19 @@ s), 501 with #172 part A, 507 with Raiders and the crane, 511 with #176, 514 wit
 it), **515 passed, 0 failed, 3 skipped** with #178 and again with #163 (which tightened a check
 rather than adding one), the same three skips throughout. `ui-motion.mjs` (the walking checks,
 scratchpad below) 26 of 26 at every step, #163 included.
+
+**2026-10-02, in one paragraph:** #163's session rhythm shipped in 4665aae, from the owner's
+picks on a style board (https://claude.ai/artifact/NQERWTLirXrCsesHoN73gu): a portcullis that is up
+while a session runs, six torches on the front wall that flicker only while something acts, and a
+Scribe at the gate while Claude Code compacts; the 60 s rest kept as it is (section below). Smoke
+**525 passed, 0 failed, 3 skipped**. **Open with the owner:** he asked where git operations fall in
+the castle (answer: a plain shell call; a file named lights its room as Survey, one naming none
+moves no one, git's own file changes are not seen); offered a board for commits and pushes, no
+answer yet. #163 stays open for sound, replay, typed /skill and siege waves. This session's
+scratchpad (`%TEMP%\claude\c--dev-layercake\a28eb79f-...\scratchpad`) holds `ui-gate.mjs` (the
+page check, 27 checks, `SHOTS=1`, `TREE=`), `mutate-rhythm.mjs` (22 mutants, this engine with the
+judge map swapped), the board `gate-board.html` with `board-shots.mjs`, and read-only measurers
+`compactions.mjs`, `compact-context.mjs`, `turn-ends.mjs`.
 
 **For a new session, in one paragraph (2026-10-01):** the owner uses LayerCake on beetle-etl (its
 `castle.json` was drafted by his own beetle-etl session; never write to that repo, memory
@@ -78,7 +92,11 @@ castle log for a project), `docs-alarm.mjs`, `sim-watch.mjs`, `page-errors.mjs`,
 capped live run and its MCP server). Write scripts with the Write tool, never inline in a shell:
 backslashes and backticks were eaten five times today.
 
-`dist\LayerCake.exe` is **current**: b68e915 (#182, the Raven), built in a tree copy
+`dist\LayerCake.exe` is **one commit behind**: b68e915, not 4665aae. The exe from 4665aae was built
+in a tree copy (the 06df0862 scratchpad's `exe-tree\dist`, with `sea\`), grepped for the gate's
+title text, and launch-checked headful 16 of 16 with his window untouched (2026-10-02); it waits
+for the owner to close his copy, then goes into `dist` (copy the exe and `sea\`, compare hashes,
+`fix-sea-config.mjs`, start through Explorer). Before that b68e915 (#182, the Raven), built in a tree copy
 (`exe-tree-build.mjs`, the 06df0862 scratchpad's `exe-tree\dist`), grepped for the feathers,
 launch-checked headful 16 of 16 with his window untouched, copied into `dist` once he closed his
 (hashes equal, `fix-sea-config.mjs`) and started for him through Explorer on 2026-10-02 at 09:33.
@@ -104,6 +122,27 @@ drew the Castle from his running copy. Before that from 6ab127a (#172, #173) tha
 the app window included) and started for him through Explorer; his Docs room then read Embers, no
 scaffolding, no alarms (`docs-alarm.mjs`). (It was rebuilt five times that day: after #161, #165, #167
 with the art, the hover card with the Citadel, #170, and #171.)
+
+### 2026-10-02: session rhythm (#163)
+
+- **Measured first** (read-only, his transcripts): a median 1 session started a day (most 9);
+  7 compactions in 30 days, all automatic, median 1.4 min; a transcript's `compact_boundary` is
+  written when the compaction ends and carries `durationMs`; 175 of 228 recent prompts have an
+  end-of-turn record. The table is on #163.
+- **His picks** (board above): portcullis; gate and front-wall torches; flicker while Claude works;
+  a Scribe at the gate; rest after 60 s as now. **My call, disclosed:** a compaction counts as work
+  for the rest, so the Mason waits on the Scribe.
+- **Built** (README "The gate and its torches", and the Scribe under "Poses"): the fold keeps each
+  session's latest compaction (PreCompact/PostCompact, or the transcript before hooks began); the
+  frame carries a Scribe unit `B:<session>` kept 60 s after the end, and the page shows it as a
+  pose (while it runs, at least 2 s from when seen, never if over before the castle opened). The
+  gate is a `Gate` component in CastleStage; its torches ride the flip-book (`useFlipbookRider`).
+- **Found by the page check, fixed before commit:** as a layout effect the gate ran before the unit
+  layer counted the Mason walking out (siblings run in tree order), so a session's end dropped and
+  re-raised the gate. It decides in a passive effect.
+- **A smoke timing trap:** a transcript compaction's start is its end minus `durationMs`, so a
+  synthetic one must not overlap an earlier synthetic call: a main-thread call ends an open
+  compaction, rightly.
 
 ### 2026-10-01, evening: verb poses (#163), the path box (#180)
 
