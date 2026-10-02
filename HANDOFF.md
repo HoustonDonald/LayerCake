@@ -92,11 +92,12 @@ castle log for a project), `docs-alarm.mjs`, `sim-watch.mjs`, `page-errors.mjs`,
 capped live run and its MCP server). Write scripts with the Write tool, never inline in a shell:
 backslashes and backticks were eaten five times today.
 
-`dist\LayerCake.exe` is **one commit behind**: b68e915, not 4665aae. The exe from 4665aae was built
-in a tree copy (the 06df0862 scratchpad's `exe-tree\dist`, with `sea\`), grepped for the gate's
-title text, and launch-checked headful 16 of 16 with his window untouched (2026-10-02); it waits
-for the owner to close his copy, then goes into `dist` (copy the exe and `sea\`, compare hashes,
-`fix-sea-config.mjs`, start through Explorer). Before that b68e915 (#182, the Raven), built in a tree copy
+`dist\LayerCake.exe` is **current**: 4665aae (#163's session rhythm), built in a tree copy (the
+06df0862 scratchpad's `exe-tree`, since removed), grepped for the gate's title text,
+launch-checked headful 16 of 16 with his window untouched, copied into `dist` with `sea\` once he
+closed his (hashes equal, `fix-sea-config.mjs`) and started for him through Explorer on 2026-10-02
+at 14:49. Then #183 was filed at his request (the Citadel and Hollowmere larger and richer, maybe
+either side of the keep; a board first). Before that b68e915 (#182, the Raven), built in a tree copy
 (`exe-tree-build.mjs`, the 06df0862 scratchpad's `exe-tree\dist`), grepped for the feathers,
 launch-checked headful 16 of 16 with his window untouched, copied into `dist` once he closed his
 (hashes equal, `fix-sea-config.mjs`) and started for him through Explorer on 2026-10-02 at 09:33.
