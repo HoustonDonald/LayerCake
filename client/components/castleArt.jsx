@@ -48,6 +48,19 @@ const FIGURES = {
       <rect x="11" y="1.4" width="2" height="2.6" rx="1" />
     </>
   ),
+  // #163: a compaction is a hooded Scribe writing at a lectern.
+  scribe: (
+    <>
+      <path d="M10 1.8 C6.6 1.8 5.6 5 5.8 8.2 L7.2 11 Q10 9.8 12.8 11 L14.2 8.2 C14.4 5 13.4 1.8 10 1.8 Z" />
+      <ellipse cx="10.6" cy="6.6" rx="2" ry="2.4" fill="#0f1319" />
+      <path d="M4.6 22 L7 11 Q10 9.6 13 11 L15.4 22 Z" />
+      <path d="M18.6 13.8 V22 M16.2 22 H21" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M14.2 14.8 L22.6 12.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M14.6 13.9 L22 11.8 L21.6 10.4 L14.2 12.5 Z" />
+      <path d="M12.4 12.6 L14 9.7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M15.4 12.9 L13.4 7.1" stroke="currentColor" strokeWidth="0.7" />
+    </>
+  ),
   // #172: a raider, hooded, a bow drawn; three make a band.
   raiders: (
     <>
@@ -227,7 +240,95 @@ export function ArtDefs() {
         <stop offset="0" className="moon-core" />
         <stop offset="1" className="moon-edge" />
       </linearGradient>
+      {/* A torch's light on the wall and its pool on the ground (#163). */}
+      <radialGradient id="castle-torch-glow">
+        <stop offset="0" className="torch-glow-core" />
+        <stop offset="0.45" className="torch-glow-mid" />
+        <stop offset="1" className="torch-glow-edge" />
+      </radialGradient>
+      <radialGradient id="castle-torch-pool">
+        <stop offset="0" className="torch-pool-core" />
+        <stop offset="1" className="torch-glow-edge" />
+      </radialGradient>
+      {/* Light through the open gate, from the road up. */}
+      <linearGradient id="castle-gate-light" x1="0" y1="1" x2="0" y2="0">
+        <stop offset="0" className="gate-light-low" />
+        <stop offset="1" className="gate-light-high" />
+      </linearGradient>
     </defs>
+  );
+}
+
+/** A flame's four shapes, [sway, height], for the flicker (#163). */
+const FLAMES = [
+  [0, 10],
+  [0.9, 11.2],
+  [-0.7, 9.4],
+  [0.4, 10.6],
+];
+
+/**
+ * A torch on the front wall (#163, owner's picks 2026-10-02: torches along
+ * the front wall, flickering while Claude works). Its bracket stands on the
+ * wall at x,y. Lit: a flame in one of four shapes (`frame`, from the shared
+ * flip-book), its light on the wall and a pool on the ground. Out: a dark head.
+ */
+export function Torch({ x, y, lit, frame = 0 }) {
+  const top = y - 4;
+  const [dx, h] = FLAMES[frame & 3];
+  const r = (v) => Math.round(v * 100) / 100;
+  return (
+    <g className={`castle-torch${lit ? ' lit' : ''}`}>
+      {lit && <circle className="torch-glow" cx={x} cy={y - 8} r="34" />}
+      {lit && <ellipse className="torch-glow torch-pool" cx={x} cy={y + 20} rx="34" ry="10" />}
+      <path className="torch-bracket" d={`M${x} ${y + 5} V${y - 1}`} />
+      <path className="torch-cup" d={`M${x - 3.4} ${top} L${x + 3.4} ${top} L${x + 1.9} ${y} L${x - 1.9} ${y} Z`} />
+      {lit ? (
+        <>
+          <path className="torch-flame" d={`M${x - 3} ${top} Q${x - 3.6} ${r(top - h * 0.55)} ${r(x + dx)} ${r(top - h)} Q${x + 3.6} ${r(top - h * 0.55)} ${x + 3} ${top} Z`} />
+          <path className="torch-core" d={`M${x - 1.5} ${top} Q${x - 1.8} ${r(top - h * 0.4)} ${r(x + dx * 0.6)} ${r(top - h * 0.68)} Q${x + 1.8} ${r(top - h * 0.4)} ${x + 1.5} ${top} Z`} />
+        </>
+      ) : (
+        <ellipse className="torch-out" cx={x} cy={top - 0.2} rx="2.8" ry="1" />
+      )}
+    </g>
+  );
+}
+
+/**
+ * The gate (#163, owner's pick 2026-10-02: a portcullis): the passage under
+ * the arch, lit from the road while `lit`, an iron grille `raised` 0 (down)
+ * to 1 (up, its spikes hanging under the arch), the sill and the arch. The
+ * gate's centre is at x on the wall's outer edge y; the arch is the one the
+ * castle has always drawn.
+ */
+export function Gatehouse({ x, y, raised, lit }) {
+  const half = 48;
+  const arch = `M${x - half} ${y + 6} V${y - 14} Q${x} ${y - 38} ${x + half} ${y - 14} V${y + 6} Z`;
+  const bars = [];
+  for (let i = 0; i < 8; i += 1) {
+    const bx = x - 42 + i * 12;
+    bars.push(<path key={`b${i}`} className="portcullis-bar" d={`M${bx} ${y - 36} V${y + 2}`} />);
+    bars.push(<path key={`s${i}`} className="portcullis-spike" d={`M${bx - 2.2} ${y + 2} L${bx} ${y + 6.5} L${bx + 2.2} ${y + 2} Z`} />);
+  }
+  return (
+    <g className="castle-gatehouse" data-raised={Math.round(raised * 100) / 100}>
+      <defs>
+        <clipPath id="castle-gate-clip">
+          <path d={arch} />
+        </clipPath>
+      </defs>
+      <path className="gate-passage" d={arch} />
+      {lit && <path className="gate-light" d={arch} style={{ opacity: raised }} />}
+      <g clipPath="url(#castle-gate-clip)">
+        <g transform={`translate(0 ${Math.round(-24 * raised * 100) / 100})`}>
+          {bars}
+          <path className="portcullis-rail" d={`M${x - half} ${y - 22} H${x + half} M${x - half} ${y - 9} H${x + half}`} />
+        </g>
+      </g>
+      <rect className="castle-gate-sill" x={x - half} y={y - 6} width={half * 2} height={12} />
+      <path className="castle-gate-arch" d={`M${x - half} ${y - 6} V${y - 14} Q${x} ${y - 38} ${x + half} ${y - 14} V${y - 6}`} />
+    </g>
   );
 }
 

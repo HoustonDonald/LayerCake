@@ -2503,6 +2503,32 @@ pre.code {
   stroke-width: 2;
 }
 
+/* The main gate (#163): the passage under the arch, the portcullis, and the
+   light through it while a session is in. The bars move by the flip-book in
+   CastleStage, never by a CSS transition (SVG is not composited). */
+.castle-gate-sill { fill: none; stroke: #6c7686; stroke-width: 2; }
+.gate-passage { fill: #0a0d11; }
+.gate-light { fill: url(#castle-gate-light); }
+.gate-light-low { stop-color: #ffb04a; stop-opacity: 0.32; }
+.gate-light-high { stop-color: #ffb04a; stop-opacity: 0.04; }
+.portcullis-bar { fill: none; stroke: #9aa4b2; stroke-width: 2.2; }
+.portcullis-spike { fill: #9aa4b2; }
+.portcullis-rail { fill: none; stroke: #7d8796; stroke-width: 2; }
+
+/* The front wall's torches (#163): lit while the gate is up. */
+.castle-torch { pointer-events: none; }
+.torch-bracket { fill: none; stroke: #4a525e; stroke-width: 2.4; stroke-linecap: round; }
+.torch-cup { fill: #6a7380; }
+.torch-out { fill: #1b1f25; }
+.torch-flame { fill: #ff9d3b; }
+.torch-core { fill: #ffe7a3; }
+.torch-glow { fill: url(#castle-torch-glow); }
+.torch-glow.torch-pool { fill: url(#castle-torch-pool); }
+.torch-glow-core { stop-color: #ffb04a; stop-opacity: 0.42; }
+.torch-glow-mid { stop-color: #ff9d3b; stop-opacity: 0.14; }
+.torch-glow-edge { stop-color: #ff9d3b; stop-opacity: 0; }
+.torch-pool-core { stop-color: #ffb04a; stop-opacity: 0.2; }
+
 /* Floor and the type's icon. */
 .room-fill { fill: url(#castle-floor); }
 .floor-stone { fill: var(--castle-dark-fill); }
@@ -2688,6 +2714,7 @@ pre.code {
 .pose-eye { fill: #0f1319; }
 .pose-sound { fill: none; stroke: currentColor; stroke-width: 1; stroke-linecap: round; opacity: 0.8; }
 .pose-sparkle { fill: #c3a6ff; }
+.pose-quill { fill: #efe2bf; }
 
 .castle-unit.resting {
   opacity: 0.55;

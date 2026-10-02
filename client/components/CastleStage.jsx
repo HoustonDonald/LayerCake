@@ -1,8 +1,8 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 
-import { ArtDefs, Citadel, Figure, FigureIcon, Hollowmere, RoomLight, TypeIcon, WildsForest } from './castleArt.jsx';
+import { ArtDefs, Citadel, Figure, FigureIcon, Gatehouse, Hollowmere, RoomLight, Torch, TypeIcon, WildsForest } from './castleArt.jsx';
 import { describeUnit } from './castleDescribe.js';
-import { HeraldPose, KNIGHT_WORK_BANNER, POSE_VERBS, RavenPose, ScoutPose, WizardPose, WorkerPose } from './castlePoses.jsx';
+import { HeraldPose, KNIGHT_WORK_BANNER, POSE_VERBS, RavenPose, ScoutPose, ScribePose, WizardPose, WorkerPose } from './castlePoses.jsx';
 import { BAND, DOT, FADE_MS, FROST_H, HOP_MS, RAVEN_R, RUN_KINDS, SLIDE_MS, W, WILDS_H, keyframes, runSpot, lastTrailKey, layout, newPlaces, perchX, placeUnits, planWalk, positionAt, replan, totalMs, waypoint } from './castleMotion.js';
 
 /**
@@ -154,13 +154,14 @@ function unitColour(u, sessionIndex) {
  * for smooth animation (#169). With nothing active no timer runs.
  */
 const FLIP_MS = 125;
-const flip = { frame: 0, timer: null, listeners: new Set() };
+const flip = { frame: 0, timer: null, listeners: new Set(), riders: new Set() };
 function onFlip(listener) {
   flip.listeners.add(listener);
   if (!flip.timer) {
     flip.timer = setInterval(() => {
       flip.frame += 1;
       for (const l of flip.listeners) l();
+      for (const l of flip.riders) l();
     }, FLIP_MS);
   }
   return () => {
@@ -174,6 +175,19 @@ function onFlip(listener) {
 const offFlip = () => () => {};
 function useFlipbook(active) {
   return useSyncExternalStore(active ? onFlip : offFlip, () => (active ? flip.frame : 0));
+}
+/**
+ * A rider on the flip-book: steps with it while something else keeps it
+ * running, and never starts or holds it, so it stands still when the castle
+ * does. The torches' flicker (#163, owner's pick 2026-10-02: they flicker
+ * while Claude works) rides it.
+ */
+function onFlipRider(listener) {
+  flip.riders.add(listener);
+  return () => flip.riders.delete(listener);
+}
+function useFlipbookRider(on) {
+  return useSyncExternalStore(on ? onFlipRider : offFlip, () => (on ? flip.frame : 0));
 }
 
 /**
@@ -197,10 +211,25 @@ function useWakeAt(at) {
  * when the unit's walk to it ends. Null while it walks there, and after.
  */
 function poseVerb(pose, u, now, min) {
-  if (!pose || !POSE_VERBS.has(pose.verb) || now < pose.from) return null;
+  if (!pose || !ACTS.has(pose.verb) || now < pose.from) return null;
   return poseRunning(pose, u) || now < pose.from + min ? pose.verb : null;
 }
 const poseRunning = (pose, u) => u.last?.id === pose.key && u.last.endAt === null;
+/** What a unit can act out: a worker's verbs, and the Scribe's compaction (#163). */
+const ACTS = new Set([...POSE_VERBS, 'bind']);
+
+/**
+ * Whether the Scribe is at the gate (#163): for as long as its compaction
+ * runs, and for `min` from when the page saw it, as a pose plays. The server
+ * keeps a finished compaction in the frame for a while (a transcript reports
+ * one only once it is over), so the page decides. One the page has not noted
+ * yet shows if this frame is a story (`move`), or, in a picture, if it still
+ * runs: a compaction over before the castle opened is not shown.
+ */
+function scribeShows(u, pose, mode, now, min) {
+  if (pose && pose.key === u.last?.id) return poseVerb(pose, u, now, min) !== null;
+  return mode === 'move' || u.last?.endAt === null;
+}
 
 /**
  * A unit (#162): its figure on a dark disc ringed in its colour, so a session
@@ -219,14 +248,15 @@ function Unit({ u, x, y, colour, kinds, riders = [], colourOf, onClick, small = 
   const bird = u.kind === 'raven';
   const now = Date.now();
   const verb = poseVerb(pose, u, now, poseMin);
-  const waiting = Boolean(pose && POSE_VERBS.has(pose.verb) && now < pose.from);
+  const waiting = Boolean(pose && ACTS.has(pose.verb) && now < pose.from);
   useWakeAt(waiting ? pose.from : verb && !poseRunning(pose, u) ? pose.from + poseMin : null);
   const animated = verb !== null || bird || u.kind === 'scout' || (u.kind === 'wizard' && sparkle);
   const tick = useFlipbook(animated && !reduce);
   const frame = reduce ? 0 : tick;
   const size = bird ? 40 : small ? 18 : 24;
   let art = null;
-  if (verb) art = <WorkerPose kind={u.kind} verb={verb} frame={frame} />;
+  if (u.kind === 'scribe') art = verb ? <ScribePose frame={frame} /> : null;
+  else if (verb) art = <WorkerPose kind={u.kind} verb={verb} frame={frame} />;
   else if (bird) art = <RavenPose frame={frame} />;
   else if (u.kind === 'scout') art = <ScoutPose frame={frame} />;
   else if (u.kind === 'herald' && swing) art = <HeraldPose swing={swing} />;
@@ -247,6 +277,77 @@ function Unit({ u, x, y, colour, kinds, riders = [], colourOf, onClick, small = 
         <g key={w.key} className="castle-rider" transform={`translate(${(i + 1) * (DOT * 2 + 4)} ${-(DOT + 6)})`}>
           <Unit u={w} colour={colourOf(w)} kinds={kinds} colourOf={colourOf} small sparkle={verb !== null} reduce={reduce} />
         </g>
+      ))}
+    </g>
+  );
+}
+
+/**
+ * Where the front wall's torches stand (#163, owner's pick: six along the
+ * front wall, the gate's two included): two beside the gate, and four more
+ * shared between the stretches of wall either side of it by their length,
+ * evenly within each, never closer than TORCH_GAP to another torch. A wall
+ * too short for four gets fewer.
+ */
+const TORCH_GAP = 78;
+function torchSpots(L) {
+  const gx = L.gate.x;
+  const xs = [gx - 62, gx + 62];
+  const stretches = [
+    [L.wallX + 30, gx - 62 - TORCH_GAP],
+    [gx + 62 + TORCH_GAP, W - L.wallX - 30],
+  ].map(([a, b]) => ({ a, len: Math.max(0, b - a), room: Math.floor(Math.max(0, b - a) / TORCH_GAP) }));
+  const [left, right] = stretches;
+  const total = left.len + right.len;
+  left.n = Math.min(left.room, total ? Math.round((4 * left.len) / total) : 0);
+  right.n = Math.min(right.room, 4 - left.n);
+  left.n = Math.min(left.room, 4 - right.n);
+  for (const s of stretches) for (let i = 0; i < s.n; i += 1) xs.push(Math.round(s.a + (s.len * (i + 0.5)) / s.n));
+  return xs.sort((a, b) => a - b);
+}
+
+const GATE_FRAMES = 6;
+
+/**
+ * The gate and the front wall's torches (#163, owner's picks 2026-10-02). The
+ * portcullis is up while any session in the castle is running (`live`), and
+ * until the last Mason or Knight walking out is out (`leavingRef`, which the
+ * unit layer sets in its layout effect). The gate decides in a passive
+ * effect, which runs after every layout effect of the commit: as a layout
+ * effect it ran first, being drawn before the units, and a session's end
+ * read as a drop and then a rise as its Mason began to walk out. It moves in
+ * six flip-book frames; a change that comes with a connection's first frame
+ * is a picture, not a story, and snaps, as units are placed and not walked;
+ * so does every change with reduced motion. The torches are lit while it is
+ * up or moving, and their flames ride the flip-book: they flicker while
+ * something else keeps it running and stand still when the castle does.
+ */
+function Gate({ L, live, leavingRef, generation, state, reduce }) {
+  const [gate, setGate] = useState(() => ({ up: live, at: -Infinity }));
+  const seen = useRef({ state: undefined, generation: undefined });
+  useEffect(() => {
+    const prev = seen.current;
+    const fresh = state !== prev.state;
+    if (fresh) seen.current = { state, generation };
+    const up = live || leavingRef.current > 0;
+    if (up === gate.up) return;
+    const story = !reduce && prev.state !== undefined && !(fresh && prev.generation !== generation);
+    setGate({ up, at: story ? Date.now() : -Infinity });
+  });
+  const step = Math.floor((Date.now() - gate.at) / FLIP_MS);
+  const moving = step >= 0 && step < GATE_FRAMES;
+  useFlipbook(moving);
+  useWakeAt(moving ? gate.at + GATE_FRAMES * FLIP_MS : null);
+  const done = Math.min(1, (step + 1) / GATE_FRAMES);
+  const raised = moving ? (gate.up ? done : 1 - done) : gate.up ? 1 : 0;
+  const lit = gate.up || moving;
+  const frame = useFlipbookRider(lit && !reduce);
+  return (
+    <g className="castle-gate-group">
+      <title>{gate.up ? 'The gate is up: a session in this castle is running.' : 'The gate is down: no session in this castle is running.'}</title>
+      <Gatehouse x={L.gate.x} y={L.wallBottom} raised={raised} lit={lit} />
+      {torchSpots(L).map((x) => (
+        <Torch key={x} x={x} y={L.wallBottom} lit={lit} frame={reduce ? 0 : frame} />
       ))}
     </g>
   );
@@ -305,7 +406,7 @@ const samePoint = (a, b) => Math.abs(a.x - b.x) < 0.01 && Math.abs(a.y - b.y) < 
  * call already there when the castle opened (or reconnected) plays only if it
  * is still running, since a pose nobody saw start would be invented too.
  */
-function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf, kinds, poseMin, swing, onSelect, onHover }) {
+function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf, kinds, poseMin, swing, onSelect, onHover, onLeaving }) {
   // key -> { key, unit, place, point, lastKey, legs, anim, fade, leaving, exit }
   const motion = useRef(new Map());
   // key -> { key: the call's id, verb, from }
@@ -314,18 +415,30 @@ function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf
   const flights = useRef([]);
   const frame = useRef({ generation: null, state: undefined, awaiting: false, mapVersion: undefined });
   const layerRef = useRef(null);
+  // How many Masons and Knights are walking out, as last told to onLeaving: the gate stays up for them (#163).
+  const leavingTold = useRef(0);
   const [, rerender] = useState(0);
 
-  const placed = placeUnits(L, rooms, units, perch);
   const mode = frameMode(frame.current, generation, state);
+  // Every unit stands where the server puts it, except a Scribe, which is
+  // there only while it shows (scribeShows); a hidden one takes no place.
+  const now = Date.now();
+  const present = units.filter((u) => u.kind !== 'scribe' || scribeShows(u, poses.current.get(u.key), mode, now, poseMin));
+  let scribeGoes = Infinity;
+  for (const u of present) {
+    const pose = u.kind === 'scribe' ? poses.current.get(u.key) : null;
+    if (pose && pose.key === u.last?.id && !poseRunning(pose, u)) scribeGoes = Math.min(scribeGoes, pose.from + poseMin);
+  }
+  useWakeAt(Number.isFinite(scribeGoes) ? scribeGoes : null);
+  const placed = placeUnits(L, rooms, present, perch);
   const riders = new Map();
-  for (const u of units) {
+  for (const u of present) {
     if (u.kind !== 'wizard' || placed.has(u.key)) continue;
     if (!riders.has(u.caller)) riders.set(u.caller, []);
     riders.get(u.caller).push(u);
   }
   const shown = [];
-  for (const u of units) {
+  for (const u of present) {
     const p = placed.get(u.key);
     if (p) shown.push({ u, p });
   }
@@ -406,6 +519,14 @@ function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf
       // A layout effect's update renders again before paint; that render's effect returns early.
       if (changed) rerender((n) => n + 1);
     };
+    // The gate stays up until the last Mason or Knight walking out is out (#163).
+    const tellLeaving = () => {
+      let n = 0;
+      for (const rec of motion.current.values()) if (rec.leaving && WALKERS.has(rec.unit.kind)) n += 1;
+      if (n === leavingTold.current) return;
+      leavingTold.current = n;
+      onLeaving?.(n);
+    };
 
     const m = frameMode(frame.current, generation, state);
     if (m !== 'move') {
@@ -417,6 +538,7 @@ function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf
       }
       frame.current = { generation, state, awaiting: m === 'hold', mapVersion: state?.mapVersion };
       notePoses(true);
+      tellLeaving();
       return;
     }
     // A re-render for something else (a held room, cooling, a ghost gone): nothing new to walk.
@@ -509,11 +631,13 @@ function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf
         // No cancel here: that would show it at its old spot until React
         // removes it; removing the element ends its animations.
         motion.current.delete(rec.key);
+        tellLeaving();
         rerender((n) => n + 1);
       };
     }
 
     notePoses(false);
+    tellLeaving();
     if (flown) rerender((n) => n + 1);
   });
 
@@ -725,6 +849,13 @@ export default function CastleStage({ map, state, generation, selected, onSelect
   const shown = useHeldStates(state?.rooms, generation);
   useCooling(state?.rooms, halfLife);
   const reduce = useReducedMotion();
+  // Masons and Knights still walking out (UnitLayer): the gate stays up for them (#163).
+  const leavingRef = useRef(0);
+  const [, setLeaving] = useState(0);
+  const onLeaving = (n) => {
+    leavingRef.current = n;
+    setLeaving(n);
+  };
   const pulse = usePulse(Object.values(shown).includes('alarm') || (state?.units || []).some((u) => u.kind === 'herald'), reduce);
   const now = Date.now();
   const byState = new Map((map?.states || []).map((s) => [s.state, s]));
@@ -744,7 +875,6 @@ export default function CastleStage({ map, state, generation, selected, onSelect
   const ravensRight = perchX(L, rooms, map?.perch || null) > W / 2;
   const wallW = W - 2 * L.wallX;
   const wallH = L.wallBottom - L.wallY;
-  const gateW = 96;
   const sideGate = 48;
 
   return (
@@ -810,8 +940,7 @@ export default function CastleStage({ map, state, generation, selected, onSelect
           The Frostwall
         </text>
       </g>
-      <rect className="castle-gate" x={L.gate.x - gateW / 2} y={L.wallBottom - 6} width={gateW} height={12} />
-      <path className="castle-gate-arch" d={`M${L.gate.x - gateW / 2} ${L.wallBottom - 6} V${L.wallBottom - 14} Q${L.gate.x} ${L.wallBottom - 38} ${L.gate.x + gateW / 2} ${L.wallBottom - 14} V${L.wallBottom - 6}`} />
+      <Gate L={L} live={(state?.summary?.sessions ?? 0) > 0} leavingRef={leavingRef} generation={generation} state={state} reduce={reduce} />
       {/* The small gate units take to the Citadel (east). */}
       <rect className="castle-gate" x={L.sideGates.outside.x - 6} y={L.sideGates.outside.y - sideGate / 2} width={12} height={sideGate} />
       {/* The keep's name, on the road below its gate (#172): clear of the units waiting there and of Hollowmere either side. */}
@@ -877,7 +1006,7 @@ export default function CastleStage({ map, state, generation, selected, onSelect
       })}
 
       <RunLayer L={L} rooms={rooms} units={state?.units || []} reduce={reduce} onHover={setCard} />
-      <UnitLayer L={L} rooms={rooms} perch={map?.perch || null} units={(state?.units || []).filter((u) => !RUN_KINDS.has(u.kind))} generation={generation} state={state} reduce={reduce} colourOf={colourOf} kinds={map?.units} poseMin={map?.windows?.poseMinMs ?? 0} swing={reduce ? 0 : pulse ? 1 : -1} onSelect={select} onHover={setCard} />
+      <UnitLayer L={L} rooms={rooms} perch={map?.perch || null} units={(state?.units || []).filter((u) => !RUN_KINDS.has(u.kind))} generation={generation} state={state} reduce={reduce} colourOf={colourOf} kinds={map?.units} poseMin={map?.windows?.poseMinMs ?? 0} swing={reduce ? 0 : pulse ? 1 : -1} onSelect={select} onHover={setCard} onLeaving={onLeaving} />
     </svg>
     {card && <UnitCard card={card} state={state} map={map} />}
     </>

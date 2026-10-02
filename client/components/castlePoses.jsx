@@ -305,6 +305,40 @@ export function HeraldPose({ swing }) {
   );
 }
 
+const SCRIBE_HOOD = 'M10 1.8 C6.6 1.8 5.6 5 5.8 8.2 L7.2 11 Q10 9.8 12.8 11 L14.2 8.2 C14.4 5 13.4 1.8 10 1.8 Z';
+const SCRIBE_ROBE = 'M4.6 22 L7 11 Q10 9.6 13 11 L15.4 22 Z';
+const QUILL_AT = [
+  [15.4, 12.9],
+  [16.6, 12.6],
+  [17.8, 12.3],
+  [19, 11.2],
+];
+
+/**
+ * The Scribe (#163, owner's pick 2026-10-02): hooded, at a lectern by
+ * candlelight, its quill moving along the line and lifting at the end.
+ */
+export function ScribePose({ frame }) {
+  const [tx, ty] = QUILL_AT[frame & 3];
+  const hx = n(tx - 1.4);
+  const hy = n(ty - 3.2);
+  return (
+    <>
+      <ellipse className="pose-glow-flame" cx="18" cy="12.4" rx="7.4" ry="5.4" />
+      <path d={SCRIBE_HOOD} />
+      <ellipse className="pose-eye" cx="10.6" cy="6.6" rx="2" ry="2.4" />
+      <path d={SCRIBE_ROBE} />
+      <path className="pose-line" strokeWidth="1.4" d="M18.6 13.8 V22 M16.2 22 H21" />
+      <path className="pose-line" strokeWidth="1.5" d="M14.2 14.8 L22.6 12.4" />
+      <path className="pose-parchment" d="M14.6 13.9 L22 11.8 L21.6 10.4 L14.2 12.5 Z" />
+      <path className="pose-ink" d="M16 12.9 l4.4 -1.25" />
+      <path className="pose-line" strokeWidth="2" d={`M12.4 12.6 L${hx} ${hy}`} />
+      <path className="pose-line" strokeWidth="0.7" d={`M${tx} ${ty} L${n(hx - 0.6)} ${n(hy - 2.6)}`} />
+      <path className="pose-quill" d={`M${n(hx - 0.6)} ${n(hy - 2.6)} q-1.6 1.2 -0.4 3.4 q1.2 -1.4 0.4 -3.4 Z`} />
+    </>
+  );
+}
+
 function star(x, y, r) {
   const k = r * 0.3;
   return `M${n(x)} ${n(y - r)} L${n(x + k)} ${n(y - k)} L${n(x + r)} ${n(y)} L${n(x + k)} ${n(y + k)} L${n(x)} ${n(y + r)} L${n(x - k)} ${n(y + k)} L${n(x - r)} ${n(y)} L${n(x - k)} ${n(y - k)} Z`;

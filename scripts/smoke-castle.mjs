@@ -36,6 +36,10 @@ const S = {
   // No "smoke" in it: the built-in Tests room claims **/*smoke*.
   shellPath: 'castlegitpathsentinel',
 };
+// A PreCompact trigger Claude Code does not document (#163): the castle drops
+// it. Not one of S: the Sessions tab's event list has always shown a hook's
+// raw trigger, clipped, as that event's detail, so only castle frames are searched.
+const TRIGGER = 'SMOKE-CASTLE-TRIGGER';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -371,6 +375,38 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     check('and it leaves once Claude moves again', await s1.untilState((st) => !st.units.some((u) => u.kind === 'herald')));
     await hook({ hook_event_name: 'PostToolUse', tool_name: 'Read', tool_use_id: 'toolu_c_after', tool_input: { file_path: P('docs', 'guide.md') }, tool_response: {} });
 
+    // --- the Scribe (#163): a compaction, live from the hooks ---------------------------
+    const B = `B:${sid}`;
+    const scribe = () => unitOf(s1.last('state'), B);
+    const masonOf = (st) => unitOf(st, `M:${sid}`);
+    await hook({ hook_event_name: 'PreCompact', trigger: 'auto', custom_instructions: '' });
+    check('PreCompact brings a Scribe to the gate while the compaction runs, with what started it (#163)',
+      await s1.untilState((st) => {
+        const b = unitOf(st, B);
+        return b?.kind === 'scribe' && b.room === 'gate' && b.last?.verb === 'bind' && b.last.endAt === null && b.last.trigger === 'auto';
+      }),
+      JSON.stringify(scribe()));
+    const compactFrom = scribe()?.last?.at;
+    await sleep(3800); // past the rest window, 3 s here
+    check("past the rest window, its session's Mason waits on the Scribe rather than resting (#163)",
+      masonOf(s1.last('state'))?.resting === false && scribe()?.last?.endAt === null, JSON.stringify({ mason: masonOf(s1.last('state')), scribe: scribe() }));
+    await hook({ hook_event_name: 'PostCompact', trigger: 'auto' });
+    check('PostCompact ends it: the Scribe stays in the frame with its end, for the page to show as it does a pose (#163)',
+      await s1.untilState((st) => typeof unitOf(st, B)?.last?.endAt === 'number' && unitOf(st, B).last.at === compactFrom && unitOf(st, B).last.endAt > compactFrom),
+      JSON.stringify(scribe()));
+    check('and the Mason rests once the window passes after the compaction ends (#163)',
+      await s1.untilState((st) => masonOf(st)?.resting === true, 6000), JSON.stringify(masonOf(s1.last('state'))));
+    check("a finished compaction's Scribe leaves the frame once its keep window passes (#163)",
+      await s1.untilState((st) => !unitOf(st, B), 6000), JSON.stringify(scribe()));
+    await hook({ hook_event_name: 'PreCompact', trigger: TRIGGER });
+    check('a trigger Claude Code does not document is dropped (#163)',
+      await s1.untilState((st) => unitOf(st, B)?.last?.endAt === null && unitOf(st, B).last.trigger === null), JSON.stringify(scribe()));
+    // Its PostCompact never comes: the next call on the main thread ends it.
+    await hook({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_use_id: 'toolu_c_postcompact', tool_input: { file_path: P('docs', 'guide.md') } });
+    check('a compaction whose end is never reported ends at the next call, so its Scribe cannot stay for good (#163)',
+      await s1.untilState((st) => typeof unitOf(st, B)?.last?.endAt === 'number'), JSON.stringify(scribe()));
+    await hook({ hook_event_name: 'PostToolUse', tool_name: 'Read', tool_use_id: 'toolu_c_postcompact', tool_input: { file_path: P('docs', 'guide.md') }, tool_response: {} });
+
     await call('toolu_c_bg', 'Bash', { command: 'npm test', run_in_background: true, description: 'Tests in the background' }, { response: { stdout: '', backgroundTaskId: 'bg1' } });
     check('a test run started in the background has no verdict',
       await s1.untilState((st) => st.runs.some((r) => r.id === 'toolu_c_bg' && r.ok === null && r.noVerdict === 'started in the background')));
@@ -448,14 +484,37 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
       await s1.untilState((st) => st.units.some((u) => u.key === `K:${agent2}` && u.room === 'jobs' && u.agentType === 'general-purpose') && st.rooms.jobs.scaffolding === true),
       JSON.stringify({ units: s1.last('state')?.units, jobs: s1.last('state')?.rooms?.jobs }));
     check("the Knight carries its task, from the subagent's own meta file", s1.last('state')?.units?.find((u) => u.key === `K:${agent2}`)?.task === 'nightly', JSON.stringify(s1.last('state')?.units?.find((u) => u.key === `K:${agent2}`)));
+    const lateAt = Date.now();
     await fs.appendFile(
       path.join(slugDir, `${sid2}.jsonl`),
-      `${rec(sid2, proj, Date.now(), toolUse('toolu_t_late', 'Read', { file_path: P('docs', 'late.md') }))}\n`
+      `${rec(sid2, proj, lateAt, toolUse('toolu_t_late', 'Read', { file_path: P('docs', 'late.md') }))}\n`
     );
     check('a call appended to a transcript reaches the stream, and its lag is measured',
       (await s1.untilLog((es) => es.some((e) => e.id === 'toolu_t_late' && e.source === 'transcript'), 4000)) &&
         (await s1.untilState((st) => st.sessions.find((x) => x.sessionId === sid2)?.lagSamples >= 1, 3000)),
       JSON.stringify(s1.last('state')?.sessions?.find((x) => x.sessionId === sid2)));
+
+    // #163: a transcript records a compaction only once it is over, with its length.
+    // Claude makes no call while it compacts, so its start (1.5 s back) must
+    // fall after the call above: a call inside it ends it, as the fold should.
+    await sleep(Math.max(0, lateAt + 1600 - Date.now()));
+    const compactEnd = Date.now();
+    await fs.appendFile(
+      path.join(slugDir, `${sid2}.jsonl`),
+      `${rec(sid2, proj, compactEnd, { type: 'system', subtype: 'compact_boundary', content: 'Conversation compacted', compactMetadata: { trigger: 'manual', preTokens: 180000, postTokens: 20000, durationMs: 1500 } })}\n`
+    );
+    check("a transcript's compaction brings its session's Scribe, already over, timed back from its length (#163)",
+      await s1.untilState((st) => {
+        const b = unitOf(st, `B:${sid2}`);
+        return b?.kind === 'scribe' && b.last?.endAt === compactEnd && b.last.at === compactEnd - 1500 && b.last.trigger === 'manual';
+      }, 4000),
+      JSON.stringify({
+        scribe: unitOf(s1.last('state'), `B:${sid2}`),
+        sinceAppend: Date.now() - compactEnd,
+        log: (s1.last('log')?.entries || []).filter((e) => e.sessionId === sid2 && e.kind.startsWith('compact')),
+        compactEnd,
+        frames: s1.frames.filter((f) => f.event === 'state' && f.at >= compactEnd).map((f) => ({ in: f.at - compactEnd, scribe: f.data.units.find((u) => u.key === `B:${sid2}`) || null })),
+      }));
 
     // #164: a command Claude Code refused before it ran is recorded in the
     // transcript as an error, with no hook failure behind it. It is not a
@@ -501,12 +560,19 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
         rec(sid, proj, t0 - 60_000, { type: 'user', origin: { kind: 'human' }, message: { role: 'user', content: 'Before the hooks' } }),
         rec(sid, proj, t0 - 59_000, toolUse('toolu_c_before', 'Read', { file_path: P('docs', 'before.md') })),
         rec(sid, proj, t0 - 58_000, toolResult('toolu_c_before', 'ok', { type: 'text' })),
+        rec(sid, proj, t0 - 50_000, { type: 'system', subtype: 'compact_boundary', content: 'Conversation compacted', compactMetadata: { trigger: 'auto', durationMs: 4000 } }),
         rec(sid, proj, t0 + 10, toolUse('toolu_c_read', 'Read', { file_path: P('docs', 'guide.md') })),
         rec(sid, proj, t0 + 20, toolResult('toolu_c_read', S.transcriptOutput, { type: 'text' })),
+        // The hooks reported this one (the PreCompact and PostCompact above): it shares no id with them.
+        rec(sid, proj, Date.now(), { type: 'system', subtype: 'compact_boundary', content: 'Conversation compacted', compactMetadata: { trigger: 'auto', durationMs: 4000 } }),
       ].join('\n') + '\n'
     );
     check('the transcript backfills a launched session\'s calls from before its hooks began',
       await s1.untilLog((es) => es.some((e) => e.id === 'toolu_c_before' && e.source === 'transcript'), 5000));
+    const compactsFrom = (src) => (s1.last('log')?.entries || []).filter((e) => e.sessionId === sid && e.kind === 'compact-start' && e.source === src);
+    check("a launched session's compaction from before its hooks began is backfilled from its transcript, and one since is left to the hooks (#163)",
+      compactsFrom('transcript').length === 1 && compactsFrom('transcript')[0].at === t0 - 54_000 && compactsFrom('hooks').length === 2,
+      JSON.stringify({ transcript: compactsFrom('transcript'), hooks: compactsFrom('hooks') }));
     const logNow = s1.last('log')?.entries || [];
     check('a call both the hooks and the transcript report is shown once, from the hooks (keyed by tool_use_id)',
       logNow.filter((e) => e.id === 'toolu_c_read').length === 1 && logNow.find((e) => e.id === 'toolu_c_read')?.source === 'hooks',
@@ -719,6 +785,7 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     for (const s of [s1, s2]) bodies.push(s.raw.join(''));
     const all = bodies.join('\n');
     for (const [name, value] of Object.entries(S)) check(`no castle frame or route carries the ${name} sentinel`, !all.includes(value));
+    check('no castle frame carries a compaction trigger Claude Code does not document (#163)', ![s1, s2].some((s) => s.raw.join('').includes(TRIGGER)));
     check('every hook answer stayed an empty 204 while the castle watched', allEmpty);
     await fs.rm(pidFile, { force: true });
   } finally {

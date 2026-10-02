@@ -948,7 +948,7 @@ the legend, or click a room); the rules come from the server with the data.
   per step kept the castle redrawing for minutes after work. With reduced motion set, nothing pulses.
 
 **Units** (a figure on a dark disc ringed in its session's colour, or a Knight's own): a **Mason**
-(with a hammer) is a session, in the room of its latest call, resting once 60 s pass with no call running (dimmed,
+(with a hammer) is a session, in the room of its latest call, resting once 60 s pass with no call or compaction running (dimmed,
 with a "z"); a **Knight** (a helm and a banner in its own colour) is a subagent, from its start to its
 stop; a **Wizard** (hat and robe) is a skill Claude invoked, beside its caller until the caller's turn
 ends (a skill you type as `/name` is not seen); a **Raven** (a bird on a disc ringed in its session's
@@ -956,7 +956,8 @@ colour, larger than the rest, #182) is an MCP call, on the Frostwall above the f
 room (else above the gate's column), and the wall's name moves to the other end so it is not
 covered; a **Scout** (a horse) is
 a web fetch or search, down the road from the gate; the **Herald** (a bell, with a ring) is at the gate while a launched session
-waits for you, the one unit that pulses. Clicking a unit opens the room it stands in. Hovering one
+waits for you, the one unit that pulses; a **Scribe** (hooded, writing at a lectern) is at the gate while Claude Code compacts
+the conversation (below). Clicking a unit opens the room it stands in. Hovering one
 says what it is doing first (its latest call, where, a Knight's task), then the session it belongs
 to: its name in quotes, with who named it, Claude Code or you, because a title Claude Code chose
 ("Session cleanup") otherwise reads as what the unit is doing (#179). The room's "Here now" says the
@@ -979,6 +980,14 @@ lands as the rules say: a passing proof run takes the scaffolding down (a test r
 `proof` includes builds), and a failure raises the Alarm. Their arrows and stones are drawn as a
 flip-book, 8 frames a second on one shared timer, only while a run is on screen, and they hold still
 with reduced motion.
+
+**The gate and its torches** (#163). The gate's portcullis is up, and the torches along the front
+wall are lit, while any session in the castle is running. It stays up until the last Mason or Knight
+walking out is out, then drops, and the torches go out. It rises or drops in six frames on the
+flip-book; when the castle opens or reconnects it is simply where it should be. The flames flicker on
+the flip-book too, but only ride it: they move while something else on screen is acting, never start
+it, and stand still when the castle does. With reduced motion the gate snaps and the flames hold
+still. Hover the gate to read which it is.
 
 **Movement.** Units walk; none jumps from room to room.
 
@@ -1021,6 +1030,14 @@ banner in its other hand.
   each flight, up to the wall and back, which drift down and fade over about 2 s (#182).
 - The Herald swings its bell on the ring's slow pulse rather than on the flip-book, since it can
   stand at the gate for hours while Claude waits for you.
+- **The Scribe** writes at its lectern, its quill moving along the line, for as long as Claude Code
+  compacts the conversation, and for at least 2 s from when the castle sees it; its session's Mason
+  waits meanwhile, and rests 60 s after the compaction ends, not during it. A session started with
+  Start Claude here reports a compaction's start and end through its hooks, so its Scribe is live.
+  Any other session's transcript records a compaction only once it is over, with its length, so its
+  Scribe comes afterwards, for 2 s. One already over when the castle opens or reconnects is not
+  shown. A compaction whose end never arrives ends at its session's next call, prompt or stop. The
+  hover card says what started it: `/compact`, or a full context.
 - Poses, arrows and stones step on one timer, 8 frames a second, which runs only while something on
   screen is acting; a still castle runs no timer. With reduced motion set, a pose holds its first
   frame for as long as it would have played.
@@ -1069,7 +1086,7 @@ that the castle sees.
 - When the stream stops, a "Not live since ..." layer says so and does not fade: a dead stream never
   passes for a quiet castle. After a LayerCake restart the page must be reloaded.
 - Hook history is kept in memory, so a restart loses what only the hooks saw (the Herald's history);
-  the transcript backfills the rest.
+  the transcript backfills the rest, compactions included.
 - At most 4 castle streams at once, 6 sessions per castle, and the latest 20,000 events per castle
   (the page says when older ones are left out).
 - Searches light a room only when scoped to a folder that room claims; their matched files are not
@@ -1093,8 +1110,9 @@ that the castle sees.
   carrying an `Origin` header (a browser always sends one; Claude Code does not), and is behind the
   Host guard like everything else. What arrives is kept in memory, reduced to tool names and
   one-line summaries, plus, for the Castle, the file paths a call names, the first words of a shell
-  command (to recognise a test or build run; never sent to the page) and whether the call succeeded.
-  No tool input or output body is kept.
+  command (to recognise a test or build run; never sent to the page), whether the call succeeded,
+  and what started a compaction (`manual` or `auto`, anything else dropped). No tool input or output
+  body is kept.
 - Castle routes (`/api/castle/*`) take a scan id, never a path, and serve paths, tool names, one-line
   summaries and room states.
 - Session routes serve prompts and replies, so they accept only a session id the server itself

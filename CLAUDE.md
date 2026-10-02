@@ -633,7 +633,9 @@ partially. A truncated file restored is silent data loss.
   launch needs the Sandbox's networking on.
 - **The Castle sees less for a session LayerCake did not launch.** It reads that session's
   transcript, which Claude Code writes when each model response completes, so it has no "waiting
-  for you" (no Herald) and runs a measured few seconds behind (shown per session). A skill typed as
+  for you" (no Herald) and runs a measured few seconds behind (shown per session). A compaction
+  reaches it only once it is over (the transcript's boundary record), so that session's Scribe
+  comes afterwards, for 2 s. A skill typed as
   `/name` fires no PreToolUse (docs), so it brings no Wizard. A file a shell command changes is not
   seen, only the files a tool call names. Searches light rooms by their `path` only; the matched
   files are not read. Each castle folds its latest 20,000 events (a refold of that many measured a

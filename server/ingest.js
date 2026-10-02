@@ -164,6 +164,10 @@ function keepForCastle(s, sessionId, h, at) {
     record.verdict = toolVerdict({ isError: true, text: str(h.error), interrupted: h.is_interrupt === true, ran: true });
   } else if (event === 'PermissionDenied') {
     record.verdict = { ok: null, reason: 'denied' };
+  } else if (event === 'PreCompact') {
+    // What started it, for the Scribe's hover card: /compact, or a full context (docs: hooks).
+    const trigger = str(h.trigger);
+    record.trigger = trigger === 'manual' || trigger === 'auto' ? trigger : null;
   }
   s.castle.push(record);
   if (s.castle.length > MAX_CASTLE_RECORDS) s.castle.shift();

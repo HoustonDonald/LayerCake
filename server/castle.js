@@ -55,6 +55,11 @@ export const WINDOWS = {
   // unit arrives, and longer while it runs (#163, owner decision 2026-10-01).
   // Most reads end inside one 125 ms frame, so "only while it runs" hid them.
   poseMinMs: scaled(2000),
+  // How long a finished compaction's Scribe stays in the frame (#163). A
+  // transcript records a compaction only once it is over, so a page learns of
+  // most of them late; it shows the Scribe for poseMinMs from when it sees it,
+  // and this only has to outlast the time it takes to see it.
+  scribeKeepMs: scaled(60_000),
 };
 
 const MAX_SESSIONS = 6;
@@ -112,12 +117,13 @@ export const ROOM_STATES = [
 ];
 
 export const UNIT_KINDS = [
-  { kind: 'mason', letter: 'M', label: 'Mason', rule: `A session. Walks the corridors to the room of its latest tool call, through each room it worked in on the way, in order, and there acts the call out: hammers for an edit, lays a stone for a write, reads a scroll, swings a lantern to search, turns a crank for a shell command, while the call runs and for at least ${secs(WINDOWS.poseMinMs)}. Rests once ${secs(WINDOWS.restMs)} pass with no call running; walks out of the gate when the session ends.` },
+  { kind: 'mason', letter: 'M', label: 'Mason', rule: `A session. Walks the corridors to the room of its latest tool call, through each room it worked in on the way, in order, and there acts the call out: hammers for an edit, lays a stone for a write, reads a scroll, swings a lantern to search, turns a crank for a shell command, while the call runs and for at least ${secs(WINDOWS.poseMinMs)}. Rests once ${secs(WINDOWS.restMs)} pass with no call or compaction running; walks out of the gate when the session ends.` },
   { kind: 'knight', letter: 'K', label: 'Knight', rule: 'A subagent, from its start to its stop: enters by the gate, walks to the room of each tool call and acts it out as a Mason does (its banner in its other hand), and walks out of the gate when it stops.' },
   { kind: 'wizard', letter: 'W', label: 'Wizard', rule: "A skill Claude invoked, beside the unit that called it, following it, until that unit's turn ends or it calls another skill; it sparkles while that unit acts out a call. A skill you type as /name is not seen." },
   { kind: 'raven', letter: 'R', label: 'Raven', rule: "An MCP tool call, on a disc ringed in its session's colour: flies up to the wall above the first Integrations room (above the gate when there is none), dropping feathers on the way, beats its wings there while the call runs, and flies back when it returns." },
   { kind: 'scout', letter: 'S', label: 'Scout', rule: 'A web fetch or search: trots out of the gate, and back when the call returns.' },
   { kind: 'herald', letter: 'H', label: 'Herald', rule: 'Claude is waiting for you (a permission or input prompt): it rings its bell at the gate. Only sessions started from LayerCake can report this.' },
+  { kind: 'scribe', letter: 'B', label: 'Scribe', rule: `Claude Code is compacting the conversation: a hooded Scribe writes at a lectern by the gate while it runs, and for at least ${secs(WINDOWS.poseMinMs)}, and its session's Mason waits rather than rests. Live only for sessions started from LayerCake; any other session's transcript records a compaction once it is over, so its Scribe comes afterwards, for ${secs(WINDOWS.poseMinMs)}.` },
   { kind: 'raiders', letter: 'A', label: 'Raiders', rule: 'A test run, while it runs: a band out of the Wilds, or at the front, whichever is nearer, shooting over the wall at the rooms with unproven changes (the ones its verdict judges) and at the code its named test files are named after (a guess by name: scan.test.js points at scan.js, beside the test, mirrored out of a tests folder, or seen in this castle). With neither, it musters at the forest\'s edge and shoots at nothing. Leaves when the run ends or its turn is interrupted.' },
   { kind: 'crane', letter: 'C', label: 'Crane', rule: "A build run, while it runs: a treadwheel crane before the gate, hoisting stones along a cable onto the rooms with unproven changes (the ones its verdict judges). With none, it stands idle. Leaves when the run ends or its turn is interrupted." },
 ];
@@ -130,6 +136,7 @@ export const CASTLE_RULES = [
   `No run can prove a ${ROOM_TYPES.filter((t) => t.provable === false).map((t) => t.label).join(' or ')} room: a change there puts up no scaffolding, no run judges it, and it has no thrash. A failed change there is still an Alarm.`,
   'A call that was denied, interrupted, rejected, or refused by Claude Code before it ran has no verdict: it is never an Alarm. From a transcript, an error counts as a failure only with evidence the tool ran (an exit code, or a system error code such as EACCES).',
   'Heat: read 1, search 1, shell 2, edit 3, create 4, halving every ' + secs(WINDOWS.heatHalfLifeMs) + '. It sets brightness within a state, never the state.',
+  "The gate's portcullis is up and the torches on the front wall are lit while any session in the castle is running, and until the last Mason or Knight has walked out; then it drops and they go out.",
 ];
 
 const WEIGHT = { read: 1, search: 1, shell: 2, edit: 3, create: 4 };
@@ -186,9 +193,13 @@ function hookEvents(sessionId, records) {
       case 'SessionEnd':
         out.push({ ...base, kind: 'session-end', key: `end:${sessionId}` });
         break;
+      // A compaction's id is its start time: no field of the hook names it,
+      // and a ring index moves as the ring rolls.
       case 'PreCompact':
+        out.push({ ...base, kind: 'compact-start', key: `cs:${sessionId}:${at}`, trigger: r.trigger || null, summary: 'Compacting the conversation' });
+        break;
       case 'PostCompact':
-        out.push({ ...base, kind: 'compact', key: `h:${sessionId}:${i}`, summary: r.event === 'PreCompact' ? 'Compacting the conversation' : 'Compacted' });
+        out.push({ ...base, kind: 'compact-end', key: `ce:${sessionId}:${at}`, summary: 'Compacted the conversation' });
         break;
       default:
         break;
@@ -227,6 +238,19 @@ function transcriptEvents(entry, hooksSince) {
     }
     for (const tool of turn.tools) out.push(...toolEvents(sessionId, tool, null, null, 'transcript'));
   }
+  // A transcript records a compaction only once it is over (its boundary
+  // record carries the finished durationMs), so both ends arrive together.
+  // From hooksSince on, PreCompact and PostCompact report it, live, and share
+  // no id with the boundary: the hooks' copy is the one kept.
+  for (const c of reader.model.compactions) {
+    const end = iso(c.at);
+    if (end === null || end >= hooksSince) continue;
+    const start = typeof c.durationMs === 'number' && c.durationMs >= 0 ? end - c.durationMs : end;
+    // The trigger as ingest keeps a hook's: only the two Claude Code documents.
+    const trigger = c.trigger === 'manual' || c.trigger === 'auto' ? c.trigger : null;
+    out.push({ at: start, sessionId, source: 'transcript', agentId: null, kind: 'compact-start', key: `cs:${sessionId}:${start}`, trigger, summary: 'Compacting the conversation' });
+    out.push({ at: end, sessionId, source: 'transcript', agentId: null, kind: 'compact-end', key: `ce:${sessionId}:${end}`, summary: 'Compacted the conversation' });
+  }
   for (const sub of entry.subs.values()) {
     const first = iso(sub.reader.firstAt);
     if (first === null) continue;
@@ -238,7 +262,7 @@ function transcriptEvents(entry, hooksSince) {
   return out;
 }
 
-const KIND_ORDER = { 'agent-start': 0, turn: 1, 'call-start': 2, 'call-end': 3, stop: 4, 'agent-end': 5, compact: 6, 'session-end': 7 };
+const KIND_ORDER = { 'agent-start': 0, turn: 1, 'call-start': 2, 'call-end': 3, stop: 4, 'agent-end': 5, 'compact-start': 6, 'compact-end': 6, 'session-end': 7 };
 
 /**
  * Hook events first, so where both sources report a call the hook's copy is
@@ -320,7 +344,7 @@ export function fold(events, map, locateCall) {
   const session = (e) => {
     let s = sessions.get(e.sessionId);
     if (!s) {
-      s = { firstAt: e.at, lastAt: e.at, endedAt: null };
+      s = { firstAt: e.at, lastAt: e.at, endedAt: null, compaction: null };
       sessions.set(e.sessionId, s);
     }
     s.lastAt = e.at;
@@ -386,6 +410,13 @@ export function fold(events, map, locateCall) {
   for (const e of events) {
     const s = session(e);
     const entry = { id: e.toolUseId || null, at: e.at, sessionId: e.sessionId, agentId: e.agentId || null, source: e.source, kind: e.kind, tool: e.tool || null, summary: e.summary || '', where: null, verdict: null, endAt: null };
+    // Claude makes no call, takes no prompt and does not stop while Claude Code
+    // compacts: any of those on the main thread means a compaction still open
+    // is over, its end reported or not, so a lost PostCompact cannot leave a
+    // Scribe at the gate for good.
+    if (s.compaction?.endAt === null && !e.agentId && (e.kind === 'call-start' || e.kind === 'turn' || e.kind === 'stop' || e.kind === 'session-end')) {
+      s.compaction = { ...s.compaction, endAt: e.at };
+    }
     if (e.kind === 'call-start') {
       const verb = verbOf(e.tool);
       const loc = locateCall(e, verb);
@@ -546,6 +577,14 @@ export function fold(events, map, locateCall) {
       s.endedAt = e.at;
       for (const [k, u] of units) if (u.sessionId === e.sessionId) units.delete(k);
       entry.summary = 'Session ended';
+    } else if (e.kind === 'compact-start') {
+      // The session's latest compaction, for its Scribe (#163, owner's pick
+      // 2026-10-02): its id is the event's key, the same on every refold.
+      s.compaction = { id: e.key, at: e.at, endAt: null, trigger: e.trigger || null };
+      if (e.trigger === 'manual') entry.summary = 'Compacting the conversation (/compact)';
+      else if (e.trigger === 'auto') entry.summary = 'Compacting the conversation (context full)';
+    } else if (e.kind === 'compact-end') {
+      if (s.compaction?.endAt === null) s.compaction = { ...s.compaction, endAt: e.at };
     }
     log.push(entry);
     if (log.length > MAX_LOG) log.shift();
@@ -1031,8 +1070,12 @@ class Castle {
       }
       // Resting: no call running, and none for a while, counted from when the
       // last one ended (or, with none yet, from its arrival). A worker whose
-      // call is still running (a long build) is working, not resting.
-      const quietSince = u.last ? u.last.endAt : u.since;
+      // call is still running (a long build) is working, not resting. A
+      // session's compaction is work too (#163): its Mason waits on the
+      // Scribe rather than resting, then rests 60 s after it ends.
+      let quietSince = u.last ? u.last.endAt : u.since;
+      const compaction = u.kind === 'mason' ? folded.sessions.get(u.sessionId)?.compaction : null;
+      if (compaction && quietSince !== null) quietSince = compaction.endAt === null ? null : Math.max(quietSince, compaction.endAt);
       out.resting = (u.kind === 'mason' || u.kind === 'knight') && quietSince !== null && now - quietSince > WINDOWS.restMs;
       if (u.caller) out.caller = u.caller;
       units.push(out);
@@ -1043,6 +1086,14 @@ class Castle {
         units.push({ key: `M:${s.sessionId}`, kind: 'mason', sessionId: s.sessionId, agentId: null, room: 'gate', trail: [], last: null, resting: false, since: null });
       }
       if (s.live && s.waiting) units.push({ key: `H:${s.sessionId}`, kind: 'herald', sessionId: s.sessionId, room: 'gate', label: s.waiting });
+      // The Scribe (#163, owner's pick 2026-10-02): its session's latest
+      // compaction, as `last` with the verb it acts out. The page shows it
+      // while it runs and for poseMinMs from when the page sees it, as it does
+      // a pose; one already over when the page connects is not shown.
+      const c = folded.sessions.get(s.sessionId)?.compaction;
+      if (s.live && c && (c.endAt === null || now - c.endAt < WINDOWS.scribeKeepMs)) {
+        units.push({ key: `B:${s.sessionId}`, kind: 'scribe', sessionId: s.sessionId, agentId: null, room: 'gate', since: c.at, last: { id: c.id, verb: 'bind', trigger: c.trigger, at: c.at, endAt: c.endAt } });
+      }
     }
     units.sort((a, b) => a.key.localeCompare(b.key));
 

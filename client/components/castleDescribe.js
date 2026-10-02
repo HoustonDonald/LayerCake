@@ -113,6 +113,20 @@ export function describeUnit(u, { state, map }) {
       add('For', caller(u.caller));
       add('Since', ago(u.since));
       break;
+    case 'scribe': {
+      // Its session's latest compaction (#163); what started it, when a hook or the transcript said.
+      const c = u.last;
+      const why = c?.trigger === 'manual' ? ' (/compact)' : c?.trigger === 'auto' ? ' (context full)' : '';
+      if (c?.endAt === null) {
+        tags.push('compacting');
+        add('Now', `Compacting the conversation${why}`);
+        add('Since', ago(c.at));
+      } else if (c) {
+        add('Last', `Compacted the conversation${why} in ${duration(Math.max(0, c.endAt - c.at))}, ${ago(c.endAt)}`);
+      }
+      add('Session', sessionName(state, u.sessionId), namedBy(state, u.sessionId));
+      break;
+    }
     case 'herald':
       tags.push('waiting');
       add('Waiting for', WAITING[u.label] || u.label || 'you');
