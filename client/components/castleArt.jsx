@@ -250,6 +250,11 @@ export function ArtDefs() {
         <stop offset="0" className="torch-pool-core" />
         <stop offset="1" className="torch-glow-edge" />
       </radialGradient>
+      {/* The Citadel's beacon (#183). */}
+      <radialGradient id="castle-beacon-glow">
+        <stop offset="0" className="torch-glow-core" />
+        <stop offset="1" className="torch-glow-edge" />
+      </radialGradient>
       {/* Light through the open gate, from the road up. */}
       <linearGradient id="castle-gate-light" x1="0" y1="1" x2="0" y2="0">
         <stop offset="0" className="gate-light-low" />
@@ -422,26 +427,63 @@ export function RoomLight({ id, box, state, scaffolding }) {
 }
 
 /**
+ * Hollowmere and the Citadel are drawn in a 198 by 520 box (#183, owner's
+ * picks 2026-10-02 from a style board), fitted to the box the layout gives,
+ * standing on its bottom edge: a floor too short for the full height gets a
+ * smaller drawing, never a cut one.
+ */
+const PLACE_W = 198;
+const PLACE_H = 520;
+function placeFit(box) {
+  const s = Math.min(box.w / PLACE_W, box.h / PLACE_H);
+  return `translate(${n(box.x + (box.w - PLACE_W * s) / 2)} ${n(box.y + box.h - PLACE_H * s)}) scale(${n(s)})`;
+}
+/** Where a height in the 198 by 520 drawing lands in the castle, for a label over it. */
+export function placeY(box, y) {
+  const s = Math.min(box.w / PLACE_W, box.h / PLACE_H);
+  return n(box.y + box.h - PLACE_H * s + y * s);
+}
+/** The ridge of Hollowmere's highest roof in its drawing (house 0's, 212.6). */
+export const HOLLOWMERE_TOP = 212;
+const n = (v) => Math.round(v * 100) / 100;
+
+/** How many windows a file count lights (#183, owner's pick: a window per file, up to the windows drawn). */
+const lights = (count) => Math.max(0, Number(count) || 0);
+
+/**
  * The Citadel (owner's idea, 2026-09-30): where files outside the project are
  * kept track of, such as the home folder, Claude's configuration and other
- * projects. A tower beyond the east wall, with lit windows, reached by a road
- * from the east gate at (gateX, gy); `cx` is the middle of its band.
+ * projects. A beacon tower on a rock east of the keep (#183): its fire is lit
+ * once any such file has been touched, and one of its six windows for each
+ * file. Drawn still, like everything here.
  */
-export function Citadel({ cx, gateX, gy, lit }) {
-  const base = gy - 16;
-  const top = base - 96;
+export function Citadel({ box, count }) {
+  const lit = lights(count);
+  const cx = 99;
+  const base = 510;
+  const tw = 68;
+  const th = 330;
+  const top = base - 70 - th;
   return (
-    <g className={`citadel${lit ? ' lit' : ''}`} aria-hidden="true">
-      <path className="citadel-road" d={`M${gateX} ${gy} H${cx} V${base}`} />
-      <path className="citadel-spire" d={`M${cx - 15} ${top} L${cx} ${top - 30} L${cx + 15} ${top} Z`} />
-      <rect className="citadel-tower" x={cx - 12} y={top} width={24} height={base - top} />
-      {[-9, -1, 7].map((dx) => (
-        <rect key={dx} className="citadel-tower" x={cx + dx - 3} y={top - 5} width={4} height={6} />
+    <g className={`citadel${lit ? ' lit' : ''}`} transform={placeFit(box)} aria-hidden="true">
+      {lit > 0 && <circle className="beacon-glow" cx={cx} cy={top - 52} r="70" />}
+      <path className="citadel-rock" d={`M${cx - 83} ${base} L${cx - 59} ${base - 50} L${cx - 24} ${base - 76} L${cx + 32} ${base - 70} L${cx + 65} ${base - 44} L${cx + 83} ${base} Z`} />
+      <path className="citadel-tower" d={`M${cx - tw / 2} ${base - 64} L${n(cx - tw * 0.4)} ${top} L${n(cx + tw * 0.4)} ${top} L${cx + tw / 2} ${base - 64} Z`} />
+      <rect className="citadel-crown" x={n(cx - tw * 0.55)} y={top - 16} width={n(tw * 1.1)} height="16" />
+      {[0, 1, 2, 3].map((k) => (
+        <rect key={k} className="citadel-crown" x={n(cx - tw * 0.55 + k * tw * 0.31)} y={top - 28} width={n(tw * 0.17)} height="13" />
       ))}
-      {[top + 18, top + 44].map((wy) => (
-        <rect key={wy} className="citadel-window" x={cx - 3} y={wy} width={6} height={10} rx={3} />
+      <path className="citadel-brazier" d={`M${cx - 20} ${top - 30} L${cx + 20} ${top - 30} L${cx + 12} ${top - 18} L${cx - 12} ${top - 18} Z`} />
+      {lit > 0 && (
+        <>
+          <path className="beacon-flame" d={`M${cx - 17} ${top - 30} Q${cx - 20} ${top - 62} ${cx + 2} ${top - 92} Q${cx + 22} ${top - 60} ${cx + 17} ${top - 30} Z`} />
+          <path className="beacon-core" d={`M${cx - 8} ${top - 30} Q${cx - 9} ${top - 50} ${cx + 2} ${top - 70} Q${cx + 10} ${top - 50} ${cx + 8} ${top - 30} Z`} />
+        </>
+      )}
+      {[0, 1, 2, 3, 4, 5].map((k) => (
+        <rect key={k} className={`citadel-window${k < lit ? ' on' : ''}`} x={cx - 5} y={n(top + 34 + (k * (th - 80)) / 6)} width="10" height="28" rx="5" />
       ))}
-      <path className="citadel-door" d={`M${cx - 5} ${base} V${base - 10} A5 5 0 0 1 ${cx + 5} ${base - 10} V${base} Z`} />
+      <path className="citadel-door" d={`M${cx - 12} ${base - 64} V${base - 86} A12 12 0 0 1 ${cx + 12} ${base - 86} V${base - 64} Z`} />
     </g>
   );
 }
@@ -470,26 +512,35 @@ export function WildsForest({ width, height }) {
 }
 
 /**
- * Hollowmere (#172): the village south of the gate, where files in the project
- * that no room claims are kept. Its windows light once a file lands there.
+ * Hollowmere (#172): the village where files in the project that no room
+ * claims are kept. Eight houses round a mere with a jetty, west of the keep
+ * (#183): one window lights for each file that has landed there.
  */
-export function Hollowmere({ box, lit }) {
-  const n = Math.max(3, Math.min(6, Math.floor(box.w / 46)));
+export function Hollowmere({ box, count }) {
+  const lit = lights(count);
+  const cx = 99;
+  const cy = 330;
+  const rx = 60;
+  const ry = 43;
+  const w = 44;
   const houses = [];
-  for (let i = 0; i < n; i += 1) {
-    const w = 30 + (i % 3) * 5;
-    const x = box.x + 6 + (i * (box.w - 12 - w)) / Math.max(1, n - 1);
-    const y = box.y + 20 + (i % 2) * 22;
+  for (let k = 0; k < 8; k += 1) {
+    const a = -Math.PI / 2 + (k * 2 * Math.PI) / 8 + 0.2;
+    const x = n(Math.max(4, Math.min(PLACE_W - w - 4, cx + Math.cos(a) * (rx + w * 0.9) - w / 2)));
+    const y = n(Math.max(24, cy + Math.sin(a) * (ry + w * 0.95) - w * 0.33));
     houses.push(
-      <g key={i}>
-        <path className="house-roof" d={`M${x - 3} ${y} L${x + w / 2} ${y - w * 0.45} L${x + w + 3} ${y} Z`} />
-        <rect className="house-wall" x={x} y={y} width={w} height={w * 0.66} />
-        <rect className="house-window" x={x + w * 0.37} y={y + w * 0.2} width={w * 0.26} height={w * 0.22} />
+      <g key={k}>
+        <path className="house-roof" d={`M${n(x - 4)} ${y} L${n(x + w / 2)} ${n(y - w * 0.45)} L${n(x + w + 4)} ${y} Z`} />
+        <rect className="house-wall" x={x} y={y} width={w} height={n(w * 0.66)} />
+        <rect className={`house-window${k < lit ? ' on' : ''}`} x={n(x + w * 0.37)} y={n(y + w * 0.2)} width={n(w * 0.26)} height={n(w * 0.22)} />
       </g>
     );
   }
   return (
-    <g className={`hollowmere${lit ? ' lit' : ''}`} aria-hidden="true">
+    <g className={`hollowmere${lit ? ' lit' : ''}`} transform={placeFit(box)} aria-hidden="true">
+      <ellipse className="mere-water" cx={cx} cy={cy} rx={rx} ry={ry} />
+      <path className="mere-glint" d={`M${cx - 30} ${n(cy - ry * 0.2)} h24 M${cx + 3} ${n(cy + ry * 0.25)} h21`} />
+      <rect className="mere-jetty" x={n(cx + rx * 0.55)} y={cy - 6} width={n(rx * 0.55)} height="12" />
       {houses}
     </g>
   );

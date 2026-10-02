@@ -886,18 +886,21 @@ patterns from folder and file names that usually mean the job:
 | Services | `**/services/**`, `**/middleware/**` |
 
 **The ground (#172).** The castle is **Duskhold**, a keep whose north wall is **the Frostwall**, with
-**the Wilds**, a forest, beyond it. **Hollowmere** is the village by the road south of the gate, and
-**the Citadel** a tower beyond the east wall. The names are the project's own inventions.
+**the Wilds**, a forest, beyond it. **Hollowmere** is a village on a mere west of the keep, and **the
+Citadel** a beacon tower on a rock east of it (#183). The gate is the keep's only way in or out: a road
+forks west and east in front of it to each, and runs on south. The names are the project's own
+inventions.
 
 The built-in map is a starting point, not a picture of the project: on LayerCake's own repository it
 left 24 of the 28 files in `server/` unclaimed, and a drafted map leaves none. The full lists are on
 the page (click a room). A file several rooms claim lights all of them. A file in the project that no
-room claims belongs to **Hollowmere**, which is the sign the map needs a pattern; its windows light
-once any such file has been touched, and a unit working on one walks out of the gate to it. A file
-outside the project (your home folder, Claude's configuration, other projects) belongs to **the
-Citadel**, at the end of a road from the east gate; it is counted apart, since no pattern could claim
-it, and its windows light once any such file has been touched. A unit working on one walks out of the
-east gate to it. Clicking Hollowmere or the Citadel lists its files.
+room claims belongs to **Hollowmere**, which is the sign the map needs a pattern; one of its eight
+houses lights a window for each such file touched, and a unit working on one walks out of the gate
+and west along the road to it. A file outside the project (your home folder, Claude's configuration,
+other projects) belongs to **the Citadel**; it is counted apart, since no pattern could claim it, its
+beacon is lit once any such file has been touched, one of its six windows for each, and a unit
+working on one walks out of the gate and east along the road. Past the windows drawn, the count by
+its name says how many. Clicking Hollowmere or the Citadel (anywhere in its band) lists its files.
 
 **Where runs go** comes from the types: a test run lights the first Tests room, a build run the first
 Build room, a migration the first Database room (a command rule can name a room instead). Any other
@@ -964,7 +967,7 @@ to: its name in quotes, with who named it, Claude Code or you, because a title C
 same.
 
 **Raiders** (three hooded archers, on dark discs ringed in ice) are a test run while it runs (#172).
-They come out of the Wilds, or stand out at the front past Hollowmere, whichever side is nearer the
+They come out of the Wilds, or stand out at the front south of the road, whichever side is nearer the
 rooms they aim at, and loose arrows over the wall at the rooms with unproven changes (the ones the
 run's verdict judges) and at the code the command's named test files are for (#177). That is a
 guess by name: `scan.test.js`, `scan.spec.ts`, `test_scan.py`, `scan_test.go` and `ScanTests.cs` point
@@ -973,7 +976,7 @@ at `scan`, looked for beside the test, mirrored out of a tests folder (`tests/se
 are left out. A bare `npm test` names nothing. With no unproven changes and no named test file, the
 band musters at the forest's edge and shoots at nothing: the run's own Tests room is not what it
 tests. A **crane** (a treadwheel crane, ringed in wood) is a
-build run (#173: a build builds, it does not attack), before the gate, hoisting stones along a cable
+build run (#173: a build builds, it does not attack), before the gate south of the road, hoisting stones along a cable
 onto the rooms with unproven changes. With none, it stands idle, no cable out: the build's own room
 is not what it builds (#178). Both leave when the run ends, or when its turn is interrupted, and the verdict
 lands as the rules say: a passing proof run takes the scaffolding down (a test run; a build too where
@@ -992,9 +995,12 @@ still. Hover the gate to read which it is.
 **Movement.** Units walk; none jumps from room to room.
 
 - A Mason or Knight walks the corridors to the room of its call: out of its room's door onto the
-  corridor below, along to a gap between the columns, up or down, along, and in. Hollowmere is
-  reached through the gate, the Citadel through a small gate in the east wall. One room to the
+  corridor below, along to a gap between the columns, up or down, along, and in. One room to the
   next takes about 1 s.
+- Hollowmere and the Citadel are reached out of the gate and along the road that forks in front of
+  it, and left the same way (#183). On LayerCake's own castle such a walk runs to 2,060 long, so it takes its length's time at
+  about a room-to-room walk's pace (800 a second; three of those measure 325 to 1,195), from 1 s up
+  to 3 s, sped up with a queue like any other.
 - Every room it worked in is walked through, in order, and none is skipped: parallel calls in three
   rooms send it through all three. When several are queued it speeds up to keep up (with n queued,
   each takes 1/n of a second, never under 0.25 s); rooms on the way are crossed through their middle.
@@ -1089,6 +1095,9 @@ that the castle sees.
   the transcript backfills the rest, compactions included.
 - At most 4 castle streams at once, 6 sessions per castle, and the latest 20,000 events per castle
   (the page says when older ones are left out).
+- Hollowmere and the Citadel fit their drawings to the floor's height, so on a floor of one or two
+  rows (castle.json puts every room in row 0, or rows 0 and 1) they draw smaller: about a sixth of full size on one row
+  (#184). Each stays a click target with its count.
 - Searches light a room only when scoped to a folder that room claims; their matched files are not
   used. A shell command's changes to files are not seen (only the files a tool names), so a room a
   script rewrote stays as it was.

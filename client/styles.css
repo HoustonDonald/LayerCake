@@ -2396,6 +2396,8 @@ pre.code {
    running animation repaints the castle every frame (see usePulse). */
 .castle-ground { fill: #121820; }
 .castle-road { fill: #171e27; }
+/* The fork's road (#183): from the gate along the front of the wall to Hollowmere's and the Citadel's spurs. */
+.castle-fork { fill: none; stroke: #171e27; stroke-width: 36; stroke-linejoin: round; stroke-linecap: round; }
 
 .castle-band .band-fill {
   fill: #0b0f13;
@@ -2430,15 +2432,19 @@ pre.code {
 /* A Raven's feathers (#182). */
 .castle-feather { fill: #dfe8f3; pointer-events: none; }
 
-/* Hollowmere (#172): the village by the road for files no room claims. Its windows light once any file lands there. */
-.castle-village .village-label { text-anchor: start; }
-/* Its click area shows only as a highlight: at rest the village stands on open ground. */
-.castle-village .band-fill { fill: transparent; }
+/* Hollowmere (#172, #183): the village on the mere west of the keep, for files no room claims. A window lights for each file there. */
+.castle-place .place-label { fill: var(--castle-text); font-size: 20px; font-weight: 700; letter-spacing: 0.4px; text-anchor: middle; }
+.castle-place .place-sub { fill: var(--castle-dim); font-size: 13px; letter-spacing: 0.6px; text-anchor: middle; }
+/* Its click area shows only as a highlight: at rest each stands on open ground. */
+.castle-place .band-fill { fill: transparent; }
 .hollowmere { pointer-events: none; }
-.house-wall { fill: #1c232e; stroke: #2c3440; }
-.house-roof { fill: #2a2320; }
+.house-wall { fill: #1c232e; stroke: #2c3440; stroke-width: 2; }
+.house-roof { fill: #3a2c24; }
 .house-window { fill: #10151d; }
-.hollowmere.lit .house-window { fill: var(--castle-construction-glow); fill-opacity: 0.85; }
+.house-window.on { fill: var(--castle-construction-glow); fill-opacity: 0.85; }
+.mere-water { fill: #17344a; stroke: #22475f; stroke-width: 4; }
+.mere-glint { fill: none; stroke: #4d7894; stroke-width: 3; stroke-linecap: round; }
+.mere-jetty { fill: #6b4f33; }
 
 /* What a run brings: Raiders for a test (#172), pale fur against the dark, and their arrows;
    a crane for a build (#173), wooden, with its cable and the stones it lowers. */
@@ -2468,14 +2474,18 @@ pre.code {
   text-anchor: middle;
 }
 
-/* The Citadel: files outside the project. Its windows light once any such file has been touched. */
+/* The Citadel (#183): a beacon tower east of the keep, for files outside the project. Its fire is lit once any is touched, and a window for each. */
 .citadel { pointer-events: none; }
-.citadel-road { fill: none; stroke: #2b3440; stroke-width: 9; stroke-linejoin: round; }
-.citadel-tower { fill: #3a424e; }
-.citadel-spire { fill: #4a5361; }
+.citadel-rock { fill: #2b313a; }
+.citadel-tower { fill: #3e4652; }
+.citadel-crown { fill: #4a5361; }
+.citadel-brazier { fill: #6a7380; }
 .citadel-window { fill: #232b36; }
-.citadel.lit .citadel-window { fill: var(--castle-proven-glow); }
+.citadel-window.on { fill: var(--castle-proven-glow); }
 .citadel-door { fill: #0b0f13; }
+.beacon-glow { fill: url(#castle-beacon-glow); }
+.beacon-flame { fill: #ff9d3b; }
+.beacon-core { fill: #ffe7a3; }
 .tree-crown { fill: #1c2a28; }
 .tree-trunk { fill: #1a2020; }
 

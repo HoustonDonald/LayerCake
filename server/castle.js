@@ -130,7 +130,7 @@ export const UNIT_KINDS = [
 
 export const CASTLE_RULES = [
   'Only real events move anything: hooks from sessions LayerCake started, and the transcripts of the others. When nothing is known, the castle shows less.',
-  "A file's room comes from castle.json's patterns, else the built-in ones; a file no room claims is in Hollowmere, the village south of the gate, and a file outside the project (the home folder, Claude's configuration, other projects) goes to the Citadel and is counted apart.",
+  "A file's room comes from castle.json's patterns, else the built-in ones; a file no room claims is in Hollowmere, the village west of the keep, and a file outside the project (the home folder, Claude's configuration, other projects) goes to the Citadel, east of the keep, and is counted apart. Both are reached through the gate, along the road that forks in front of it.",
   'A shell call is a test, build or migration run when a segment of its command starts with a rule\'s words. A run lights the room its rule names, else the first room of its type (Tests, Build, Database). Any other shell call works in the rooms of the project files its command names (only names a room claims count), and one that names none moves no one and lights nothing. A run passes or fails by its exit code, so `npm test | tail` reads as the exit code of tail. A run started in the background, or ending with no exit code (refused before it ran, timed out), has no verdict.',
   'A run judges every room with unproven changes (the scaffolded ones): a pass takes their scaffolding down, a failure raises their Alarm, and a failure with none to judge raises it in the run\'s own room.',
   `No run can prove a ${ROOM_TYPES.filter((t) => t.provable === false).map((t) => t.label).join(' or ')} room: a change there puts up no scaffolding, no run judges it, and it has no thrash. A failed change there is still an Alarm.`,
@@ -334,7 +334,7 @@ export function fold(events, map, locateCall) {
   const files = new Map();
   const runs = [];
   const units = new Map();
-  // Files no room claims: Hollowmere, the village south of the gate (#172).
+  // Files no room claims: Hollowmere, the village west of the keep (#172, #183).
   const village = new Map();
   const outside = new Map();
   const log = [];

@@ -11,19 +11,23 @@
  *     reached at the unit's own spot there.
  *
  * The corridors: one under each row of rooms (under the last row, the strip
- * inside the wall), one in each gap between columns, the gate in the south
- * wall, and a small gate in the east wall to the Citadel, where files outside
- * the project go. Hollowmere, the village for files no room claims, is reached
- * through the south gate (#172). The keep's north wall is the Frostwall, with
- * the Wilds beyond it. Every room's door opens onto the corridor below it.
- * A route is always the same path: out of the door onto that corridor, along
- * it to the nearest column gap, up or down the gap to the other room's
- * corridor, along, and in at that room's door.
+ * inside the wall), one in each gap between columns, and the gate in the
+ * south wall, the keep's only way in or out. Hollowmere, the village for
+ * files no room claims, stands west of the keep, and the Citadel, where files
+ * outside the project go, east of it (#183, owner's picks 2026-10-02); both
+ * are reached through the gate, along a road that forks west and east in
+ * front of it. The keep's north wall is the Frostwall, with the Wilds beyond
+ * it. Every room's door opens onto the corridor below it. A route is always
+ * the same path: out of the door onto that corridor, along it to the nearest
+ * column gap, up or down the gap to the other room's corridor, along, and in
+ * at that room's door; to Hollowmere or the Citadel, out of the gate and
+ * along the road.
  */
 
-export const W = 1000;
-/** Beside the wall: open ground west, the Citadel's band east. */
-export const BAND = 70;
+/** The castle's width: two bands and a floor of rooms the same size as before #183, when it was 1000 with 70-wide bands. */
+export const W = 1380;
+/** Beside the wall, each side (#183): Hollowmere's band west, the Citadel's east. */
+export const BAND = 260;
 /** The Wilds, north of the Frostwall (#172): the forest Raiders come out of. */
 export const WILDS_H = 100;
 /** The Frostwall: the keep's north wall, the whole width (#172). */
@@ -33,9 +37,22 @@ const TOP = WILDS_H + FROST_H + 22;
 const GAP = 24;
 const ROOM_H = 190;
 export const DOT = 15;
-/** Space below the wall: the gate, the road where Scouts go, and Hollowmere beside it. */
-const BELOW = 240;
+/** Space below the last row of rooms: the wall, units at the gate, the fork's road, and the road south where Scouts go. */
+const BELOW = 170;
 const WALL_INSET = 22;
+/** The fork's road: its middle this far below the wall (#183). */
+const ROAD_DY = 62;
+/** Hollowmere's and the Citadel's drawings: a box this wide in their band, at most this tall, above the road. */
+const PLACE_W = BAND - 62;
+const PLACE_H = 520;
+/**
+ * A walk to or from Hollowmere or the Citadel is timed by its length, at about
+ * a room-to-room walk's pace (three of those measure 325 to 1,195), up to 3 s
+ * (#183, owner decision 2026-10-02): through the gate and along the road it can
+ * be 1,600 long, a sprint in the 1 s every other walk takes.
+ */
+const PLACE_PACE = 800;
+const PLACE_MAX_MS = 3000;
 
 export const HOP_MS = 1000;
 export const MIN_HOP_MS = 250;
@@ -56,11 +73,15 @@ export function layout(floor) {
   const wallX = BAND - WALL_INSET;
   const wallY = TOP - WALL_INSET;
   const corridorY = (row) => (row < rows - 1 ? TOP + (row + 1) * ROOM_H + row * GAP + GAP / 2 : gridBottom + WALL_INSET / 2);
-  // Hollowmere takes the wider side of the road, clear of the gate and the Citadel's band.
-  const leftRoom = gateX - 90 - 16;
-  const rightRoom = W - BAND - (gateX + 90);
-  const villageW = Math.min(280, Math.max(leftRoom, rightRoom));
-  const villageX = leftRoom >= rightRoom ? gateX - 90 - villageW : gateX + 90;
+  // Hollowmere and the Citadel (#183): each drawn in its band, standing on
+  // the ground above the road, as tall as the floor allows (the drawing
+  // scales down on a short one), with the units at it on its spur of road,
+  // south of the drawing.
+  const westX = 18;
+  const eastX = W - BAND + 44;
+  const placeBottom = wallBottom - 100;
+  const placeTop = Math.max(WILDS_H + FROST_H + 50, placeBottom - PLACE_H);
+  const placeBox = (x) => ({ x, y: placeTop, w: PLACE_W, h: Math.max(60, placeBottom - placeTop) });
   const gaps = Array.from({ length: cols - 1 }, (_, i) => BAND + (i + 1) * roomW + i * GAP + GAP / 2);
   return {
     cols,
@@ -76,14 +97,18 @@ export function layout(floor) {
     corridorY,
     gaps,
     gate: { x: gateX, outer: { x: gateX, y: wallBottom + 70 } },
-    // The Citadel's side gate sits on the first corridor, clear of its band's label.
-    sideGates: { outside: { x: W - wallX, y: corridorY(0) } },
-    // At the gate: just outside the wall's opening. Beyond it: down the road.
+    // At the gate: just outside the wall's opening. Beyond it: down the road south of the fork.
     gateBox: { x: gateX - 80, y: wallBottom + 4, w: 160, h: 40 },
-    beyondBox: { x: gateX - 60, y: wallBottom + 110, w: 120, h: 110 },
-    villageBox: { x: villageX, y: wallBottom + 40, w: villageW, h: BELOW - 56 },
+    beyondBox: { x: gateX - 60, y: wallBottom + ROAD_DY + 20, w: 120, h: H - wallBottom - ROAD_DY - 22 },
+    // The fork's road (#183): along the front of the wall, from Hollowmere's spur in the west to the Citadel's in the east.
+    road: { y: wallBottom + ROAD_DY, west: westX + PLACE_W / 2, east: eastX + PLACE_W / 2 },
+    // Where units at Hollowmere and the Citadel stand: on each spur, just south of the drawing.
+    villageBox: { x: westX, y: placeBottom + 8, w: PLACE_W, h: 70 },
+    outsideBox: { x: eastX, y: placeBottom + 8, w: PLACE_W, h: 70 },
+    // Where each is drawn.
+    hollowmereBox: placeBox(westX),
+    citadelBox: placeBox(eastX),
     wildsBox: { x: BAND, y: 12, w: W - 2 * BAND, h: WILDS_H - 24 },
-    outsideBox: { x: W - BAND + 24, y: TOP, w: BAND - 30, h: H - TOP - BAND },
   };
 }
 
@@ -125,11 +150,7 @@ function spots(L, rooms, place, n, perch) {
   }
   if (place === 'village') return slots(L.villageBox, n);
   if (place === 'wilds') return slots(L.wildsBox, n);
-  if (place === 'outside') {
-    // Below the road to the Citadel, whose tower stands above it.
-    const box = L.outsideBox;
-    return Array.from({ length: n }, (_, i) => ({ x: box.x + box.w / 2 - 2, y: L.sideGates.outside.y + 36 + i * (DOT * 2 + 8) }));
-  }
+  if (place === 'outside') return slots(L.outsideBox, n);
   return slots(place === 'beyond-gate' ? L.beyondBox : L.gateBox, n);
 }
 
@@ -167,19 +188,22 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
  * Where Raiders stand or a crane sits, and the point in each target room
  * their arrows land on or its stones are lowered onto. Raiders come out of
  * the Wilds when their targets lie in the back half of the keep, else they
- * shoot from the front, out past Hollowmere; either way over the wall nearer
- * the targets (#172). A crane sits before the gate, on the side away from
- * Hollowmere, and lowers its stones onto the centre of each room (#173).
+ * shoot from the front, south of the fork's road; either way over the wall
+ * nearer the targets (#172). A crane sits before the gate, south of the
+ * fork's road and east of the road south, and lowers its stones onto the
+ * centre of each room (#173). Front Raiders keep clear of both roads and of
+ * the crane's place.
  */
+const CRANE_DX = 130;
 export function runSpot(L, rooms, u) {
   const targets = (u.targets || []).map((id) => rooms.get(id)).filter(Boolean);
   const cells = targets.map((r) => L.cell(r.col, r.row));
   const cx = cells.length ? cells.reduce((n, b) => n + b.x + b.w / 2, 0) / cells.length : L.gate.x;
+  const frontY = L.H - 34;
   let at;
   let north = false;
   if (u.kind === 'crane') {
-    const side = L.villageBox.x > L.gate.x ? -1 : 1;
-    at = { x: L.gate.x + side * 130, y: L.wallBottom + 50 };
+    at = { x: L.gate.x + CRANE_DX, y: frontY };
     // The cable meets each room at its centre (owner, 2026-10-01).
     return { at, north, hits: cells.map((b) => ({ x: b.x + b.w / 2, y: b.y + b.h / 2 })) };
   } else {
@@ -187,9 +211,11 @@ export function runSpot(L, rooms, u) {
     north = meanRow <= (L.rows - 1) / 2;
     if (north) at = { x: clamp(cx, BAND + 50, W - BAND - 50), y: WILDS_H - 24 };
     else {
-      // Clear of the road, where Scouts ride.
-      const x = Math.abs(cx - L.gate.x) < 90 ? L.gate.x + (cx >= L.gate.x ? 90 : -90) : cx;
-      at = { x: clamp(x, BAND + 30, W - BAND - 30), y: L.H - 34 };
+      // Clear of the road south, where Scouts ride, and of the crane's place.
+      let x = Math.abs(cx - L.gate.x) < 90 ? L.gate.x + (cx >= L.gate.x ? 90 : -90) : cx;
+      const crane = L.gate.x + CRANE_DX;
+      if (Math.abs(x - crane) < 90) x = x >= crane ? crane + 90 : L.gate.x - 90;
+      at = { x: clamp(x, BAND + 30, W - BAND - 30), y: frontY };
     }
   }
   // Arrows land in the half of a room facing the side they come from.
@@ -203,20 +229,25 @@ export function waypoint(L, rooms, place) {
   return room ? centre(L.cell(room.col, room.row)) : spots(L, rooms, place, 1)[0];
 }
 
-/** Places outside the south wall: a walk between two of them does not go through the keep. */
-const beyondWall = (place) => place === 'gate' || place === 'beyond-gate' || place === 'village';
+/** Places outside the keep: a walk between two of them goes along the road, not through the keep. */
+const beyondWall = (place) => place === 'gate' || place === 'beyond-gate' || place === 'village' || place === 'outside';
+/** The two reached by the fork's road (#183). */
+const roadPlace = (place) => place === 'village' || place === 'outside';
 
-/** A place's door, and the corridor it opens onto (row, and x along it). */
+/** Where a place outside the keep meets the road in front of the gate: its spur, or the fork itself. */
+function roadStop(L, place) {
+  if (place === 'village') return { x: L.road.west, y: L.road.y };
+  if (place === 'outside') return { x: L.road.east, y: L.road.y };
+  return { x: L.gate.x, y: L.road.y };
+}
+
+/** A place's door, and the corridor it opens onto (row, and x along it). Outside the keep, the gate. */
 function door(L, rooms, place) {
   const room = rooms.get(place);
   if (room) {
     const b = L.cell(room.col, room.row);
     const x = b.x + b.w / 2;
     return { at: { x, y: b.y + b.h }, row: room.row, x };
-  }
-  if (place === 'outside') {
-    const g = L.sideGates.outside;
-    return { at: g, row: 0, x: g.x };
   }
   return { at: { x: L.gate.x, y: L.wallBottom }, row: L.rows - 1, x: L.gate.x };
 }
@@ -237,18 +268,40 @@ function dedupe(pts) {
 
 /** The corridor path between two places, as points from `from.point` to `to.point`. */
 export function route(L, rooms, from, to) {
-  if (from.place === to.place || (beyondWall(from.place) && beyondWall(to.place))) return dedupe([from.point, to.point]);
+  if (from.place === to.place) return dedupe([from.point, to.point]);
+  // Outside the keep: down to the road, along it, and up the other's spur.
+  if (beyondWall(from.place) && beyondWall(to.place)) {
+    if (!roadPlace(from.place) && !roadPlace(to.place)) return dedupe([from.point, to.point]);
+    return dedupe([from.point, roadStop(L, from.place), roadStop(L, to.place), to.point]);
+  }
   const a = door(L, rooms, from.place);
   const b = door(L, rooms, to.place);
   const ya = L.corridorY(a.row);
   const yb = L.corridorY(b.row);
-  const pts = [from.point, a.at, { x: a.x, y: ya }];
+  // From Hollowmere or the Citadel: down its spur, along the road to the fork, and in at the gate.
+  const pts = roadPlace(from.place) ? [from.point, roadStop(L, from.place), roadStop(L, 'gate'), a.at] : [from.point, a.at];
+  pts.push({ x: a.x, y: ya });
   if (a.row !== b.row) {
     const g = nearestGap(L, a.x, b.x);
     pts.push({ x: g, y: ya }, { x: g, y: yb });
   }
-  pts.push({ x: b.x, y: yb }, b.at, to.point);
+  pts.push({ x: b.x, y: yb }, b.at);
+  // To one: out of the gate to the fork, along the road, and up its spur.
+  if (roadPlace(to.place)) pts.push(roadStop(L, 'gate'), roadStop(L, to.place));
+  pts.push(to.point);
   return dedupe(pts);
+}
+
+/**
+ * How long a leg takes: `ms`, the queue's pace, except a leg to or from
+ * Hollowmere or the Citadel, which takes its length at PLACE_PACE a second
+ * when that is longer, up to PLACE_MAX_MS, sped up with the queue like the
+ * rest (#183).
+ */
+function legMs(leg, from, ms, least = ms) {
+  if (!roadPlace(leg.place) && !roadPlace(from)) return least;
+  const byLength = (lengthOf(leg.pts) / PLACE_PACE) * 1000 * (ms / HOP_MS);
+  return Math.max(least, Math.min(PLACE_MAX_MS, byLength));
 }
 
 /** One hop's time with `n` queued: 1/n of a second, never under 0.25 s. */
@@ -271,18 +324,19 @@ export const lastTrailKey = (trail) => (Array.isArray(trail) && trail.length ? t
 
 /**
  * A walk from `from` ({ place, point }) through `places`, in order: one leg
- * per place, { place, pts, ms }, every leg the same time.
+ * per place, { place, from, pts, ms }, every leg the queue's pace (`ms`),
+ * except one to or from Hollowmere or the Citadel, timed by its length.
  */
-export function planWalk(L, rooms, from, places, final) {
+export function planWalk(L, rooms, from, places, final, ms = hopMs(places.length)) {
   const legs = [];
   let at = from;
   places.forEach((place, i) => {
     const to = { place, point: i === places.length - 1 ? final : waypoint(L, rooms, place) };
-    legs.push({ place, pts: route(L, rooms, at, to) });
+    const leg = { place, from: at.place, pts: route(L, rooms, at, to) };
+    leg.ms = legMs(leg, at.place, ms);
+    legs.push(leg);
     at = to;
   });
-  const ms = hopMs(legs.length);
-  for (const leg of legs) leg.ms = ms;
   return legs;
 }
 
@@ -360,6 +414,9 @@ export function replan(L, rooms, legs, t, places, final) {
   const ahead = [...legs.slice(at.index).map((l) => l.place), ...places];
   const ms = hopMs(ahead.length);
   const firstTo = { place: ahead[0], point: ahead.length === 1 ? final : waypoint(L, rooms, ahead[0]) };
-  const first = { place: ahead[0], pts: dedupe([...at.rest.slice(0, -1), firstTo.point]), ms: Math.max(1, ms * at.left) };
-  return [first, ...planWalk(L, rooms, firstTo, ahead.slice(1), final).map((l) => ({ ...l, ms }))];
+  // What is left of the leg it is on, at the new pace (by what is left of its length, on a road leg).
+  const from = legs[at.index].from;
+  const pts = dedupe([...at.rest.slice(0, -1), firstTo.point]);
+  const first = { place: ahead[0], from, pts, ms: Math.max(1, legMs({ place: ahead[0], pts }, from, ms, ms * at.left)) };
+  return [first, ...planWalk(L, rooms, firstTo, ahead.slice(1), final, ms)];
 }
