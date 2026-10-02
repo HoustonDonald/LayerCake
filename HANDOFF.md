@@ -42,6 +42,17 @@ it), **515 passed, 0 failed, 3 skipped** with #178 and again with #163 (which ti
 rather than adding one), the same three skips throughout. `ui-motion.mjs` (the walking checks,
 scratchpad below) 26 of 26 at every step, #163 included.
 
+**2026-10-02, later:** #183 shipped in 42bf49e (and closed): Hollowmere a village on a mere west of
+the keep, the Citadel a beacon tower east of it, both reached only through the main gate along a
+road that forks in front of it, walks to and from them timed by length (800 a second, 1 to 3 s),
+a window per file. The owner picked from a board
+(https://claude.ai/artifact/PQtuokqhKSyH6nfR9ksrqV) and changed it himself: no side gates, one road
+(diagram https://claude.ai/artifact/NE4LNF7zmMHbNTYAssCCmt; the window-fit diagram is
+https://claude.ai/artifact/P3EY84rbWcpqSJAjBeMDi1). Filed on the way: #184 (a one- or two-row floor
+draws the two places small) and #185 (client bundles are not byte-reproducible; harmless). Page
+checks for it: `ui-roads.mjs` (17), `route-probe.mjs` (node, 23), `mutate-183.mjs` (14 mutants);
+`ui-motion.mjs` is copied here with its gate selector fixed (#163 had renamed the main gate's sill).
+
 **2026-10-02, in one paragraph:** #163's session rhythm shipped in 4665aae, from the owner's
 picks on a style board (https://claude.ai/artifact/NQERWTLirXrCsesHoN73gu): a portcullis that is up
 while a session runs, six torches on the front wall that flicker only while something acts, and a
@@ -92,7 +103,11 @@ castle log for a project), `docs-alarm.mjs`, `sim-watch.mjs`, `page-errors.mjs`,
 capped live run and its MCP server). Write scripts with the Write tool, never inline in a shell:
 backslashes and backticks were eaten five times today.
 
-`dist\LayerCake.exe` is **current**: 4665aae (#163's session rhythm), built in a tree copy (the
+`dist\LayerCake.exe` is **current**: 42bf49e (#183), built in a tree copy, grepped for the fork's road
+and the mere, launch-checked headful 16 of 16, and copied into `dist` with `sea\` (hashes equal) while
+no LayerCake was running: he had closed his own. **Not started for him**, since he closed it himself;
+start it with `explorer.exe` when he asks. `fix-sea-config.mjs` then printed one MISSING bundle name,
+which is #185, not a fault. Before that 4665aae (#163's session rhythm), built in a tree copy (the
 06df0862 scratchpad's `exe-tree`, since removed), grepped for the gate's title text,
 launch-checked headful 16 of 16 with his window untouched, copied into `dist` with `sea\` once he
 closed his (hashes equal, `fix-sea-config.mjs`) and started for him through Explorer on 2026-10-02
