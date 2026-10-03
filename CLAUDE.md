@@ -400,6 +400,16 @@ System32 path, a fixed argv, both keys at once, a 5 s timeout, output capped at 
 the value parsed as JSON data. A smoke-only override may name other keys, and only keys under
 `HKCU\Software\LayerCakeSmoke`. Any new spawn needs the same shape and a line here.
 
+**Nothing may need a tool beyond Claude Code, LayerCake and what Windows itself ships** (owner,
+2026-10-02: "I just don't want to assume anything about someone else's session. The castle should
+work, along with the rest of the product, without any additional tools outside of Claude Code and
+LC"). So no feature may need git, gh, Git Bash, PowerShell 7, a Node on PATH or anything else on
+another person's machine: read files rather than run a tool (the scan reads `.git` as files; the
+Sept, #186, reads `.git/HEAD` and refs the same way and never runs git), recognise a tool's use from
+what Claude Code records rather than by calling it, and treat anything missing or unreadable as a
+value that shows less, never as a failure. What Windows ships (Edge, Windows PowerShell 5.1,
+`reg.exe`) is in bounds, and every spawn above has a fallback where it can be missing.
+
 **Only `summaries.js` may spend Claude usage, and only on an explicit request.** Everything else
 reads files. `claude` means `claude.exe` from PATH, or, for an npm install that provides only the
 `claude.cmd` shim, node plus the script the shim names, started with no shell in between so the argv

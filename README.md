@@ -34,6 +34,7 @@ Code.
 | Windows Terminal | Recommended | "Start Claude here" opens a console window: no tab name, no placement beside LayerCake. |
 | PowerShell 7 | No | LayerCake uses the Windows PowerShell 5.1 every Windows has. Claude Code uses 7 when installed, else 5.1, and the launched status line works under both (#11). |
 | Git Bash | No | Claude Code runs the launched status line through PowerShell instead (#11). |
+| Git, GitHub CLI | No | LayerCake never runs them. Where it needs a project's git facts it reads the `.git` folder as files, and a project with none just shows less. |
 | Node.js | For the CLI and for running from source | The exe needs nothing installed. |
 
 Open the app, type a project directory, press Scan.
