@@ -355,7 +355,13 @@ function Gate({ L, live, leavingRef, generation, state, reduce }) {
 
 /** What the Sept says under its name (#186): how many commits wait for a push, or why it knows nothing. */
 function septSub(git) {
-  if (!git?.repo) return git?.reason === 'none' ? 'no repository' : git?.reason === 'pending' ? 'reading .git' : '.git not readable';
+  if (!git?.repo) {
+    if (git?.reason === 'none') return 'no repository';
+    if (git?.reason === 'pending') return 'reading .git';
+    // #193: a .git file pointing at a network share is not followed.
+    if (git?.reason === 'share') return '.git points at a share';
+    return '.git not readable';
+  }
   if (git.unborn) return 'no commits yet';
   if (git.ahead === 0) return 'all pushed';
   if (typeof git.ahead === 'number') return `${git.ahead} not pushed`;

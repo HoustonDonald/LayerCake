@@ -18,7 +18,7 @@ const JSON_EXTS = new Set(['.json', '.jsonc']);
  * error attached rather than failing the whole read.
  */
 export function splitFrontmatter(text) {
-  const match = /^﻿?---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text);
+  const match = /^\ufeff?---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text);
   if (!match) return { frontmatter: null, frontmatterRaw: null, frontmatterError: null, body: text };
 
   const raw = match[1];

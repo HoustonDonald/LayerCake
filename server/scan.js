@@ -55,7 +55,7 @@ import {
 // timeout, it sends a network share one call at a time and none while an
 // earlier one is stranded. Without that, a deep project on a dead share strands
 // a threadpool thread per level and starves every other call (#55).
-import { markNetworkRoot, timedFsCall } from './sharegate.js';
+import { markNetworkRoot, staysOffNewShares, timedFsCall } from './sharegate.js';
 import { readForDisplay } from './readfile.js';
 import { annotatePlugins, readInstalls } from './plugins.js';
 
@@ -893,8 +893,14 @@ async function findGitRoot(chain) {
     const pointer = await readForDisplay(dotGit);
     const gitdir = /^gitdir:\s*(.+?)\s*$/m.exec(pointer.content || '')?.[1];
     if (!gitdir) return { dir, via: 'git file' };
-    const common = await readForDisplay(path.join(path.resolve(dir, gitdir), 'commondir'));
-    const commonDir = common.content ? path.resolve(dir, gitdir, common.content.trim()) : null;
+    // A .git file can come in a downloaded folder, and one naming a share would
+    // make the scan connect out to it (#193): such a pointer is not followed.
+    const refused = { dir, via: 'git file', refused: 'it points at a network share, which LayerCake does not follow' };
+    const gitDir = path.resolve(dir, gitdir);
+    if (!staysOffNewShares(dir, gitDir)) return refused;
+    const common = await readForDisplay(path.join(gitDir, 'commondir'));
+    const commonDir = common.content ? path.resolve(gitDir, common.content.trim()) : null;
+    if (commonDir && !staysOffNewShares(dir, commonDir)) return refused;
     if (commonDir && path.basename(commonDir).toLowerCase() === '.git') {
       return { dir: path.dirname(commonDir), via: 'worktree' };
     }

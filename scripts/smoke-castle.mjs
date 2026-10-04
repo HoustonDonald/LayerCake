@@ -480,6 +480,11 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     await fs.rename(P('.git'), P('.git-away'));
     check('no .git at all: no repository, and the castle carries on (#186)',
       await s1.untilState((st) => st.sept?.repo === false && st.sept.reason === 'none' && Array.isArray(st.units), 6000), JSON.stringify(s1.last('state')?.sept));
+    // A .git FILE naming a share, as in a downloaded folder (#193): not followed.
+    await fs.writeFile(P('.git'), 'gitdir: //127.0.0.1/layercake-smoke-none/wt\n');
+    check('a .git file pointing at a network share: the Sept does not follow it, and says so (#193)',
+      await s1.untilState((st) => st.sept?.repo === false && st.sept.reason === 'share', 6000), JSON.stringify(s1.last('state')?.sept));
+    await fs.unlink(P('.git'));
     await fs.rename(P('.git-away'), P('.git'));
     check('and back again once it returns (#186)', await s1.untilState((st) => st.sept?.repo === true && st.sept.branch === 'main', 6000), JSON.stringify(s1.last('state')?.sept));
 

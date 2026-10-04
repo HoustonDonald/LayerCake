@@ -234,6 +234,14 @@ looked for.
 matched on lowercased basename, excluded at scan time (`probeFile`, `walkTree`) and refused again in
 `readForDisplay` and in `/api/file`. Both layers stay; the second is not redundant.
 
+**The CLI prints only through `out` and `err` in cli/format.js** (#192), which pass every line
+through `sanitize`: configuration from a cloned repository reaches the terminal, and a terminal acts
+on control sequences in it (OSC 52 writes the clipboard; a cursor move hides a line of the report
+meant to show it). Control characters print visibly, except newline, tab and the CLI's own colour
+codes. Never write to stdout or stderr another way. Source files hold no invisible formatting
+character (bidirectional overrides, zero-width marks, a byte-order mark); write them as `\u`
+escapes, and smoke checks it.
+
 **The scan result is the allowlist.** `/api/file` and `/api/write` touch only paths a prior scan
 discovered, keyed by `scanId`, with keys lowercased on win32 because NTFS is case-insensitive. The
 scan store holds the full entry, not just the path, so a write takes its **category** from the scan
@@ -327,7 +335,10 @@ config's `[branch]` section, the upstream's ref and the branch's reflog, each re
 stat changes, every other castle tick. Only a clipped branch name, a short detached commit and a
 count are served, never a commit message, a remote URL or a path, and smoke plants a message and a
 URL as sentinels; anything missing or unreadable is a value (`repo: false` with a reason), never a
-throw. castle.json can come from a cloned repository,
+throw. Neither it nor scan.js follows a .git file's `gitdir:` or `commondir` onto a network share the
+project is not on (`staysOffNewShares` in sharegate.js, #193): a .git file can come in a downloaded
+folder, and a stat of `\\attacker\share` connects out and offers the user's NTLM credentials.
+castle.json can come from a cloned repository,
 so it is data only: **the glob matcher in castlemap.js is hand-written and must stay free of
 backtracking**. picomatch 4.0.7 ran over a minute on `'*a'` twelve times plus `'b'` against forty
 `a`s (review, 2026-09-29), `path.matchesGlob` is super-linear too; this one agreed with picomatch on
@@ -429,7 +440,9 @@ value that shows less, never as a failure. What Windows ships (Edge, Windows Pow
 **Only `summaries.js` may spend Claude usage, and only on an explicit request.** Everything else
 reads files. `claude` means `claude.exe` from PATH, or, for an npm install that provides only the
 `claude.cmd` shim, node plus the script the shim names, started with no shell in between so the argv
-is not re-parsed by cmd.exe (`resolveClaudeCommand`, #6; launch.js uses it too). The AI summary runs
+is not re-parsed by cmd.exe (`resolveClaudeCommand`, #6; launch.js uses it too). Always by
+absolute path, from absolute PATH entries only, and with neither form found nothing starts: a bare
+`claude` let the console fallback's Start-Process run a `claude.cmd` planted in the project (#191). The AI summary runs
 `claude -p` with a fixed argv (Haiku, `--safe-mode`, `--tools ""`,
 own system prompt, no session persistence, a budget cap), the digest on stdin, one run at a time
 (the lock is taken before the first await), from a POST the UI sends only on a click. Every run that

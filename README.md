@@ -23,8 +23,8 @@ and shows you:
 
 ![The Castle: the project's rooms inside a keep, lit by what Claude is working on](docs/images/castle.png)
 
-LayerCake runs on Windows 10 and 11. It is an independent project, not made by or affiliated with
-Anthropic.
+LayerCake runs on Windows 11; Windows 10 should work but has not been tested. It is an independent
+project, not made by or affiliated with Anthropic.
 
 ## Get started
 
@@ -74,6 +74,10 @@ data and its window's browser profile.
   5178. Start it on another port from PowerShell: `$env:PORT = 5200; & .\LayerCake.exe`
 - **The exe shows no details:** it has no console. Run it from source (below) with `npm run app` to
   see the same server's output.
+- **Hook errors in a Claude session you started from LayerCake:** that session reports to LayerCake,
+  so once LayerCake is closed Claude Code shows a hook error for each tool call. They are harmless:
+  Claude does not see them and no usage is spent. Open LayerCake again, or start new sessions
+  yourself.
 - **Found a bug?** Open an issue. For a security problem, see [SECURITY.md](SECURITY.md) instead.
 
 ## Run from source

@@ -11,7 +11,7 @@
  * crash if it is not available").
  *
  * Only these are read: the .git file's `gitdir:` line and `commondir` (a
- * worktree), HEAD, the branch's ref (loose, else packed-refs), the config's
+ * worktree, never followed onto a network share the project is not on, #193), HEAD, the branch's ref (loose, else packed-refs), the config's
  * `[branch "<name>"]` section for its upstream, the upstream's ref, and the
  * branch's reflog. What is served: the branch name (clipped), whether HEAD is
  * detached, and a count. Never a remote URL, a commit message or a path.
@@ -21,7 +21,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { readForDisplay } from './readfile.js';
-import { timedFsCall } from './sharegate.js';
+import { staysOffNewShares, timedFsCall } from './sharegate.js';
 
 const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 /** A branch name as git allows it, closely enough: no `..`, no backslash, no control characters. */
@@ -77,8 +77,12 @@ async function gitDirs(projectDir) {
       const gitdir = /^gitdir:\s*(.+?)\s*$/m.exec(pointer.content || '')?.[1];
       if (!gitdir) return { reason: 'unreadable' };
       const gitDir = path.resolve(dir, gitdir);
+      // Never followed onto a share the project is not on (#193): looking
+      // there connects out, and this runs every other tick.
+      if (!staysOffNewShares(dir, gitDir)) return { reason: 'share' };
       const common = await readCached(path.join(gitDir, 'commondir'));
       const commonDir = common.content ? path.resolve(gitDir, common.content.trim()) : gitDir;
+      if (!staysOffNewShares(dir, commonDir)) return { reason: 'share' };
       return { gitDir, commonDir };
     }
     const up = path.dirname(dir);

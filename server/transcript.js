@@ -101,6 +101,9 @@ const SYSTEM_SUBTYPES = new Set([
   'model_refusal_fallback',
   'informational',
   'api_error',
+  // 2.1.285 on: background subagents stopped (Esc). It names none, and each
+  // subagent's own file shows its end (#194).
+  'agents_killed',
 ]);
 
 function emptyModel(sessionId) {
@@ -711,6 +714,17 @@ function applyAttachment(model, a, at, state) {
       const event = a.hookEvent || 'unknown';
       model.hooks.byEvent[event] = (model.hooks.byEvent[event] || 0) + 1;
       if (typeof a.exitCode === 'number' && a.exitCode !== 0) model.hooks.failures += 1;
+      return;
+    }
+    // 2.1.285 on (#194): a hook that failed without blocking, LayerCake's own
+    // among them once LayerCake is closed (ECONNREFUSED), and one cancelled.
+    // Runs like any other; only the error is a failure. Its stderr is not kept.
+    case 'hook_non_blocking_error':
+    case 'hook_cancelled': {
+      model.hooks.runs += 1;
+      const event = a.hookEvent || 'unknown';
+      model.hooks.byEvent[event] = (model.hooks.byEvent[event] || 0) + 1;
+      if (a.type === 'hook_non_blocking_error') model.hooks.failures += 1;
       return;
     }
     case 'hook_additional_context': {

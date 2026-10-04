@@ -207,10 +207,35 @@ export function localTime(iso) {
   );
 }
 
+/**
+ * What may reach the terminal (#192). Everything the CLI prints passes here,
+ * and much of it is data from configuration or a transcript, which can come
+ * from a cloned repository. A terminal acts on control sequences in it: OSC 52
+ * writes the clipboard, a cursor move or line erase hides a line of the very
+ * report meant to show it, SGR 8 conceals text, and a bidirectional override
+ * reorders what is shown. So every control character is printed visibly, in
+ * caret notation (ESC as ^[), except newline, tab and the colour codes `paint`
+ * writes. Data can still carry one of those colours; a colour hides nothing.
+ * A CRLF file's line ends are newlines, not ^M.
+ */
+const OWN_SGR = new Set(['1', '2', '22', '31', '32', '33', '34', '36', '39']);
+const caret = (c) => {
+  const code = c.charCodeAt(0);
+  if (code < 0x20 || code === 0x7f) return `^${String.fromCharCode(code ^ 0x40)}`;
+  return `<U+${code.toString(16).toUpperCase().padStart(4, '0')}>`;
+};
+export function sanitize(text) {
+  return String(text)
+    .replace(/\r\n/g, '\n')
+    .replace(/\u001b\[([0-9;]*)m|[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, (m, params) =>
+      params !== undefined && params.split(';').every((p) => OWN_SGR.has(p)) ? m : m.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, caret)
+    );
+}
+
 export function out(line = '') {
-  process.stdout.write(`${line}\n`);
+  process.stdout.write(`${sanitize(line)}\n`);
 }
 
 export function err(line = '') {
-  process.stderr.write(`${line}\n`);
+  process.stderr.write(`${sanitize(line)}\n`);
 }

@@ -28,7 +28,7 @@ import path from 'node:path';
 import { writeLaunch } from './appdata.js';
 import { STATUS_REFRESH_S, registerLaunch } from './ingest.js';
 import { WINDOWS_POWERSHELL, encodeCommand, psQuote, psWildcardEscape, winArgQuote } from './powershell.js';
-import { resolveClaudeCommand } from './summaries.js';
+import { CLAUDE_NOT_FOUND, resolveClaudeCommand } from './summaries.js';
 
 /** Documented hook events worth showing (docs: hooks, as of Claude Code 2.1.283). */
 export const HOOK_EVENTS = [
@@ -178,10 +178,16 @@ function startInConsole(plan) {
 
 export async function launchClaude({ dir, port, screen }) {
   refuseTerminalSeparator(dir);
-  // The program wt starts: 'claude' when claude.exe is on PATH, else node plus
-  // the npm shim's script (#6). Resolved and checked before anything is
-  // written, so a refused launch still leaves no record behind.
+  // The program wt starts: claude.exe's absolute path when it is on PATH, else
+  // node plus the npm shim's script (#6). Never a bare name, which the console
+  // fallback would look for in the project folder first (#191). Resolved and
+  // checked before anything is written, so a refused launch leaves no record.
   const claude = await resolveClaudeCommand();
+  if (!claude) {
+    const err = new Error(`Not started: ${CLAUDE_NOT_FOUND}`);
+    err.status = 400;
+    throw err;
+  }
   for (const part of claude) refuseTerminalSeparator(part, "Claude Code's program path");
   const id = crypto.randomBytes(8).toString('hex');
   const secret = crypto.randomBytes(24).toString('hex');

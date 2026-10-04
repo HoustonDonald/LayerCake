@@ -32,7 +32,7 @@ Code.
 
 | | Needed? | Without it |
 |---|---|---|
-| Windows 10 or 11 | Yes | The smoke test also passes on Linux; macOS is untested. |
+| Windows 11 | Yes | Windows 10 should work but has never been run (#195). The smoke test also passes on Linux; macOS is untested. |
 | Claude Code | For the Sessions tab and "Start Claude here" | The lineage, editing and snapshots need only the files. |
 | Edge or Chrome | Recommended | The window opens in the default browser, without the isolation flags (see "Single executable"). |
 | Windows Terminal | Recommended | "Start Claude here" opens a console window: no tab name, no placement beside LayerCake. |
@@ -344,7 +344,9 @@ directory itself, with forward slashes on Windows (`C:/dev/app`). A backslash ke
 though `.claude.json` holds many. The key's letter case is the case the folder was typed in when
 Claude Code started, which a scan cannot know, so on Windows every key equal to it ignoring case is
 listed, each named. The git root is found from the filesystem (`.git`, and a worktree's `gitdir:`
-and `commondir`), never by running git; a submodule's is its own folder, which is reasoned, not
+and `commondir`), never by running git. A `gitdir:` or `commondir` that leads onto a network share the
+project is not on is not followed (#193): a .git file can arrive in a downloaded folder, and looking
+there would connect out to that server; the folder holding the .git file is then the root. A submodule's is its own folder, which is reasoned, not
 measured. How it was established: a scratch config home, then `claude mcp add --scope local` and
 `claude mcp list` from a repository's root, a subfolder, a worktree, a folder in no repository and
 the same folders typed in lower case. Neither command calls the model.
@@ -738,7 +740,9 @@ Where it comes from, and what that means:
 over the session's prompts and visible replies, stripped of Claude Code's own context (no tools,
 MCP servers, CLAUDE.md or plugins) so the call carries little besides the session. It finds Claude
 Code as `claude.exe` on PATH (the native installer) or through the `claude.cmd` an npm install
-creates, including yarn classic's, which runs npm's shim in turn. An estimate is shown before; the actual usage Claude Code reports is recorded after. Measured: a small session cost
+creates, including yarn classic's, which runs npm's shim in turn, and always starts it by its full
+path, so a `claude.cmd` in a project folder is never picked up (#191); "Start Claude here" finds it
+the same way. With neither installed, both say so and start nothing. An estimate is shown before; the actual usage Claude Code reports is recorded after. Measured: a small session cost
 $0.004 at list price (1,091 tokens in, 583 out), and summarizing all 42 sessions on this machine once
 was estimated at under a dollar. On a subscription this draws on your plan limits, not a bill. Every
 run is listed in "LayerCake's own Claude usage", kept apart from the sessions it summarizes.
@@ -923,7 +927,8 @@ the count and its latest command.
   file: HEAD, the branch's ref (loose or in `packed-refs`), the `[branch]` section of `config` for its
   remote, that remote's ref, and the branch's log. Git is never run, so the Sept works where git is
   not installed, and it sees git you run yourself as well as Claude's. A worktree's `.git` file is
-  followed to its folder. Nothing in `.git` is written, and nothing but the branch name and a count
+  followed to its folder, but never onto a network share the project is not on (#193): the Sept then
+  says ".git points at a share". Nothing in `.git` is written, and nothing but the branch name and a count
   leaves the server: never a commit message, a remote URL or a path.
 - **The banner** over its door names the branch, or the short commit when HEAD is detached.
 - **Its seven windows** light one for each commit on the branch not yet on its remote, counted back

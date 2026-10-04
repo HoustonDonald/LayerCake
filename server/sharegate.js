@@ -97,6 +97,19 @@ export function shareKeyOf(p) {
   return networkRoots.get(root) || null;
 }
 
+/**
+ * Whether following a pointer from `fromDir` to `target` stays off any share
+ * the user has not already opened (#193): true for a local target, or one on
+ * the share `fromDir` is itself on. A .git file can arrive in a downloaded
+ * folder, and its gitdir can name \\attacker\share: merely stat'ing that makes
+ * Windows connect out over SMB and offer the user's NTLM credentials. The
+ * \\?\ and \\.\ forms have no server key and count as shares, so are refused.
+ */
+export function staysOffNewShares(fromDir, target) {
+  const to = shareKeyOf(target);
+  return to === null || to === shareKeyOf(fromDir);
+}
+
 /** share key -> the set of its timed-out calls that have not settled yet. */
 const stuckCalls = new Map();
 

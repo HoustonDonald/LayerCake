@@ -175,7 +175,7 @@ function runClaude(input) {
   // LAYERCAKE_CLAUDE_CMD, a JSON array, replaces the executable for the smoke
   // test, which must exercise this path without spending anyone's usage.
   const command = process.env.LAYERCAKE_CLAUDE_CMD ? Promise.resolve(JSON.parse(process.env.LAYERCAKE_CLAUDE_CMD)) : resolveClaudeCommand();
-  return command.then(([bin, ...pre]) => new Promise((resolve, reject) => {
+  return command.then((found) => found || Promise.reject(new Error(CLAUDE_NOT_FOUND))).then(([bin, ...pre]) => new Promise((resolve, reject) => {
     // A neutral working directory, so nothing project-specific is in reach.
     const child = spawn(bin, [...pre, ...args], { cwd: os.tmpdir(), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let out = '';
@@ -194,9 +194,7 @@ function runClaude(input) {
     child.on('error', (e) => {
       clearTimeout(timer);
       reject(
-        e.code === 'ENOENT'
-          ? new Error('Claude Code was not found on PATH: neither claude.exe nor an npm claude.cmd whose script and node.exe could be found.')
-          : e
+        e.code === 'ENOENT' ? new Error(CLAUDE_NOT_FOUND) : e
       );
     });
     child.on('close', (code) => {
@@ -225,8 +223,14 @@ function runClaude(input) {
  * shim is read for the script it runs (npm's cmd-shim names it relative to
  * %dp0%), and that script is started with node directly: the same program,
  * with no shell in between. `env` is a parameter so smoke can point PATH at a
- * synthetic npm prefix. Falls back to plain 'claude', whose ENOENT is then
- * reported with a message naming both forms.
+ * synthetic npm prefix.
+ *
+ * Always an absolute path, and null when neither form is found, never a bare
+ * 'claude' (#191): the console fallback of "Start Claude here" starts it with
+ * Start-Process in the project folder, and ShellExecute looks in the working
+ * folder first, so a bare name ran a claude.cmd a repository planted there.
+ * Relative PATH entries are skipped for the same reason. Callers refuse with
+ * CLAUDE_NOT_FOUND rather than start anything.
  */
 /**
  * The script a claude.cmd shim runs, or null. npm's cmd-shim names it relative
@@ -248,12 +252,18 @@ async function scriptOfShim(shim, exists, hops = 1) {
   return (await exists(next)) ? scriptOfShim(next, exists, hops - 1) : null;
 }
 
+export const CLAUDE_NOT_FOUND = 'Claude Code was not found on PATH: neither claude.exe nor an npm claude.cmd whose script and node.exe could be found. If it was installed after LayerCake started, restart LayerCake so it sees the new PATH.';
+
 export async function resolveClaudeCommand(env = process.env) {
   if (process.platform !== 'win32') return ['claude'];
   const exists = (p) => withTimeout(fs.access(p), DIR_TIMEOUT_MS, p).then(() => true, () => false);
-  const dirs = String(env.PATH ?? env.Path ?? '').split(path.delimiter).map((d) => d.trim().replace(/^"(.*)"$/, '$1')).filter(Boolean);
+  const dirs = String(env.PATH ?? env.Path ?? '')
+    .split(path.delimiter)
+    .map((d) => d.trim().replace(/^"(.*)"$/, '$1'))
+    .filter((d) => d && path.isAbsolute(d));
   for (const d of dirs) {
-    if (await exists(path.join(d, 'claude.exe'))) return ['claude'];
+    const exe = path.join(d, 'claude.exe');
+    if (await exists(exe)) return [exe];
   }
   for (const d of dirs) {
     const shim = path.join(d, 'claude.cmd');
@@ -265,7 +275,7 @@ export async function resolveClaudeCommand(env = process.env) {
       if (await exists(node)) return [node, script];
     }
   }
-  return ['claude'];
+  return null;
 }
 
 /**

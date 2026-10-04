@@ -242,6 +242,10 @@ async function makeFixture() {
   // As git writes them: an absolute gitdir with forward slashes, a relative commondir.
   await fs.writeFile(path.join(worktree, '.git'), `gitdir: ${wtGitDir.replace(/\\/g, '/')}\n`);
   await fs.writeFile(path.join(wtGitDir, 'commondir'), '../..\n');
+  // A .git file naming a share (#193), as one could arrive in a downloaded
+  // folder: never followed, so the scan never connects out to it.
+  await fs.mkdir(path.join(smokeDir, 'git-share'), { recursive: true });
+  await fs.writeFile(path.join(smokeDir, 'git-share', '.git'), 'gitdir: //127.0.0.1/layercake-smoke-none/wt\n');
   const fwd = (p) => p.replace(/\\/g, '/');
   const localServer = (name) => ({ mcpServers: { [name]: { command: name } } });
   const projects = {
@@ -354,11 +358,24 @@ process.env.LAYERCAKE_POLICY_KEYS = JSON.stringify({
 // Synthetic Claude session data and LayerCake app data: the real ones are never read or written.
 const { claudeData, appData } = await makeSessionFixture(smokeDir, proj);
 
+// "Start Claude here" starts claude by its full path or not at all (#191), so
+// the server gets an empty stand-in claude.exe first on its PATH: launches are
+// dry runs here, so it is named in the argv and never started, and smoke does
+// not depend on Claude Code being installed.
+const claudeStandIn = path.join(smokeDir, 'claude-bin', 'claude.exe');
+if (process.platform === 'win32') {
+  await fs.mkdir(path.dirname(claudeStandIn), { recursive: true });
+  await fs.writeFile(claudeStandIn, '');
+}
+// Windows spells it Path; a second key spelt PATH would leave which one wins to chance.
+const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === 'PATH') || 'PATH';
+
 const serverStartedAt = Date.now();
 const server = spawn(process.execPath, [path.join(ROOT, 'server', 'index.js')], {
   cwd: ROOT,
   env: {
     ...process.env,
+    [pathKey]: process.platform === 'win32' ? [path.dirname(claudeStandIn), process.env[pathKey] || ''].join(path.delimiter) : process.env[pathKey],
     PORT: String(PORT),
     LAYERCAKE_SNAPSHOT_DIR: snaps,
     LAYERCAKE_CLAUDE_DATA_DIR: claudeData,
@@ -1876,7 +1893,7 @@ try {
   // A scan of its own: the server keeps 8, and the first one's id was evicted
   // by the time the opt-in mapped-drive checks had scanned too (#156).
   const launchScan = await (await fetch(`${BASE}/api/scan`, { method: 'POST', headers: H, body: JSON.stringify({ dir: proj }) })).json();
-  await runLaunchChecks({ base: BASE, port: PORT, token, check, scanId: launchScan.scanId, proj, appData, claudeData, reportWindowMs: REPORT_WINDOW_MS, serverStartedAt });
+  await runLaunchChecks({ base: BASE, port: PORT, token, check, scanId: launchScan.scanId, proj, appData, claudeData, reportWindowMs: REPORT_WINDOW_MS, serverStartedAt, claudeProgram: claudeStandIn });
 
   // --- AI summaries, against a stand-in claude --------------------------------
   await runSummaryChecks({ base: BASE, token, check, skip, proj, smokeDir, appData });
@@ -1936,6 +1953,48 @@ try {
   check('a lone AGENTS.md is read, the config home\'s CLAUDE.md not counting against it (#123)',
     loneChain.sections.some((s) => s.files.some((f) => samePathKey(f.path) === samePathKey(path.join(smokeRoot, 'agents-only', 'AGENTS.md')))),
     JSON.stringify(loneChain.sections.flatMap((s) => s.files.map((f) => f.path))));
+  const toShare = await (await fetch(`${BASE}/api/scan`, { method: 'POST', headers: H, body: JSON.stringify({ dir: path.join(smokeRoot, 'git-share') }) })).json();
+  check('a .git file pointing at a network share is not followed: no connection out (#193)',
+    toShare.gitRoot?.via === 'git file' && /network share/.test(toShare.gitRoot?.refused || '') && samePathKey(toShare.gitRoot?.dir || '') === samePathKey(path.join(smokeRoot, 'git-share')),
+    JSON.stringify(toShare.gitRoot));
+
+  // #192: configuration from a cloned repository reaches the terminal through
+  // the CLI. Its control sequences (a clipboard write, a line erase, concealed
+  // text, a bidirectional override) must arrive visibly, never acted on, and a
+  // CRLF file must still read as lines. The CLI's own environment is the
+  // server's: the fixture's homes, never the machine's.
+  const hostile = path.join(smokeRoot, 'cli-hostile');
+  await fs.mkdir(hostile, { recursive: true });
+  await fs.writeFile(path.join(hostile, '.mcp.json'), JSON.stringify({ mcpServers: { 'evil\u001b]52;c;U01PS0U=\u0007': { command: 'safe\u001b[2K\r\u001b[1Ahidden\u202etxt.exe' } } }));
+  await fs.writeFile(path.join(hostile, 'CLAUDE.md'), '# first line\r\nshown \u001b[8mconcealed\u001b[28m\r\nlast line\r\n');
+  const cliEnv = { ...process.env, CLAUDE_CONFIG_DIR: configHome, USERPROFILE: fakeHome, HOME: fakeHome, LAYERCAKE_SNAPSHOT_DIR: snaps, LAYERCAKE_APPDATA_DIR: appData, LAYERCAKE_CLAUDE_DATA_DIR: claudeData, NO_COLOR: '' };
+  const cliOut = ['mcp', 'claude-md']
+    .map((view) => spawnSync(process.execPath, [path.join(ROOT, 'cli', 'index.js'), 'show', view, hostile], { env: cliEnv, encoding: 'utf8', windowsHide: true }).stdout)
+    .join('\n');
+  check('the CLI prints control sequences from configuration visibly, never acting on them, and CRLF as lines (#192)',
+    !/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e]/.test(cliOut) &&
+      cliOut.includes('evil^[]52;c;U01PS0U=^G') && cliOut.includes('safe^[[2K^M^[[1Ahidden<U+202E>txt.exe') &&
+      cliOut.includes('shown ^[[8mconcealed^[[28m') && /# first line\nshown/.test(cliOut),
+    JSON.stringify(cliOut.slice(0, 1200)));
+  // Invisible formatting characters in source (bidirectional overrides, zero-width
+  // marks, a byte-order mark) make code read differently from how it runs, and
+  // an editing tool once turned \u escapes into them unseen (#192). Written as
+  // escapes they are visible; this keeps it so. Walked from the folders, not git.
+  const INVISIBLE = /[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/;
+  const sources = [];
+  const walkSource = async (dir) => {
+    for (const d of await fs.readdir(dir, { withFileTypes: true })) {
+      const p = path.join(dir, d.name);
+      if (d.isDirectory() && d.name !== 'node_modules') await walkSource(p);
+      else if (d.isFile() && /\.(m?js|cjs|jsx)$/.test(d.name)) sources.push(p);
+    }
+  };
+  for (const top of ['server', 'client', 'cli', 'scripts', 'desktop']) await walkSource(path.join(ROOT, top));
+  const withInvisible = [];
+  for (const p of sources) if (INVISIBLE.test(await fs.readFile(p, 'utf8'))) withInvisible.push(path.relative(ROOT, p));
+  check('no source file holds an invisible formatting character; escapes are used instead (#192)',
+    sources.length > 40 && INVISIBLE.test('planted \u202e here') && withInvisible.length === 0,
+    JSON.stringify({ files: sources.length, withInvisible }));
   const inPlain = await mcpFor(path.join(smokeRoot, 'mcp-plain'));
   check('a folder in no git repository gets the servers keyed by itself (#120)',
     JSON.stringify(inPlain.names) === JSON.stringify(['local-plain']) && inPlain.s.gitRoot === null,

@@ -202,6 +202,10 @@ function transcript(proj) {
     { type: 'system', subtype: 'away_summary', content: 'You were fixing the widget.' },
     { type: 'file-history-snapshot', snapshot: { trackedFileBackups: { 'widget.js': {} } } },
     { type: 'attachment', attachment: { type: 'hook_success', hookEvent: 'PostToolUse', exitCode: 0 } },
+    // Claude Code 2.1.285's (#194): recognised, never counted as drift.
+    { type: 'attachment', attachment: { type: 'hook_non_blocking_error', hookName: 'PreToolUse:Bash', hookEvent: 'PreToolUse', toolUseID: 'toolu_1', stderr: 'connect ECONNREFUSED 127.0.0.1:5178', stdout: '', exitCode: 1 } },
+    { type: 'attachment', attachment: { type: 'hook_cancelled', hookName: 'PostToolUse:Edit', hookEvent: 'PostToolUse', toolUseID: 'toolu_1' } },
+    { type: 'system', subtype: 'agents_killed' },
     // The user's own hook adding context: counted by name, its text never kept (#25).
     { type: 'attachment', attachment: { type: 'hook_additional_context', hookName: 'PostToolUse:Edit', hookEvent: 'PostToolUse', toolUseID: 'toolu_1', content: [SENTINELS.hookContext] } },
     { type: 'attachment', attachment: { type: 'deferred_tools_delta', failedMcpServers: ['broken-server'] } },
@@ -494,6 +498,10 @@ export async function runSessionChecks({ base, token, check, skip, proj, appData
   check('a denied tool call counts as a failure and a denial', d?.toolFailures === 2 && d.permissionDenials === 1, `${d?.toolFailures} ${d?.permissionDenials}`);
   check('the interrupted turn is flagged', d?.turns.find((t) => t.kind === 'prompt' && t.preview.startsWith('Second'))?.interrupted === true);
   check('an unrecognised record type is counted, not ignored (drift canary)', d?.parse.unknown['future-record-type'] === 1, JSON.stringify(d?.parse.unknown));
+  check('2.1.285 hook errors, cancelled hooks and killed agents are recognised: hook runs, one failure, no drift (#194)',
+    !['attachment:hook_non_blocking_error', 'attachment:hook_cancelled', 'system:agents_killed'].some((k) => k in (d?.parse.unknown || {})) &&
+      d?.hooks?.runs === 3 && d.hooks.failures === 1 && d.hooks.byEvent?.PreToolUse === 1,
+    JSON.stringify({ unknown: d?.parse.unknown, hooks: d?.hooks }));
   check('a torn line is counted, not fatal', d?.parse.badLines === 1);
   check('failed MCP servers are reported', d?.mcp.failed.includes('broken-server'));
   // Busy and running is "working", but the recent rate-limit error outranks it.
@@ -572,7 +580,7 @@ export function postRaw(base, pathname, body, headers = {}) {
  * Launch and ingest, with the server in dry-run mode (LAYERCAKE_LAUNCH_DRY_RUN=1):
  * everything except starting Windows Terminal.
  */
-export async function runLaunchChecks({ base, port, token, check, scanId, proj, appData, claudeData, reportWindowMs, serverStartedAt }) {
+export async function runLaunchChecks({ base, port, token, check, scanId, proj, appData, claudeData, reportWindowMs, serverStartedAt, claudeProgram }) {
   const H = { 'X-LayerCake-Token': token };
   const bodies = [];
 
@@ -609,8 +617,10 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
   const argv = l?.argv || [];
   const at = (flag) => argv[argv.indexOf(flag) + 1];
   check('it opens a named Windows Terminal window, in the scanned directory', argv[0] === '-w' && argv[1] === 'LayerCake' && at('-d') === proj);
-  check('it runs claude with a fresh session id and the per-session settings file',
-    argv.includes('claude') && /^[0-9a-f-]{36}$/.test(at('--session-id')) && at('--settings') === l.settingsPath);
+  // By its full path on Windows, never a bare name (#191); elsewhere launch is not offered.
+  const claudeNamed = process.platform === 'win32' ? argv.includes(claudeProgram) && !argv.includes('claude') : argv.includes('claude');
+  check('it runs claude by its full path (#191), with a fresh session id and the per-session settings file',
+    claudeNamed && /^[0-9a-f-]{36}$/.test(at('--session-id')) && at('--settings') === l.settingsPath, JSON.stringify(argv));
   check('the settings file is kept in LayerCake data, not in ~/.claude', l?.settingsPath?.startsWith(path.join(appData, 'launches')));
   check('placement puts the terminal on the right half of the screen', at('--pos') === '1280,0');
   // #157: where wt.exe is missing, the same program and arguments start in a
@@ -1030,7 +1040,14 @@ export async function runSummaryChecks({ base, token, check, skip, proj, smokeDi
     await fs.mkdir(native, { recursive: true });
     await fs.writeFile(path.join(native, 'claude.exe'), '');
     const preferred = await resolveClaudeCommand({ PATH: [native, prefix, nodeDir].join(path.delimiter) });
-    check('claude.exe on PATH is used by name, before any npm shim', JSON.stringify(preferred) === '["claude"]', JSON.stringify(preferred));
+    check('claude.exe on PATH is used by its full path, before any npm shim (#191)',
+      JSON.stringify(preferred) === JSON.stringify([path.join(native, 'claude.exe')]), JSON.stringify(preferred));
+    // #191: a relative PATH entry names a folder under whatever the current
+    // directory is, so it is skipped even when it holds claude.exe; and with
+    // nothing found there is no bare 'claude' to fall back on.
+    const relative = await resolveClaudeCommand({ PATH: [path.relative(process.cwd(), native), nodeDir].join(path.delimiter) });
+    check('a relative PATH entry is never searched for claude, and with none found the answer is null, not a bare name (#191)',
+      !path.isAbsolute(path.relative(process.cwd(), native)) && relative === null, JSON.stringify(relative));
 
     // #89: yarn classic's global bin holds a shim that runs npm's shim in its
     // own global node_modules. Followed one level to the same script.
