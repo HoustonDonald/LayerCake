@@ -48,7 +48,7 @@ export const ROOM_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
  * claims are kept (#172); the Wilds, beyond the Frostwall, are where Raiders
  * stand; outside is the Citadel.
  */
-const RESERVED_IDS = new Set(['gate', 'beyond-gate', 'village', 'wilds', 'outside', 'perch', 'project']);
+const RESERVED_IDS = new Set(['gate', 'beyond-gate', 'village', 'wilds', 'outside', 'perch', 'project', 'sept']);
 const FOLD = process.platform === 'win32';
 
 /**
@@ -445,6 +445,38 @@ export function classifyCommand(map, heads) {
     }
   }
   return best || { kind: null, room: null, rule: null };
+}
+
+/**
+ * Whether a shell call is git or GitHub CLI work, for the Sept (#186, owner
+ * decisions 2026-10-02: git and gh), and what its Mason acts out there: the
+ * strongest of its segments, push, then commit, then anything else (the
+ * crank), then a read. Recognised by the command's first words (lowercased,
+ * four at most), which castle.js keeps and never serves; nothing here runs
+ * git. Null for a call with no git or gh segment.
+ */
+const GIT_READS = new Set(['status', 'log', 'diff', 'show', 'blame', 'shortlog', 'reflog', 'grep', 'ls-files']);
+const GH_READS = new Set(['view', 'list', 'status', 'diff', 'checks']);
+const ACT_RANK = { read: 1, shell: 2, commit: 3, push: 4 };
+export function gitAct(heads) {
+  let best = null;
+  for (const head of heads || []) {
+    const tool = String(head[0] || '').replace(/\.exe$/, '');
+    let act = null;
+    if (tool === 'git') {
+      // The subcommand: the first word after git's own options; -C <dir> and
+      // -c <key=value> (one word once lowercased) take the next word with them.
+      let i = 1;
+      while (i < head.length && head[i].startsWith('-')) i += head[i] === '-c' ? 2 : 1;
+      const sub = head[i];
+      act = sub === 'push' ? 'push' : sub === 'commit' ? 'commit' : GIT_READS.has(sub) ? 'read' : 'shell';
+    } else if (tool === 'gh') {
+      // `gh status` stands alone; every other read is a noun then a verb (pr view, run list).
+      act = head[1] === 'status' || GH_READS.has(head[2]) ? 'read' : 'shell';
+    }
+    if (act && (!best || ACT_RANK[act] > ACT_RANK[best])) best = act;
+  }
+  return best;
 }
 
 /**

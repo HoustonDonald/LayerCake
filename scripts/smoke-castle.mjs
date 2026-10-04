@@ -35,6 +35,9 @@ const S = {
   // A file a plain shell command names (#176): it chooses the room, and is never served.
   // No "smoke" in it: the built-in Tests room claims **/*smoke*.
   shellPath: 'castlegitpathsentinel',
+  // A commit message and a remote URL in the Sept's .git (#186): read for counting, never served.
+  commitMessage: 'SMOKE-CASTLE-COMMIT-MESSAGE',
+  remoteUrl: 'smoke-castle-remote-url',
 };
 // A PreCompact trigger Claude Code does not document (#163): the castle drops
 // it. Not one of S: the Sessions tab's event list has always shown a hook's
@@ -124,6 +127,15 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
   const proj = path.join(smokeDir, 'castle-proj');
   const P = (...parts) => path.join(proj, ...parts);
   for (const d of ['db', 'docs', 'src', 'tests', 'weird']) await fs.mkdir(P(d), { recursive: true });
+  // A repository for the Sept (#186), as files: on main, two commits since its
+  // remote. Its commit messages and remote URL are sentinels: never served.
+  for (const d of [['refs', 'heads'], ['refs', 'remotes', 'origin'], ['logs', 'refs', 'heads']]) await fs.mkdir(P('.git', ...d), { recursive: true });
+  await fs.writeFile(P('.git', 'HEAD'), 'ref: refs/heads/main\n');
+  await fs.writeFile(P('.git', 'refs', 'heads', 'main'), `${'b'.repeat(40)}\n`);
+  await fs.writeFile(P('.git', 'refs', 'remotes', 'origin', 'main'), `${'c'.repeat(40)}\n`);
+  await fs.writeFile(P('.git', 'config'), `[remote "origin"]\n\turl = https://${S.remoteUrl}.invalid/x.git\n[branch "main"]\n\tremote = origin\n\tmerge = refs/heads/main\n`);
+  const reflog = (from, to, what) => `${from} ${to} Smoke <smoke@example.invalid> 1790000000 +0000\t${what}\n`;
+  await fs.writeFile(P('.git', 'logs', 'refs', 'heads', 'main'), reflog('0'.repeat(40), 'c'.repeat(40), 'clone: from the remote') + reflog('c'.repeat(40), 'a'.repeat(40), `commit: ${S.commitMessage}`) + reflog('a'.repeat(40), 'b'.repeat(40), 'commit: two'));
   const scan = JSON.parse((await postRaw(base, '/api/scan', { dir: proj }, H)).body);
   const scanId = scan.scanId;
 
@@ -417,20 +429,59 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
       JSON.stringify(trailOf(s1.last('state'), `M:${sid}`)) === JSON.stringify(kept), JSON.stringify(trailOf(s1.last('state'), `M:${sid}`)));
 
     // #176: a plain shell call works in the rooms of the files it names; one that names none moves no one.
+    // (Not git: git and gh are the Sept's, #186, below.)
     const masonRoom = () => s1.last('state')?.units?.find((u) => u.key === `M:${sid}`)?.room;
     const roomBefore = masonRoom();
-    await call('toolu_c_gitstatus', 'Bash', { command: 'git status', description: 'Status' }, { response: { stdout: '' } });
-    await s1.untilLog((es) => es.some((e) => e.id === 'toolu_c_gitstatus' && e.endAt), 3000);
+    await call('toolu_c_plain', 'Bash', { command: 'ls', description: 'List' }, { response: { stdout: '' } });
+    await s1.untilLog((es) => es.some((e) => e.id === 'toolu_c_plain' && e.endAt), 3000);
     await sleep(400);
     check('a plain shell call that names no file lights no room and moves no one (#176)',
-      (s1.last('log')?.entries || []).find((e) => e.id === 'toolu_c_gitstatus')?.where === 'shell' && masonRoom() === roomBefore,
-      JSON.stringify({ where: (s1.last('log')?.entries || []).find((e) => e.id === 'toolu_c_gitstatus')?.where, roomBefore, now: masonRoom() }));
-    await call('toolu_c_gitadd', 'Bash', { command: `git add db/${S.shellPath}.sql origin/main`, description: 'Stage the schema' }, { response: { stdout: '' } });
+      (s1.last('log')?.entries || []).find((e) => e.id === 'toolu_c_plain')?.where === 'shell' && masonRoom() === roomBefore,
+      JSON.stringify({ where: (s1.last('log')?.entries || []).find((e) => e.id === 'toolu_c_plain')?.where, roomBefore, now: masonRoom() }));
+    await call('toolu_c_plainfile', 'Bash', { command: `cat db/${S.shellPath}.sql origin/main`, description: 'Read the schema' }, { response: { stdout: '' } });
     check("a plain shell call that names a project file works in that file's room, and the Mason walks there (#176)",
       (await s1.untilState((st) => st.units.find((u) => u.key === `M:${sid}`)?.room === 'database')) &&
-        (await s1.untilLog((es) => es.find((e) => e.id === 'toolu_c_gitadd')?.where === 'shell in Database', 3000)),
-      JSON.stringify({ where: (s1.last('log')?.entries || []).find((e) => e.id === 'toolu_c_gitadd')?.where, room: masonRoom() }));
+        (await s1.untilLog((es) => es.find((e) => e.id === 'toolu_c_plainfile')?.where === 'shell in Database', 3000)),
+      JSON.stringify({ where: (s1.last('log')?.entries || []).find((e) => e.id === 'toolu_c_plainfile')?.where, room: masonRoom() }));
     check('a word no room claims (origin/main) sends nothing to Hollowmere (#176)', s1.last('state')?.village?.count === 1, JSON.stringify(s1.last('state')?.village));
+
+    // --- the Sept (#186): git and gh work, and the repository's state read from .git --------
+    check('the Sept reads the repository from .git as files: branch main, two commits not on its remote (#186)',
+      await s1.untilState((st) => st.sept?.repo === true && st.sept.branch === 'main' && st.sept.ahead === 2, 6000), JSON.stringify(s1.last('state')?.sept));
+    const beforeCommit = Date.now();
+    await call('toolu_c_gitcommit', 'Bash', { command: `git add db/${S.shellPath}.sql && git commit -m "x"`, description: 'Commit the schema' }, { response: { stdout: '' } });
+    check('a git command walks its Mason to the Sept to light a candle, and still lights the rooms of the files it names (#186)',
+      (await s1.untilState((st) => unitOf(st, `M:${sid}`)?.room === 'sept' && unitOf(st, `M:${sid}`)?.last?.verb === 'commit' && st.rooms.database.lastRead >= beforeCommit - 50)) &&
+        (await s1.untilLog((es) => es.find((e) => e.id === 'toolu_c_gitcommit')?.where === 'git at the Sept (Database)', 3000)),
+      JSON.stringify({ unit: unitOf(s1.last('state'), `M:${sid}`), where: (s1.last('log')?.entries || []).find((e) => e.id === 'toolu_c_gitcommit')?.where }));
+    await call('toolu_c_gitpush', 'Bash', { command: 'git push origin main', description: 'Push' }, { fail: 'Exit code 1\n! [rejected] main -> main (non-fast-forward)' });
+    check('a git push that fails with an exit code raises the Sept’s Alarm, and its Mason rings the bell (#186)',
+      await s1.untilState((st) => st.sept?.alarm?.exitCode === 1 && unitOf(st, `M:${sid}`)?.last?.verb === 'push'), JSON.stringify(s1.last('state')?.sept));
+    await hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'toolu_c_gitdenied', tool_input: { command: 'git push --force' } });
+    await hook({ hook_event_name: 'PermissionDenied', tool_name: 'Bash', tool_use_id: 'toolu_c_gitdenied', tool_input: { command: 'git push --force' } });
+    await sleep(600);
+    check('a denied git command (no verdict) leaves the Alarm as it was (#186)', s1.last('state')?.sept?.alarm?.exitCode === 1, JSON.stringify(s1.last('state')?.sept));
+    await call('toolu_c_ghview', 'Bash', { command: 'gh pr view 12', description: 'The pull request' }, { response: { stdout: '' } });
+    check('a gh command that succeeds is the Sept’s too: it clears the Alarm, and its Mason reads the ledger (#186)',
+      await s1.untilState((st) => st.sept && st.sept.alarm === null && unitOf(st, `M:${sid}`)?.room === 'sept' && unitOf(st, `M:${sid}`)?.last?.verb === 'read'), JSON.stringify(s1.last('state')?.sept));
+    // A third commit, as git would write it: the branch's ref and its log.
+    await fs.writeFile(P('.git', 'refs', 'heads', 'main'), `${'e'.repeat(40)}\n`);
+    await fs.appendFile(P('.git', 'logs', 'refs', 'heads', 'main'), `${'b'.repeat(40)} ${'e'.repeat(40)} Smoke <smoke@example.invalid> 1790000100 +0000\tcommit: three\n`);
+    check('a commit made outside Claude is seen too: three not pushed (#186)', await s1.untilState((st) => st.sept?.ahead === 3, 6000), JSON.stringify(s1.last('state')?.sept));
+    await fs.writeFile(P('.git', 'refs', 'remotes', 'origin', 'main'), `${'e'.repeat(40)}\n`);
+    check('a push (the remote branch where the local one is): none not pushed (#186)', await s1.untilState((st) => st.sept?.ahead === 0, 6000), JSON.stringify(s1.last('state')?.sept));
+    // Not available: a .git that cannot be read, then none at all. Values, never a crash (owner).
+    await fs.rename(P('.git', 'HEAD'), P('.git', 'HEAD.away'));
+    await fs.mkdir(P('.git', 'HEAD'));
+    check('a .git whose HEAD cannot be read: the Sept stands unlit, the castle carries on (#186)',
+      await s1.untilState((st) => st.sept?.repo === false && st.sept.reason === 'unreadable' && Array.isArray(st.units), 6000), JSON.stringify(s1.last('state')?.sept));
+    await fs.rmdir(P('.git', 'HEAD'));
+    await fs.rename(P('.git', 'HEAD.away'), P('.git', 'HEAD'));
+    await fs.rename(P('.git'), P('.git-away'));
+    check('no .git at all: no repository, and the castle carries on (#186)',
+      await s1.untilState((st) => st.sept?.repo === false && st.sept.reason === 'none' && Array.isArray(st.units), 6000), JSON.stringify(s1.last('state')?.sept));
+    await fs.rename(P('.git-away'), P('.git'));
+    check('and back again once it returns (#186)', await s1.untilState((st) => st.sept?.repo === true && st.sept.branch === 'main', 6000), JSON.stringify(s1.last('state')?.sept));
 
     // Resting (#162's hover card showed "resting" beside "working"): a call
     // still running past the rest window (3 s here) is work; once it ends, the

@@ -887,10 +887,12 @@ patterns from folder and file names that usually mean the job:
 | Services | `**/services/**`, `**/middleware/**` |
 
 **The ground (#172).** The castle is **Duskhold**, a keep whose north wall is **the Frostwall**, with
-**the Wilds**, a forest, beyond it. **Hollowmere** is a village on a mere west of the keep, and **the
-Citadel** a beacon tower on a rock east of it (#183). The gate is the keep's only way in or out: a road
-forks west and east in front of it to each, and runs on south. The names are the project's own
-inventions.
+**the Wilds**, a forest, beyond it. **Hollowmere** is a village on a mere west of the keep, **the
+Sept** a seven-sided hall below it where git and GitHub work is done (#186), and **the Citadel** a
+beacon tower on a rock east of it (#183). The gate is the keep's only way in or out: a road runs west
+and east in front of it, and on south, and each place has its own spur off it: Hollowmere's up the
+west band's outer edge, the Sept's straight to its door, the Citadel's in the east. The names are
+the project's own inventions.
 
 The built-in map is a starting point, not a picture of the project: on LayerCake's own repository it
 left 24 of the 28 files in `server/` unclaimed, and a drafted map leaves none. The full lists are on
@@ -903,12 +905,37 @@ beacon is lit once any such file has been touched, one of its six windows for ea
 working on one walks out of the gate and east along the road. Past the windows drawn, the count by
 its name says how many. Clicking Hollowmere or the Citadel (anywhere in its band) lists its files.
 
+**The Sept** (#186) is where git and GitHub work is done. A shell call whose command starts with
+`git` or `gh` (recognised by its first words, the way test and build runs are) walks its Mason or
+Knight out of the gate and up the Sept's spur, and the rooms of any project files it names still
+light as Survey. There it acts out the command: a commit lights a candle, a push hauls the bell rope
+(and the Sept's own bell swings while the push runs), a status, log, diff or show reads the ledger,
+and anything else turns the crank. A git or gh command that fails with an exit code (a rejected push,
+a merge with conflicts) raises the Sept's Alarm, a red glow and a mark, until a later one succeeds;
+one with no verdict (denied, interrupted, refused) changes nothing. Hover the Sept for the branch,
+the count and its latest command.
+
+- **What it reads.** The project's `.git` folder, as files and through the same reader as every other
+  file: HEAD, the branch's ref (loose or in `packed-refs`), the `[branch]` section of `config` for its
+  remote, that remote's ref, and the branch's log. Git is never run, so the Sept works where git is
+  not installed, and it sees git you run yourself as well as Claude's. A worktree's `.git` file is
+  followed to its folder. Nothing in `.git` is written, and nothing but the branch name and a count
+  leaves the server: never a commit message, a remote URL or a path.
+- **The banner** over its door names the branch, or the short commit when HEAD is detached.
+- **Its seven windows** light one for each commit on the branch not yet on its remote, counted back
+  along the branch's log to where it last stood at the remote's commit. When that log cannot say (a
+  reset, rebase or merging pull since, a remote that has moved on, an expired log, no remote branch)
+  one window lights and it says "not pushed: unknown". An amended commit counts as none, so amending a commit already pushed reads "all pushed".
+- **No repository, or one that cannot be read** (a share that is down, HEAD caught mid-write): the
+  Sept stands unlit with no banner and says so, and nothing else changes.
+
 **Where runs go** comes from the types: a test run lights the first Tests room, a build run the first
 Build room, a migration the first Database room (a command rule can name a room instead). Any other
-shell call works in the rooms of the project files its command names (`git add server/scan.js` works
+shell call works in the rooms of the project files its command names (`cat server/scan.js` works
 in that file's room; only names a room's patterns claim count, so `origin/main` is no file), and one
-that names none (`git status`, a push) moves no one and lights nothing: it used to send every such
-call to the first Build room, which then filled with units doing git work there (#176). Those names
+that names none (`ls`, `echo done`) moves no one and lights nothing: it used to send every such
+call to the first Build room, which then filled with units doing git work there (#176). Git and gh
+calls go to the Sept instead, lighting the rooms of the files they name (#186). Those names
 only choose rooms; none is listed among a room's files. MCP calls
 wait on the Frostwall above the first Integrations room, else above the gate's column.
 
@@ -998,8 +1025,8 @@ still. Hover the gate to read which it is.
 - A Mason or Knight walks the corridors to the room of its call: out of its room's door onto the
   corridor below, along to a gap between the columns, up or down, along, and in. One room to the
   next takes about 1 s.
-- Hollowmere and the Citadel are reached out of the gate and along the road that forks in front of
-  it, and left the same way (#183). On LayerCake's own castle such a walk runs to 2,060 long, so it takes its length's time at
+- Hollowmere, the Sept and the Citadel are reached out of the gate and along the road in front of
+  it, each up its own spur, and left the same way (#183, #186). On LayerCake's own castle such a walk runs to 2,060 long, so it takes its length's time at
   about a room-to-room walk's pace (800 a second; three of those measure 325 to 1,195), from 1 s up
   to 3 s, sped up with a queue like any other.
 - Every room it worked in is walked through, in order, and none is skipped: parallel calls in three

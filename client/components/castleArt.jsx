@@ -427,24 +427,29 @@ export function RoomLight({ id, box, state, scaffolding }) {
 }
 
 /**
- * Hollowmere and the Citadel are drawn in a 198 by 520 box (#183, owner's
- * picks 2026-10-02 from a style board), fitted to the box the layout gives,
+ * Hollowmere, the Sept and the Citadel are drawn in boxes 198 wide (#183,
+ * #186, owner's picks 2026-10-02 from style boards): Hollowmere 230 tall, the
+ * Sept 350, the Citadel 520. Each is fitted to the box the layout gives,
  * standing on its bottom edge: a floor too short for the full height gets a
  * smaller drawing, never a cut one.
  */
 const PLACE_W = 198;
 const PLACE_H = 520;
-function placeFit(box) {
-  const s = Math.min(box.w / PLACE_W, box.h / PLACE_H);
-  return `translate(${n(box.x + (box.w - PLACE_W * s) / 2)} ${n(box.y + box.h - PLACE_H * s)}) scale(${n(s)})`;
+const HOLLOW_H = 230;
+const SEPT_H = 350;
+function placeFit(box, h = PLACE_H) {
+  const s = Math.min(box.w / PLACE_W, box.h / h);
+  return `translate(${n(box.x + (box.w - PLACE_W * s) / 2)} ${n(box.y + box.h - h * s)}) scale(${n(s)})`;
 }
-/** Where a height in the 198 by 520 drawing lands in the castle, for a label over it. */
-export function placeY(box, y) {
-  const s = Math.min(box.w / PLACE_W, box.h / PLACE_H);
-  return n(box.y + box.h - PLACE_H * s + y * s);
+/** Where a height in a drawing `h` tall lands in the castle, for a label over it. */
+export function placeY(box, y, h = PLACE_H) {
+  const s = Math.min(box.w / PLACE_W, box.h / h);
+  return n(box.y + box.h - h * s + y * s);
 }
-/** The ridge of Hollowmere's highest roof in its drawing (house 0's, 212.6). */
-export const HOLLOWMERE_TOP = 212;
+/** Hollowmere's drawing height, and the ridge of its highest roof in it (house 0's, 4.2). */
+export const HOLLOWMERE_H = HOLLOW_H;
+export const HOLLOWMERE_TOP = 4;
+export const SEPT_DRAWING_H = SEPT_H;
 const n = (v) => Math.round(v * 100) / 100;
 
 /** How many windows a file count lights (#183, owner's pick: a window per file, up to the windows drawn). */
@@ -519,7 +524,7 @@ export function WildsForest({ width, height }) {
 export function Hollowmere({ box, count }) {
   const lit = lights(count);
   const cx = 99;
-  const cy = 330;
+  const cy = 115;
   const rx = 60;
   const ry = 43;
   const w = 44;
@@ -537,11 +542,84 @@ export function Hollowmere({ box, count }) {
     );
   }
   return (
-    <g className={`hollowmere${lit ? ' lit' : ''}`} transform={placeFit(box)} aria-hidden="true">
+    <g className={`hollowmere${lit ? ' lit' : ''}`} transform={placeFit(box, HOLLOW_H)} aria-hidden="true">
       <ellipse className="mere-water" cx={cx} cy={cy} rx={rx} ry={ry} />
       <path className="mere-glint" d={`M${cx - 30} ${n(cy - ry * 0.2)} h24 M${cx + 3} ${n(cy + ry * 0.25)} h21`} />
       <rect className="mere-jetty" x={n(cx + rx * 0.55)} y={cy - 6} width={n(rx * 0.55)} height="12" />
       {houses}
+    </g>
+  );
+}
+
+/** Where the Sept's seven windows sit: [x, side?] (the side faces' two each, the front's three). */
+const SEPT_WINDOWS = [
+  [-78, true],
+  [-66, true],
+  [-42, false],
+  [-9, false],
+  [24, false],
+  [58, true],
+  [70, true],
+];
+
+/**
+ * The Sept (#186, owner's picks 2026-10-02 from a style board): a hall of
+ * seven faces under a low dome, a bell tower rising from its middle, west of
+ * the keep below Hollowmere, where git and GitHub work is done. `git` is the
+ * frame's state for it: with a repository, its branch on a banner over the
+ * door (or the short commit when HEAD is detached) and one of its seven
+ * windows lit for each commit not yet on the branch's remote (one when that
+ * cannot be told); with none, or one that cannot be read, it stands unlit.
+ * Its Alarm is a red glow and a mark. The bell swings while `ringing`
+ * (a push running), on the shared flip-book's `frame`.
+ */
+export function Sept({ box, git, ringing = false, frame = 0 }) {
+  const cx = 99;
+  const base = 344;
+  const repo = Boolean(git?.repo);
+  const ahead = repo ? (typeof git.ahead === 'number' ? git.ahead : 1) : 0;
+  const label = repo ? git.branch || (git.detached ? `@${git.detached}` : null) : null;
+  const alarm = Boolean(git?.alarm);
+  const swing = ringing ? [-16, 0, 16, 0][frame & 3] : 0;
+  const bw = label ? Math.max(54, label.length * 8 + 20) : 0;
+  return (
+    <g className={`sept${repo ? '' : ' unlit'}${alarm ? ' alarm' : ''}`} transform={placeFit(box, SEPT_H)} aria-hidden="true">
+      {alarm && <ellipse className="sept-alarm-glow" cx={cx} cy={base - 120} rx="122" ry="150" />}
+      <path className="sept-side" d={`M${cx - 90} ${base} V${base - 112} L${cx - 54} ${base - 124} V${base} Z`} />
+      <path className="sept-side" d={`M${cx + 90} ${base} V${base - 112} L${cx + 54} ${base - 124} V${base} Z`} />
+      <rect className="sept-face" x={cx - 54} y={base - 124} width="108" height="124" />
+      <path className="sept-roof" d={`M${cx - 96} ${base - 112} Q${cx} ${base - 214} ${cx + 96} ${base - 112} L${cx + 54} ${base - 124} L${cx - 54} ${base - 124} Z`} />
+      <rect className="sept-tower" x={cx - 17} y={base - 296} width="34" height="120" />
+      <path className="sept-belfry" d={`M${cx - 12} ${base - 236} V${base - 262} A12 12 0 0 1 ${cx + 12} ${base - 262} V${base - 236} Z`} />
+      <g transform={`rotate(${swing} ${cx} ${base - 262})`}>
+        <path className="sept-bell" d={`M${cx - 10} ${base - 244} C${cx - 10} ${base - 258} ${cx - 7} ${base - 264} ${cx} ${base - 264} C${cx + 7} ${base - 264} ${cx + 10} ${base - 258} ${cx + 10} ${base - 244} L${cx + 13} ${base - 240} L${cx - 13} ${base - 240} Z`} />
+        <circle className="sept-bell" cx={cx} cy={base - 237} r="3" />
+      </g>
+      <path className="sept-spire" d={`M${cx - 22} ${base - 296} L${cx} ${base - 336} L${cx + 22} ${base - 296} Z`} />
+      {SEPT_WINDOWS.map(([dx, side], k) => {
+        const w = side ? 9 : 18;
+        const h = side ? 46 : 60;
+        const y = base - (side ? 92 : 104);
+        const x = cx + dx;
+        return <path key={k} className={`sept-window${k < ahead ? ' on' : ''}`} d={`M${x} ${y + h} V${y + w / 2} A${w / 2} ${w / 2} 0 0 1 ${x + w} ${y + w / 2} V${y + h} Z`} />;
+      })}
+      <path className="sept-door" d={`M${cx - 15} ${base} V${base - 26} A15 15 0 0 1 ${cx + 15} ${base - 26} V${base} Z`} />
+      {label && (
+        <g className="sept-banner">
+          <path d={`M${n(cx - bw / 2)} ${base - 166} H${n(cx + bw / 2)} V${base - 144} L${cx} ${base - 136} L${n(cx - bw / 2)} ${base - 144} Z`} />
+          <text x={cx} y={base - 150}>
+            {label}
+          </text>
+        </g>
+      )}
+      {alarm && (
+        <g className="sept-alarm-mark">
+          <circle cx={PLACE_W - 22} cy={30} r="15" />
+          <text x={PLACE_W - 22} y={36}>
+            !
+          </text>
+        </g>
+      )}
     </g>
   );
 }

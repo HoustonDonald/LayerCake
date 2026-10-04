@@ -140,7 +140,8 @@ server/launch.js    "Start Claude here": wt.exe + claude --session-id --settings
 server/powershell.js Windows PowerShell 5.1's path and the quoting for starting it; no imports, nothing at load
 server/ingest.js    /ingest/<launch>/<secret>/{statusline,hook} from launched sessions; state per session
 server/castle.js    the Castle (#159, #160): picks sessions, merges hook and transcript events, the fold, the state
-server/castlemap.js the Castle's rooms (castle.json v2, read only, else the built-in typed map), room types, the glob matcher, command rules
+server/castlemap.js the Castle's rooms (castle.json v2, read only, else the built-in typed map), room types, the glob matcher, command rules, git/gh recognition
+server/gitstate.js  the Sept's branch and unpushed count from .git, read as files (#186); never runs git
 server/castle-routes.js /api/castle/stream, /room, /reload: a scan id in, never a path
 client/             React 18 + Vite, two-pane explorer plus editor, snapshots and watch bar
 cli/                layercake CLI, imports server modules directly
@@ -311,7 +312,13 @@ is applied, in a try/catch, with no matching or await, so the empty 204 is unaff
 read by castle.js only and never served whole. Castle state exists only while a stream is open for
 that project, and castle routes take a scan id, never a path. `<project>/castle.json` is read, never
 written (the page's "Copy prompt for Claude" has the user's own session draft it), at a path the
-server builds from the scan store, through `readForDisplay`. It can come from a cloned repository,
+server builds from the scan store, through `readForDisplay`. The Sept's git facts (#186) are read
+the same way by `gitstate.js`, never by running git: HEAD, the branch's ref and `packed-refs`, the
+config's `[branch]` section, the upstream's ref and the branch's reflog, each re-read only when its
+stat changes, every other castle tick. Only a clipped branch name, a short detached commit and a
+count are served, never a commit message, a remote URL or a path, and smoke plants a message and a
+URL as sentinels; anything missing or unreadable is a value (`repo: false` with a reason), never a
+throw. castle.json can come from a cloned repository,
 so it is data only: **the glob matcher in castlemap.js is hand-written and must stay free of
 backtracking**. picomatch 4.0.7 ran over a minute on `'*a'` twelve times plus `'b'` against forty
 `a`s (review, 2026-09-29), `path.matchesGlob` is super-linear too; this one agreed with picomatch on

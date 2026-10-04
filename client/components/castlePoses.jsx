@@ -15,8 +15,12 @@ import React from 'react';
 const rad = (d) => (d * Math.PI) / 180;
 const n = (v) => Math.round(v * 100) / 100;
 
-/** Verbs a Mason or Knight acts out. A call a helper carries (subagent, skill, MCP, web) has none: the helper is at work. */
-export const POSE_VERBS = new Set(['edit', 'create', 'read', 'search', 'shell']);
+/**
+ * Verbs a Mason or Knight acts out. A call a helper carries (subagent, skill,
+ * MCP, web) has none: the helper is at work. At the Sept (#186) a commit and a
+ * push have their own; a git read reads, and the rest turn the crank.
+ */
+export const POSE_VERBS = new Set(['edit', 'create', 'read', 'search', 'shell', 'commit', 'push']);
 
 const KNIGHT_HELM = 'M6.6 3.2 h6.8 v5.4 q0 2.4 -3.4 2.4 q-3.4 0 -3.4 -2.4 Z';
 
@@ -64,6 +68,56 @@ function unlean(x, y, lean) {
  * ground (stays put), back and front (light behind and over the figure) }.
  */
 const POSES = {
+  // A commit (#186): a taper to a candle on its stand, which catches and steadies.
+  commit: {
+    n: 8,
+    frame(k) {
+      const h = [0, 0, 0, 2.6, 3.4, 2.8, 3.2, 3][k];
+      return {
+        lean: 3,
+        held: (
+          <>
+            <Arm d={0} x={17.6} y={10.8} />
+            <path className="pose-taper" d="M17.6 10.8 L19.4 9.2" />
+          </>
+        ),
+        ground: (
+          <>
+            <path className="pose-line" strokeWidth="1.2" d="M20 22 V15.6 M17.4 22 H22.6" />
+            <rect className="pose-candle" x="18.7" y="11.4" width="2.6" height="4.4" />
+          </>
+        ),
+        front: h ? (
+          <>
+            <circle className="pose-glow-flame" cx="20" cy="9" r="4.2" />
+            <ellipse className="pose-flame" cx="20" cy={n(10.2 - h / 3)} rx="1.2" ry={n(h / 2 + 0.6)} />
+          </>
+        ) : null,
+      };
+    },
+  },
+  // A push (#186): hauls the bell rope, hands high then low, the bell above swinging.
+  push: {
+    n: 4,
+    frame(k) {
+      const down = [0, 1, 1, 0][k];
+      const hy = down ? 13 : 7;
+      const sw = [-14, 0, 14, 0][k];
+      return {
+        lean: down ? 4 : -2,
+        held: <Arm d={0} x={17} y={hy} />,
+        back: (
+          <>
+            <path className="pose-rope" d={`M17 -1 V${hy}`} />
+            <g transform={`rotate(${sw} 17 -7)`}>
+              <path className="pose-bell" d="M14.6 -3 C14.6 -6 15.6 -7.4 17 -7.4 C18.4 -7.4 19.4 -6 19.4 -3 L20.2 -1.8 H13.8 Z" />
+              <circle className="pose-bell" cx="17" cy="-1.1" r="0.8" />
+            </g>
+          </>
+        ),
+      };
+    },
+  },
   // Raise, swing, strike (sparks), rebound: two strikes in about 1.5 s.
   edit: {
     n: 6,

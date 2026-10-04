@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 
-import { ArtDefs, Citadel, Figure, FigureIcon, Gatehouse, HOLLOWMERE_TOP, Hollowmere, RoomLight, Torch, TypeIcon, WildsForest, placeY } from './castleArt.jsx';
+import { ArtDefs, Citadel, Figure, FigureIcon, Gatehouse, HOLLOWMERE_H, HOLLOWMERE_TOP, Hollowmere, RoomLight, Sept, Torch, TypeIcon, WildsForest, placeY } from './castleArt.jsx';
 import { describeUnit } from './castleDescribe.js';
 import { HeraldPose, KNIGHT_WORK_BANNER, POSE_VERBS, RavenPose, ScoutPose, ScribePose, WizardPose, WorkerPose } from './castlePoses.jsx';
 import { DOT, FADE_MS, FROST_H, HOP_MS, RAVEN_R, RUN_KINDS, SLIDE_MS, W, WILDS_H, keyframes, runSpot, lastTrailKey, layout, newPlaces, perchX, placeUnits, planWalk, positionAt, replan, totalMs, waypoint } from './castleMotion.js';
@@ -349,6 +349,43 @@ function Gate({ L, live, leavingRef, generation, state, reduce }) {
       {torchSpots(L).map((x) => (
         <Torch key={x} x={x} y={L.wallBottom} lit={lit} frame={reduce ? 0 : frame} />
       ))}
+    </g>
+  );
+}
+
+/** What the Sept says under its name (#186): how many commits wait for a push, or why it knows nothing. */
+function septSub(git) {
+  if (!git?.repo) return git?.reason === 'none' ? 'no repository' : git?.reason === 'pending' ? 'reading .git' : '.git not readable';
+  if (git.unborn) return 'no commits yet';
+  if (git.ahead === 0) return 'all pushed';
+  if (typeof git.ahead === 'number') return `${git.ahead} not pushed`;
+  return git.branch ? 'not pushed: unknown' : 'detached HEAD';
+}
+
+/**
+ * The Sept (#186): its drawing, name and state, and a hover title with the
+ * branch, the count and its latest git or gh command. Its bell swings while
+ * a push its unit made is running, on the shared flip-book, which runs then
+ * anyway for the unit's own act.
+ */
+function SeptPlace({ L, state, reduce }) {
+  const git = state?.sept || null;
+  const ringing = (state?.units || []).some((u) => u.room === 'sept' && u.last?.verb === 'push' && u.last.endAt === null);
+  const frame = useFlipbook(ringing && !reduce);
+  const last = git?.last ? `\nLatest: ${git.last.summary || git.last.act}${git.last.verdict ? ` (${git.last.verdict})` : git.last.endAt === null ? ' (running)' : ''}` : '';
+  const alarm = git?.alarm ? `\nAlarm: ${git.alarm.summary || 'a git command'} failed, exit code ${git.alarm.exitCode}` : '';
+  const branch = git?.repo ? (git.branch ? `Branch ${git.branch}` : `Detached at ${git.detached}`) : '';
+  const cx = L.road.sept;
+  return (
+    <g className={`castle-place castle-sept${git?.alarm ? ' alarm' : ''}`}>
+      <title>{`The Sept: git and GitHub work${branch ? `\n${branch}` : ''}\n${septSub(git)}${last}${alarm}`}</title>
+      <Sept box={L.septBox} git={git} ringing={ringing} frame={reduce ? 0 : frame} />
+      <text className="place-label" x={cx} y={L.septBox.y - 34}>
+        The Sept{git?.alarm ? ' · !' : ''}
+      </text>
+      <text className="place-sub" x={cx} y={L.septBox.y - 14}>
+        {septSub(git)}
+      </text>
     </g>
   );
 }
@@ -887,6 +924,8 @@ export default function CastleStage({ map, state, generation, selected, onSelect
       <rect className="castle-ground" x={0} y={L.wallBottom} width={W} height={L.H - L.wallBottom} />
       <path className="castle-road" d={`M${L.gate.x - 34} ${L.wallBottom} L${L.gate.x - 46} ${L.H} L${L.gate.x + 46} ${L.H} L${L.gate.x + 34} ${L.wallBottom} Z`} />
       <path className="castle-fork" d={`M${L.road.west} ${L.villageBox.y + 30} V${L.road.y} H${L.road.east} V${L.outsideBox.y + 30}`} />
+      {/* The Sept's spur (#186): off the west road, straight up to its door. */}
+      <path className="castle-fork" d={`M${L.road.sept} ${L.road.y} V${L.septStand.y + 20}`} />
 
       {/* The Wilds (#172): the forest north of the Frostwall, where Raiders come from. */}
       <g className="castle-wilds" aria-label="The Wilds, beyond the Frostwall">
@@ -906,16 +945,19 @@ export default function CastleStage({ map, state, generation, selected, onSelect
         onClick={() => select('village')}
         onKeyDown={keySelect('village')}
       >
-        <rect x={0} y={WILDS_H + FROST_H} width={L.wallX - 6} height={L.H - WILDS_H - FROST_H} className="band-fill" />
+        {/* Its half of the west band: the Sept has the lower half (#186). */}
+        <rect x={0} y={WILDS_H + FROST_H} width={L.wallX - 6} height={Math.max(0, L.septBox.y - 50 - WILDS_H - FROST_H)} className="band-fill" />
         <Hollowmere box={L.hollowmereBox} count={state?.village?.count ?? 0} />
         {/* Its name just above its roofs, wherever the drawing's fit puts them. */}
-        <text className="place-label" x={L.road.west} y={placeY(L.hollowmereBox, HOLLOWMERE_TOP) - 34}>
+        <text className="place-label" x={L.road.sept} y={placeY(L.hollowmereBox, HOLLOWMERE_TOP, HOLLOWMERE_H) - 34}>
           Hollowmere · {state?.village?.count ?? 0}
         </text>
-        <text className="place-sub" x={L.road.west} y={placeY(L.hollowmereBox, HOLLOWMERE_TOP) - 14}>
+        <text className="place-sub" x={L.road.sept} y={placeY(L.hollowmereBox, HOLLOWMERE_TOP, HOLLOWMERE_H) - 14}>
           unclaimed files
         </text>
       </g>
+
+      <SeptPlace L={L} state={state} reduce={reduce} />
 
       {/* The Citadel (#183): the beacon tower east of the keep, for files outside the project (home, Claude's configuration, other projects). */}
       <g

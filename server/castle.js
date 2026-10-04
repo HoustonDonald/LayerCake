@@ -33,7 +33,8 @@ import { isInsideDir, projectSlug, samePathKey } from './paths.js';
 import { liveFrom } from './session-routes.js';
 import { discoverSessions, getReader, liveSessions, readSubagentMeta, subagentFiles } from './sessions.js';
 import { SHELL_TOOLS, SubagentReader } from './transcript.js';
-import { ROOM_TYPES, classifyCommand, draftPrompt, loadMap, locate, locateFolder, testedBy } from './castlemap.js';
+import { ROOM_TYPES, classifyCommand, draftPrompt, gitAct, loadMap, locate, locateFolder, testedBy } from './castlemap.js';
+import { readGitState } from './gitstate.js';
 
 /**
  * Every time window, scaled for the smoke test only (LAYERCAKE_CASTLE_TIME_SCALE,
@@ -71,6 +72,8 @@ const MAX_LISTED = 200;
 const TICK_MS = 1000;
 /** Sessions are re-picked every 5 s (every second in smoke, whose windows are scaled down). */
 const SELECT_EVERY_TICKS = Math.max(1, Math.round(5 * SCALE));
+/** How often the Sept re-reads .git (#186): every other tick, about 2 s. */
+const GIT_EVERY_TICKS = 2;
 const FLUSH_MS = 250;
 const MAX_CACHE = 20_000;
 /** File names the fold remembers for name matching (#177); past it, new names are not indexed. */
@@ -117,7 +120,7 @@ export const ROOM_STATES = [
 ];
 
 export const UNIT_KINDS = [
-  { kind: 'mason', letter: 'M', label: 'Mason', rule: `A session. Walks the corridors to the room of its latest tool call, through each room it worked in on the way, in order, and there acts the call out: hammers for an edit, lays a stone for a write, reads a scroll, swings a lantern to search, turns a crank for a shell command, while the call runs and for at least ${secs(WINDOWS.poseMinMs)}. Rests once ${secs(WINDOWS.restMs)} pass with no call or compaction running; walks out of the gate when the session ends.` },
+  { kind: 'mason', letter: 'M', label: 'Mason', rule: `A session. Walks the corridors to the room of its latest tool call, through each room it worked in on the way, in order, and there acts the call out: hammers for an edit, lays a stone for a write, reads a scroll, swings a lantern to search, turns a crank for a shell command, while the call runs and for at least ${secs(WINDOWS.poseMinMs)}. A git or gh command takes it to the Sept, where a commit lights a candle, a push rings the bell and a status, log or diff reads the ledger. Rests once ${secs(WINDOWS.restMs)} pass with no call or compaction running; walks out of the gate when the session ends.` },
   { kind: 'knight', letter: 'K', label: 'Knight', rule: 'A subagent, from its start to its stop: enters by the gate, walks to the room of each tool call and acts it out as a Mason does (its banner in its other hand), and walks out of the gate when it stops.' },
   { kind: 'wizard', letter: 'W', label: 'Wizard', rule: "A skill Claude invoked, beside the unit that called it, following it, until that unit's turn ends or it calls another skill; it sparkles while that unit acts out a call. A skill you type as /name is not seen." },
   { kind: 'raven', letter: 'R', label: 'Raven', rule: "An MCP tool call, on a disc ringed in its session's colour: flies up to the wall above the first Integrations room (above the gate when there is none), dropping feathers on the way, beats its wings there while the call runs, and flies back when it returns." },
@@ -131,12 +134,13 @@ export const UNIT_KINDS = [
 export const CASTLE_RULES = [
   'Only real events move anything: hooks from sessions LayerCake started, and the transcripts of the others. When nothing is known, the castle shows less.',
   "A file's room comes from castle.json's patterns, else the built-in ones; a file no room claims is in Hollowmere, the village west of the keep, and a file outside the project (the home folder, Claude's configuration, other projects) goes to the Citadel, east of the keep, and is counted apart. Both are reached through the gate, along the road that forks in front of it.",
-  'A shell call is a test, build or migration run when a segment of its command starts with a rule\'s words. A run lights the room its rule names, else the first room of its type (Tests, Build, Database). Any other shell call works in the rooms of the project files its command names (only names a room claims count), and one that names none moves no one and lights nothing. A run passes or fails by its exit code, so `npm test | tail` reads as the exit code of tail. A run started in the background, or ending with no exit code (refused before it ran, timed out), has no verdict.',
+  'A shell call is a test, build or migration run when a segment of its command starts with a rule\'s words. A run lights the room its rule names, else the first room of its type (Tests, Build, Database). Any other shell call works in the rooms of the project files its command names (only names a room claims count), and one that names none moves no one and lights nothing; a git or gh command goes to the Sept instead. A run passes or fails by its exit code, so `npm test | tail` reads as the exit code of tail. A run started in the background, or ending with no exit code (refused before it ran, timed out), has no verdict.',
   'A run judges every room with unproven changes (the scaffolded ones): a pass takes their scaffolding down, a failure raises their Alarm, and a failure with none to judge raises it in the run\'s own room.',
   `No run can prove a ${ROOM_TYPES.filter((t) => t.provable === false).map((t) => t.label).join(' or ')} room: a change there puts up no scaffolding, no run judges it, and it has no thrash. A failed change there is still an Alarm.`,
   'A call that was denied, interrupted, rejected, or refused by Claude Code before it ran has no verdict: it is never an Alarm. From a transcript, an error counts as a failure only with evidence the tool ran (an exit code, or a system error code such as EACCES).',
   'Heat: read 1, search 1, shell 2, edit 3, create 4, halving every ' + secs(WINDOWS.heatHalfLifeMs) + '. It sets brightness within a state, never the state.',
   "The gate's portcullis is up and the torches on the front wall are lit while any session in the castle is running, and until the last Mason or Knight has walked out; then it drops and they go out.",
+  "The Sept, below Hollowmere in the west, is where git and GitHub CLI work is done: a shell call whose command starts with git or gh walks its unit there, and the rooms of files it names still light. Its banner shows the branch and a window lights for each commit not yet on the branch's remote, both read from the project's .git folder as files (git is never run); with no .git, or one that cannot be read, it stands unlit. A git or gh command that fails with an exit code raises its Alarm until a later one succeeds.",
 ];
 
 const WEIGHT = { read: 1, search: 1, shell: 2, edit: 3, create: 4 };
@@ -339,6 +343,8 @@ export function fold(events, map, locateCall) {
   const outside = new Map();
   const log = [];
   const sessions = new Map();
+  // The Sept (#186): its Alarm and the latest git or gh command, from events.
+  const sept = { alarm: null, last: null };
   let changedMapAt = null;
 
   const session = (e) => {
@@ -428,8 +434,9 @@ export function fold(events, map, locateCall) {
       caller.lastCallAt = e.at;
       // What it is doing, for the page's hover card: its latest call, in the one line the log shows.
       // Its verb is what the unit acts out (#163): served, so the page keeps no copy of verbOf.
-      caller.last = { id: e.toolUseId || e.key, tool: e.tool || null, verb, summary: e.summary || '', where: loc.label || null, at: e.at, endAt: null };
-      const to = loc.rooms.length ? loc.rooms[0] : loc.village.length ? 'village' : loc.outside.length ? 'outside' : null;
+      caller.last = { id: e.toolUseId || e.key, tool: e.tool || null, verb: loc.git || verb, summary: e.summary || '', where: loc.label || null, at: e.at, endAt: null };
+      const to = loc.git ? 'sept' : loc.rooms.length ? loc.rooms[0] : loc.village.length ? 'village' : loc.outside.length ? 'outside' : null;
+      if (loc.git) sept.last = { id: e.toolUseId || e.key, act: loc.git, summary: e.summary || '', at: e.at, endAt: null, verdict: null, sessionId: e.sessionId };
       // The trail (#161): each room change, keyed by the call that caused it
       // (the same key from either source, so a refold gives the same ids).
       // Consecutive calls in one room are one visit.
@@ -488,6 +495,15 @@ export function fold(events, map, locateCall) {
       entry.where = loc.label;
       entry.verdict = verdictText(e.verdict);
       const v = e.verdict;
+      if (loc.git) {
+        // The Sept's Alarm (#186): a git or gh command that failed with an
+        // exit code (a rejected push, a merge with conflicts) raises it, a
+        // later one that succeeds clears it, and one with no verdict (denied,
+        // interrupted, refused) does neither, as for every other call.
+        if (v?.ok === false && v.exitCode != null) sept.alarm = { summary: e.summary || '', exitCode: v.exitCode, at: e.at, sessionId: e.sessionId };
+        else if (v?.ok === true) sept.alarm = null;
+        if (sept.last?.id === e.toolUseId) sept.last = { ...sept.last, endAt: e.at, verdict: entry.verdict };
+      }
       if (v?.ok === true) {
         for (const id of loc.rooms) {
           const r = rooms.get(id);
@@ -625,6 +641,7 @@ export function fold(events, map, locateCall) {
     changedMapAt,
     village: { count: villageList.length, recent: villageList.slice(0, MAX_LISTED) },
     outside: { count: outsideList.length, recent: outsideList.slice(0, MAX_LISTED) },
+    sept,
   };
 }
 
@@ -677,6 +694,8 @@ class Castle {
     this.unsubscribe = null;
     this.folded = null;
     this.subUnknown = {};
+    this.gitState = null;
+    this.gitReading = null;
   }
 
   /** Loads the map and picks and backfills the sessions, once (single flight). */
@@ -738,6 +757,21 @@ class Castle {
         this.ticks += 1;
         if (this.ticks % SELECT_EVERY_TICKS === 0) await this.select();
         await this.refreshReaders(false);
+        // The Sept's branch and count (#186): .git read as files, cheap when
+        // nothing changed (each file is re-read only when its stat does). Not
+        // awaited: on a share that is down a read waits out its 3 s budget in
+        // the share gate (measured, 3,005 ms), and the frames must not wait
+        // with it. A later tick shows what it found.
+        if (!this.gitReading && (this.ticks % GIT_EVERY_TICKS === 0 || !this.gitState)) {
+          this.gitReading = readGitState(this.projectDir)
+            .then((state) => {
+              this.gitState = state;
+            })
+            .catch(() => {})
+            .finally(() => {
+              this.gitReading = null;
+            });
+        }
         this.recompute();
       } catch {
         /* a failed tick is retried by the next one */
@@ -903,7 +937,12 @@ class Castle {
         if (loc.where === 'room') for (const id of loc.rooms) if (!out.rooms.includes(id)) out.rooms.push(id);
       }
       const names = out.rooms.map((id) => map.rooms.find((r) => r.id === id)?.name || id);
-      out.label = names.length ? `shell in ${names.join(', ')}` : 'shell';
+      // Git and GitHub CLI work is done at the Sept (#186, owner decisions
+      // 2026-10-02): the rooms of the files it names still light, and its
+      // unit walks to the Sept, where it acts out `out.git`.
+      out.git = gitAct(e.targets?.heads || []);
+      if (out.git) out.label = names.length ? `git at the Sept (${names.join(', ')})` : 'git at the Sept';
+      else out.label = names.length ? `shell in ${names.join(', ')}` : 'shell';
       return out;
     }
     if (!['read', 'search', 'edit', 'create'].includes(verb)) return out;
@@ -1114,6 +1153,10 @@ class Castle {
       sessions,
       village: { count: folded.village.count, recent: folded.village.recent.slice(0, 5) },
       outside: { count: folded.outside.count },
+      // The Sept (#186): the repository's state from .git (a value, never a
+      // throw: none or unreadable just shows less), its Alarm and its latest
+      // command from events.
+      sept: { ...(this.gitState || { repo: false, reason: 'pending' }), alarm: folded.sept.alarm, last: folded.sept.last },
       runs: folded.runs.slice(-5).map((r) => ({ id: r.id, kind: r.kind, summary: r.summary, at: r.at, endAt: r.endAt, ok: r.ok, exitCode: r.exitCode, noVerdict: r.noVerdict || null, judged: r.judged, sessionId: r.sessionId })),
       summary: { sessions: liveSet.size, workers: units.filter((u) => u.kind === 'mason' || u.kind === 'knight').length, alarms, busy },
       // Oldest events past MAX_EVENTS, not folded (said on the page).

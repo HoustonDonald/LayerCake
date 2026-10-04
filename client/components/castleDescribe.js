@@ -27,7 +27,7 @@ function namedBy(state, sessionId) {
   return by === 'claude-code' ? 'named by Claude Code' : by === 'you' ? 'your title' : null;
 }
 
-const PLACES = { gate: 'at the gate', 'beyond-gate': 'down the road', village: 'in Hollowmere', wilds: 'in the Wilds', outside: 'at the Citadel', perch: 'on the Frostwall' };
+const PLACES = { gate: 'at the gate', 'beyond-gate': 'down the road', village: 'in Hollowmere', wilds: 'in the Wilds', outside: 'at the Citadel', sept: 'at the Sept', perch: 'on the Frostwall' };
 
 function placeName(map, room) {
   if (!room) return null;

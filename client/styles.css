@@ -2486,6 +2486,27 @@ pre.code {
 .beacon-glow { fill: url(#castle-beacon-glow); }
 .beacon-flame { fill: #ff9d3b; }
 .beacon-core { fill: #ffe7a3; }
+
+/* The Sept (#186): the seven-sided hall for git and GitHub work, below Hollowmere. A window lights for each
+   commit not yet pushed; its banner names the branch; unlit with no repository; an Alarm on a failed command. */
+.castle-sept { pointer-events: auto; cursor: default; }
+.castle-sept .place-label, .castle-sept .place-sub { pointer-events: none; }
+.sept-side { fill: #323a46; }
+.sept-face { fill: #3e4652; }
+.sept-roof { fill: #4a5361; }
+.sept-tower { fill: #465060; }
+.sept-spire { fill: #5a6475; }
+.sept-belfry, .sept-door { fill: #0b0f13; }
+.sept-bell { fill: #e8c65a; }
+.sept.unlit .sept-bell { fill: #6a7380; }
+.sept-window { fill: #10151d; }
+.sept-window.on { fill: var(--castle-construction-glow); fill-opacity: 0.9; }
+.sept-banner path { fill: #5a2430; stroke: #8a3a48; stroke-width: 2; }
+.sept-banner text { fill: #f3e6c8; font-size: 13px; font-weight: 700; text-anchor: middle; }
+.sept-alarm-glow { fill: var(--castle-alarm-glow); opacity: 0.22; }
+.sept-alarm-mark circle { fill: var(--castle-alarm-glow); }
+.sept-alarm-mark text { fill: #0f1319; font-size: 18px; font-weight: 800; text-anchor: middle; }
+.castle-sept.alarm .place-label { fill: var(--castle-alarm-glow); }
 .tree-crown { fill: #1c2a28; }
 .tree-trunk { fill: #1a2020; }
 
@@ -2724,6 +2745,10 @@ pre.code {
 .pose-eye { fill: #0f1319; }
 .pose-sound { fill: none; stroke: currentColor; stroke-width: 1; stroke-linecap: round; opacity: 0.8; }
 .pose-sparkle { fill: #c3a6ff; }
+.pose-taper { fill: none; stroke: #efe2bf; stroke-width: 0.9; stroke-linecap: round; }
+.pose-candle { fill: #efe2bf; }
+.pose-rope { fill: none; stroke: #efe2bf; stroke-width: 0.9; }
+.pose-bell { fill: #e8c65a; }
 .pose-quill { fill: #efe2bf; }
 
 .castle-unit.resting {
