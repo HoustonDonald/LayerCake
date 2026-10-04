@@ -41,8 +41,6 @@ import { buildClientIfStale } from './build-if-stale.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-/** The page's remembered-folder key (client/App.jsx LAST_KEY): set, the page scans that folder on load. */
-const LAST_DIR_KEY = 'claude-explorer.lastDir';
 
 /** A minimal Chrome DevTools Protocol client over Node's own WebSocket: send a command, get its result. */
 function devtools(url) {
@@ -203,7 +201,11 @@ export async function startSim({ project, port = 5190 }) {
       }
       if (!sessionId) return false;
       const run = async (expression) => (await cdp.send('Runtime.evaluate', { expression, returnByValue: true }, sessionId))?.result?.value;
-      await run(`localStorage.setItem(${JSON.stringify(LAST_DIR_KEY)}, ${JSON.stringify(project)}); location.reload(); true`).catch(() => null);
+      // The page scans the remembered folder on load, and remembers it in the
+      // server's preferences (#198: each run is a new origin, so not in
+      // localStorage, which this used to set, and the page no longer reads, #202).
+      await post('/api/prefs', { lastDir: project });
+      await run('location.reload(); true').catch(() => null);
       while (Date.now() < until) {
         await sleep(500);
         // The reload scans the remembered folder; then the Castle tab.
