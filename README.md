@@ -90,7 +90,9 @@ data and its window's browser profile.
   so once LayerCake is closed Claude Code shows a hook error for each tool call. They are harmless:
   Claude does not see them and no usage is spent. Open LayerCake again, or start new sessions
   yourself.
-- **Found a bug?** Open an issue. For a security problem, see [SECURITY.md](SECURITY.md) instead.
+- **Found a bug?** Open an issue with the Bug report form. Support is best effort, from one person;
+  [SUPPORT.md](SUPPORT.md) says what is supported and how to contribute. For a security problem,
+  see [SECURITY.md](SECURITY.md) instead.
 
 ## Run from source
 
@@ -118,5 +120,6 @@ The other commands are listed in the [reference](docs/reference.md#requirements)
 ## More
 
 - [Full reference](docs/reference.md): everything it scans, every view, and every known limit.
+- [Support](SUPPORT.md): what to expect, what is supported, and how to contribute.
 - [Security policy](SECURITY.md): how to report a vulnerability.
 - [MIT License](LICENSE).

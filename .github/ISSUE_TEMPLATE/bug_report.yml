@@ -1,0 +1,47 @@
+name: Bug report
+description: Something in LayerCake does not work as the README or the reference says.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. LayerCake is maintained by one person, best effort (see SUPPORT.md).
+        **A security problem does not belong here:** report it privately, as SECURITY.md says.
+        Before posting, remove anything private from what you paste: paths, project names, tokens.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, step by step, and what you saw. Screenshots help.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: layercake
+    attributes:
+      label: LayerCake version
+      description: "On LayerCake.exe: right-click, Properties, Details tab, Product version. From source: the commit (git rev-parse --short HEAD)."
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: Run winver.
+      placeholder: "Windows 11 24H2"
+    validations:
+      required: true
+  - type: input
+    id: claude
+    attributes:
+      label: Claude Code version
+      description: Run claude --version.
+      placeholder: "2.1.284"
+    validations:
+      required: true

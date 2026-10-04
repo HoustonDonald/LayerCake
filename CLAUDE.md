@@ -24,7 +24,10 @@ a double-click does. `docs/reference.md` is the
 user-facing spec and is unusually complete, so read it before changing scan or write behavior, and
 update it in the same change. `README.md` is the short front page for someone arriving on GitHub:
 download, first run, what LayerCake does on their machine, removal. Keep it short and keep its
-claims true; when a change alters one of them, update both.
+claims true; when a change alters one of them, update both. `SUPPORT.md` sets the support level
+(best effort, owner decision 2026-10-04), the supported setups and the contribution rule (an issue
+agreed before a pull request); its supported Windows and Claude Code versions repeat the README's,
+so change them together. The bug-report form is `.github/ISSUE_TEMPLATE/bug_report.yml`.
 
 `HANDOFF.md` holds transient working state: what was just built, what is open, and what to do next.
 It is disposable and goes stale; this file and `docs/reference.md` win where they disagree. It is
