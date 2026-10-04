@@ -21,7 +21,7 @@ and shows you:
 - **The Castle:** a live picture of Claude at work, where each part of your project is a room that
   lights up as Claude reads, edits and tests it.
 
-![The Castle: the project's rooms inside a keep, lit by what Claude is working on](docs/images/castle.png)
+![The Castle, animated: two Claude sessions at work in a demo project, their workers walking between rooms that light up as Claude reads, edits and tests the files in them, and one room raising an alarm](docs/images/castle.gif)
 
 LayerCake runs on Windows 11; Windows 10 should work but has not been tested. It is an independent
 project, not made by or affiliated with Anthropic.
