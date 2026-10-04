@@ -143,9 +143,10 @@ function registerScan(lineage) {
  * memoryStatic below); `key` is this run's page key (newRunKey in appdata.js,
  * #189, #198), which every /api request must present. The port is not needed
  * here: a server may bind port 0, and the guards read the port each request
- * arrived on (portOf in security.js).
+ * arrived on (portOf in security.js). `ingest` is the reporting listener's
+ * state from listenIngest below (#200): launches need it.
  */
-export function createApp({ staticFiles, key }) {
+export function createApp({ staticFiles, key, ingest = { port: null, error: 'not started' } }) {
   if (!/^[0-9a-f]{64}$/.test(String(key || ''))) throw new Error('createApp needs the page key (newRunKey in appdata.js)');
   // Where Claude Code's home is, for the session routes before the first scan
   // (#64). In the background: a home on a slow share must not delay startup.
@@ -612,7 +613,16 @@ export function createApp({ staticFiles, key }) {
     if (!scan) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan first.', code: 'ESCANGONE' });
     try {
       const screen = req.body?.screen && typeof req.body.screen === 'object' ? req.body.screen : null;
-      return res.json(await launchClaude({ dir: scan.lineage.projectDir, port: portOf(req), screen }));
+      // Reports go to the reporting listener's fixed port, not this page's
+      // port, which changes every run (#200): a session must still reach the
+      // next run, and must never post to a port nobody now holds for it.
+      if (!ingest.port) {
+        return res.status(409).json({
+          message: `Start Claude here is unavailable: LayerCake could not listen for its sessions' reports on port ${INGEST_PORT} (${ingest.error}). Another program, or LayerCake running for another person signed in to this computer, may hold it. Set LAYERCAKE_INGEST_PORT to a free port and restart LayerCake.`,
+          code: 'ENOINGEST',
+        });
+      }
+      return res.json(await launchClaude({ dir: scan.lineage.projectDir, port: ingest.port, screen }));
     } catch (err) {
       return sendError(res, err);
     }
@@ -620,10 +630,8 @@ export function createApp({ staticFiles, key }) {
 
   app.get('/api/launches', (req, res) => res.json({ launches: listLaunches() }));
 
-  // Status line and hook posts from sessions LayerCake launched. Not under
-  // /api: the callers are Claude Code processes, not our page, so they carry a
-  // per-launch secret instead of the page token (see ingest.js).
-  registerIngestRoutes(app);
+  // Status line and hook posts from sessions LayerCake launched are answered
+  // by the reporting listener (createIngestApp below, #200), not here.
 
   // An /api path no route above answered is a 404, in JSON. Without this the
   // HTML fallback below answered it with the app page and a 200, so a removed
@@ -663,7 +671,6 @@ export function createApp({ staticFiles, key }) {
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
     if (res.headersSent) return res.end();
-    if (req.path.startsWith('/ingest/')) return res.status(204).end();
     const status = Number.isInteger(err?.status) && err.status >= 400 && err.status < 500 ? err.status : 500;
     return res.status(status).json({
       message: status === 413 ? 'The request body is too large.' : status < 500 ? 'The request body could not be read.' : 'The request failed.',
@@ -679,6 +686,51 @@ export function createApp({ staticFiles, key }) {
  * Callers decide what a failure means: a terminal prints guidance, the single
  * executable has no terminal and shows a window instead.
  */
+/**
+ * The reporting listener's port (#200): fixed, so a session launched by one run
+ * still reports to the next, whose page is on a new port (#198). 5177, not the
+ * dev server's 5178. LAYERCAKE_INGEST_PORT moves it; 0 lets Windows pick, for
+ * test servers beside a running LayerCake.
+ */
+export const INGEST_PORT = (() => {
+  const raw = process.env.LAYERCAKE_INGEST_PORT;
+  const n = raw === undefined || raw === '' ? 5177 : Number(raw);
+  return Number.isInteger(n) && n >= 0 && n < 65536 ? n : 5177;
+})();
+
+/**
+ * Status line and hook posts from sessions LayerCake launched, on a listener of
+ * their own (#200). Not /api: the callers are Claude Code processes, not our
+ * page, so they carry a per-launch secret instead of the page key (ingest.js).
+ * The Host guard first, as everywhere; nothing else is served here.
+ */
+export function createIngestApp() {
+  const app = express();
+  app.use(hostGuard());
+  app.use(express.json({ limit: '8mb' }));
+  registerIngestRoutes(app);
+  app.use((req, res) => res.status(404).end());
+  // A malformed or oversized body is still answered as every hook post is:
+  // an empty 204 (#196), so a reporting failure never becomes output.
+  // eslint-disable-next-line no-unused-vars
+  app.use((err, req, res, next) => (res.headersSent ? res.end() : res.status(204).end()));
+  return app;
+}
+
+/**
+ * Starts the reporting listener: { server, port } once it listens, or
+ * { port: null, error } when it cannot (the port held by something else, most
+ * likely), which disables Start Claude here and nothing else.
+ */
+export async function listenIngest(port = INGEST_PORT) {
+  try {
+    const server = await listen(createIngestApp(), port);
+    return { server, port: server.address().port, error: null };
+  } catch (err) {
+    return { server: null, port: null, error: err.code || err.message };
+  }
+}
+
 export function listen(app, port) {
   return new Promise((resolve, reject) => {
     const server = app.listen(port, HOST);

@@ -93,6 +93,7 @@ every caller; `.claude.json` stays put (measured). Smoke sets `CLAUDE_CONFIG_DIR
 config home, so its user level is never the real one; the #64 checks run a server of their own
 without it (`smoke-confighome.mjs`). More exist for smoke only:
 `LAYERCAKE_LAUNCH_DRY_RUN=1` (launch builds its argv and settings but starts nothing),
+`LAYERCAKE_INGEST_PORT` (the reporting listener's port, default 5177; 0 for any free port, #200),
 `LAYERCAKE_CLAUDE_CMD` (a JSON array replacing `claude` for AI summaries, pointed at
 `scripts/smoke-claude-stub.mjs`, so no usage is ever spent testing),
 `LAYERCAKE_REPORT_WINDOW_MS` (how long a launched session counts as running after its last report;
@@ -362,10 +363,16 @@ transcript also records as an error a call Claude Code refused before running it
 error is a failure only with an exit code or a system error code (#164, found by the real-session
 probe), and a run with no exit code has no verdict. Its rules ship with its data (`ROOM_STATES`, `UNIT_KINDS`, `CASTLE_RULES`), as health.js does.
 
-**Ingest is outside `/api` and guards itself.** Callers are Claude Code processes, so there is no
-page token: a per-launch secret in the path (constant-time compare), no `Origin` header allowed,
-and the global Host guard. Launch records, secret included, are kept in app data so a session keeps
-reporting across a LayerCake restart; the settings file that Claude Code reads holds the same
+**Ingest is a listener of its own and guards itself** (#200). It answers only the report routes,
+on a fixed port (`INGEST_PORT` in app.js: 5177, `LAYERCAKE_INGEST_PORT` moves it, 0 lets Windows
+pick, which smoke, castle-sim and the exe checks use beside a running LayerCake), never on the
+page's port, which changes every run (#198): a launched session's settings name the port once, and
+must reach the next run. If that port is held by something else, `/api/launch` refuses with
+ENOINGEST and the rest works. While LayerCake is closed and a launched session still runs, another
+signed-in user could take that port and receive its reports: the 1.0 baseline, stated rather than
+closed. Callers are Claude Code processes, so there is no page key: a per-launch secret in the path
+(constant-time compare), no `Origin` header allowed, and the Host guard. Launch records, secret
+included, are kept in app data so a session keeps reporting across a LayerCake restart; the settings file that Claude Code reads holds the same
 secret under the same user ACL. The secret is also on `curl.exe`'s command line at every
 status-line refresh, because the status-line command embeds the ingest URL. Only same-user
 processes can read that, and they can already read the file (#21).

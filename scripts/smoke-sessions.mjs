@@ -648,18 +648,21 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
 
   const settings = JSON.parse(await fs.readFile(l.settingsPath, 'utf8'));
   const hookUrl = settings.hooks?.Notification?.[0]?.hooks?.[0]?.url || '';
-  const m = new RegExp(`^http://127\\.0\\.0\\.1:${port}/ingest/([0-9a-f]{16})/([0-9a-f]{48})/hook$`).exec(hookUrl);
-  check('hooks post to this server with a launch id and secret', Boolean(m), hookUrl);
+  // To the reporting listener's port, never the page's, which changes every
+  // run (#200): a session must still reach the next run.
+  const m = new RegExp(`^http://127\\.0\\.0\\.1:(?!${port}/)(\\d+)/ingest/([0-9a-f]{16})/([0-9a-f]{48})/hook$`).exec(hookUrl);
+  check('hooks post to the reporting listener, not the page\'s port, with a launch id and secret (#200)', Boolean(m), hookUrl);
+  const ingestBase = m ? `http://127.0.0.1:${m[1]}` : base;
   check('every hook is an http hook with a short timeout',
     Object.values(settings.hooks).every((groups) => groups[0].hooks[0].type === 'http' && groups[0].hooks[0].timeout === 3));
   check('the status line command is curl.exe posting to this launch',
-    settings.statusLine.type === 'command' && /^curl\.exe /.test(settings.statusLine.command) && settings.statusLine.command.includes(`/ingest/${m?.[1]}/`));
+    settings.statusLine.type === 'command' && /^curl\.exe /.test(settings.statusLine.command) && settings.statusLine.command.includes(`127.0.0.1:${m?.[1]}/ingest/${m?.[2]}/`));
   check('the status line re-runs on a timer shorter than the report window (#31)',
     Number.isInteger(settings.statusLine.refreshInterval) && settings.statusLine.refreshInterval >= 1 &&
       settings.statusLine.refreshInterval * 1000 < 45_000, `refreshInterval ${settings.statusLine.refreshInterval}`);
 
-  const [launchId, secret] = m ? [m[1], m[2]] : ['0', '0'];
-  const ingest = (kind, body, headers) => postRaw(base, `/ingest/${launchId}/${secret}/${kind}`, body, headers);
+  const [launchId, secret] = m ? [m[2], m[3]] : ['0', '0'];
+  const ingest = (kind, body, headers) => postRaw(ingestBase, `/ingest/${launchId}/${secret}/${kind}`, body, headers);
   const sid = IDS.onDisk;
 
   // #42: a launch whose status line and hooks never report (disableAllHooks,
@@ -730,8 +733,8 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
   check('a failed tool is counted and no longer running', d.wrapped.running.length === 0 && d.wrapped.toolFailures === 1);
   check('InstructionsLoaded keeps its load reason', d.wrapped.instructionsLoaded.some((i) => i.reason === 'include'));
 
-  check('ingest refuses a wrong secret', (await postRaw(base, `/ingest/${launchId}/${'0'.repeat(48)}/hook`, { session_id: sid })).status === 403);
-  check('ingest refuses an unknown launch', (await postRaw(base, `/ingest/0123456789abcdef/${secret}/hook`, { session_id: sid })).status === 404);
+  check('ingest refuses a wrong secret', (await postRaw(ingestBase, `/ingest/${launchId}/${'0'.repeat(48)}/hook`, { session_id: sid })).status === 403);
+  check('ingest refuses an unknown launch', (await postRaw(ingestBase, `/ingest/0123456789abcdef/${secret}/hook`, { session_id: sid })).status === 404);
   check('ingest refuses anything a browser sent (Origin present)', (await ingest('hook', { session_id: sid }, { Origin: `http://127.0.0.1:${port}` })).status === 403);
   check('ingest refuses a foreign Host', (await ingest('hook', { session_id: sid }, { Host: `rebind.example:${port}` })).status === 403);
 
@@ -781,7 +784,7 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
   // to app data before this server started; its session has a transcript and
   // no pid file, as measured for a real launch.
   const lid = IDS.launched;
-  const prior = (kind, body) => postRaw(base, `/ingest/${PRIOR_LAUNCH.id}/${PRIOR_LAUNCH.secret}/${kind}`, body);
+  const prior = (kind, body) => postRaw(ingestBase, `/ingest/${PRIOR_LAUNCH.id}/${PRIOR_LAUNCH.secret}/${kind}`, body);
   // Past the report window since the server started, so the reason must be
   // the "most likely stopped" one, not "moments ago" (#31, #46).
   const uptime = Date.now() - serverStartedAt;
@@ -869,8 +872,8 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
   // anonymous post on it would revive it, which is the defect (#37).
   await hookVia(ingest, { session_id: l.sessionId, hook_event_name: 'SessionEnd', reason: 'prompt_input_exit' });
   const beforeAnon = await launchesNow();
-  const anon = await postRaw(base, `/ingest/${launchId}/${secret}/hook`, { hook_event_name: 'UserPromptSubmit', prompt: 'who am I' });
-  const anonSl = await postRaw(base, `/ingest/${launchId}/${secret}/statusline`, { session_id: 'not-a-uuid', context_window: { used_percentage: 9 } });
+  const anon = await postRaw(ingestBase, `/ingest/${launchId}/${secret}/hook`, { hook_event_name: 'UserPromptSubmit', prompt: 'who am I' });
+  const anonSl = await postRaw(ingestBase, `/ingest/${launchId}/${secret}/statusline`, { session_id: 'not-a-uuid', context_window: { used_percentage: 9 } });
   const afterAnon = await launchesNow();
   d = await session(sid);
   check('a post without a valid session id is answered but changes nothing',
@@ -884,14 +887,14 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
   // in this run reads it.
   const hostileBody = { toString: null };
   const hostileId = '77777777-7777-4777-8777-777777777777';
-  const h1 = await postRaw(base, `/ingest/${launchId}/${secret}/hook`, { session_id: hostileBody, hook_event_name: hostileBody, tool_use_id: hostileBody });
-  const h2 = await postRaw(base, `/ingest/${launchId}/${secret}/hook`, {
+  const h1 = await postRaw(ingestBase, `/ingest/${launchId}/${secret}/hook`, { session_id: hostileBody, hook_event_name: hostileBody, tool_use_id: hostileBody });
+  const h2 = await postRaw(ingestBase, `/ingest/${launchId}/${secret}/hook`, {
     session_id: hostileId, hook_event_name: 'PreToolUse', tool_use_id: hostileBody, tool_name: 'Bash', tool_input: { description: hostileBody, command: hostileBody },
   });
-  const h3 = await postRaw(base, `/ingest/${launchId}/${secret}/hook`, {
+  const h3 = await postRaw(ingestBase, `/ingest/${launchId}/${secret}/hook`, {
     session_id: hostileId, hook_event_name: 'InstructionsLoaded', file_path: hostileBody, load_reason: hostileBody, notification_type: hostileBody,
   });
-  const h4 = await postRaw(base, `/ingest/${launchId}/${secret}/statusline`, {
+  const h4 = await postRaw(ingestBase, `/ingest/${launchId}/${secret}/statusline`, {
     session_id: hostileId, model: { id: hostileBody }, context_window: { used_percentage: hostileBody }, cost: { total_cost_usd: hostileBody }, rate_limits: hostileBody,
   });
   const stillUp = await get(base, '/', {}).catch((e) => ({ status: `request failed: ${e.code || e.message}` }));
@@ -904,7 +907,7 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
   const late = { id: 'decafbaddecafbad', secret: 'b'.repeat(48) };
   await fs.writeFile(path.join(appData, 'launches', `${late.id}.json`),
     JSON.stringify({ ...late, dir: proj, sessionId: fresh, createdAt: '2026-09-02T00:00:00.000Z' }));
-  const lateSl = await postRaw(base, `/ingest/${late.id}/${late.secret}/statusline`, { session_id: fresh, context_window: { used_percentage: 12 } });
+  const lateSl = await postRaw(ingestBase, `/ingest/${late.id}/${late.secret}/statusline`, { session_id: fresh, context_window: { used_percentage: 12 } });
   const lateLaunch = JSON.parse((await get(base, '/api/launches', H)).body).launches.find((x) => x.id === late.id);
   check('a launch record written after startup is read from disk on its first post',
     lateSl.status === 200 && /ctx 12%/.test(lateSl.body) && lateLaunch?.sessionIds.includes(fresh), lateSl.body);
@@ -931,11 +934,11 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
   // on Linux).
   const blockTarget = process.platform === 'win32' ? lateFile : path.dirname(lateFile);
   await fs.chmod(blockTarget, process.platform === 'win32' ? 0o444 : 0o555);
-  await postRaw(base, `/ingest/${late.id}/${late.secret}/statusline`, { session_id: retryId });
+  await postRaw(ingestBase, `/ingest/${late.id}/${late.secret}/statusline`, { session_id: retryId });
   const failedShown = await until(async () =>
     Boolean(JSON.parse((await get(base, '/api/launches', H)).body).launches.find((x) => x.id === late.id)?.persistError));
   await fs.chmod(blockTarget, process.platform === 'win32' ? 0o644 : 0o755);
-  await postRaw(base, `/ingest/${late.id}/${late.secret}/statusline`, { session_id: retryId });
+  await postRaw(ingestBase, `/ingest/${late.id}/${late.secret}/statusline`, { session_id: retryId });
   const recovered = await until(async () => {
     const rec = JSON.parse(await fs.readFile(lateFile, 'utf8'));
     const shown = JSON.parse((await get(base, '/api/launches', H)).body).launches.find((x) => x.id === late.id);
@@ -990,7 +993,7 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
     loaded.path?.length <= 1024 && loaded.reason?.length <= 60 && names.every((k) => k.length <= 60) && names.length <= 64,
     JSON.stringify({ path: loaded.path?.length, reason: loaded.reason?.length, longest: Math.max(...names.map((k) => k.length)), names: names.length }));
   // A malformed body is a value too: still an empty 204.
-  const torn = await fetch(`${base}/ingest/${launchId}/${secret}/hook`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"session_id": "torn' });
+  const torn = await fetch(`${ingestBase}/ingest/${launchId}/${secret}/hook`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"session_id": "torn' });
   const tornBody = await torn.text();
   allEmpty = allEmpty && torn.status === 204 && tornBody.length === 0;
   check('a hook post with a malformed body is answered with an empty 204, no error page (#196)', torn.status === 204 && tornBody === '', `${torn.status} ${tornBody.slice(0, 120)}`);

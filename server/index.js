@@ -11,7 +11,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { HOST, createApp, diskStatic, listen } from './app.js';
+import { HOST, INGEST_PORT, createApp, diskStatic, listen, listenIngest } from './app.js';
 import { newRunKey, writeRunRecord } from './appdata.js';
 import { homeDir, rootState, snapshotRoot } from './paths.js';
 
@@ -31,7 +31,11 @@ if (FIXED !== null && !(Number.isInteger(FIXED) && FIXED > 0 && FIXED < 65536)) 
 // The page key for this run (#189, #198): /api needs it, and the page gets it
 // only from the address printed below or from a launcher's window.
 const key = newRunKey();
-const app = createApp({ staticFiles: diskStatic(PUBLIC_DIR), key });
+// Sessions it launches report on a fixed port of their own (#200), so they
+// reach the next run too. Without it, only Start Claude here is unavailable.
+const ingest = await listenIngest();
+if (!ingest.port) process.stderr.write(`\nReports from launched sessions: port ${INGEST_PORT} unavailable (${ingest.error}); Start Claude here is off.\n`);
+const app = createApp({ staticFiles: diskStatic(PUBLIC_DIR), key, ingest });
 
 let server;
 try {

@@ -280,8 +280,11 @@ async function main() {
   }
 
   const key = newRunKey();
-  const { createApp, listen, memoryStatic } = await import('../server/app.js');
-  const app = createApp({ staticFiles: memoryStatic(embeddedClient()), key });
+  const { createApp, listen, listenIngest, memoryStatic } = await import('../server/app.js');
+  // Sessions it launches report on a fixed port of their own (#200); without
+  // it, only Start Claude here is unavailable, and it says why.
+  const ingest = await listenIngest();
+  const app = createApp({ staticFiles: memoryStatic(embeddedClient()), key, ingest });
   let server;
   try {
     server = await listen(app, fixed ?? 0);

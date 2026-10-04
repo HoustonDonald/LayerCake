@@ -155,11 +155,13 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
   const launched = JSON.parse((await postRaw(base, '/api/launch', { scanId }, H)).body);
   const settings = JSON.parse(await fs.readFile(launched.settingsPath, 'utf8'));
   const m = /\/ingest\/([0-9a-f]{16})\/([0-9a-f]{48})\/hook$/.exec(settings.hooks?.PreToolUse?.[0]?.hooks?.[0]?.url || '');
+  // The reporting listener (#200), as the hook URL names it.
+  const ingestBase = new URL(settings.hooks?.PreToolUse?.[0]?.hooks?.[0]?.url || base).origin;
   const [launchId, secret] = m ? [m[1], m[2]] : ['0', '0'];
   const sid = launched.sessionId;
   let allEmpty = true;
   const hook = async (h) => {
-    const r = await postRaw(base, `/ingest/${launchId}/${secret}/hook`, { session_id: sid, cwd: proj, ...h });
+    const r = await postRaw(ingestBase, `/ingest/${launchId}/${secret}/hook`, { session_id: sid, cwd: proj, ...h });
     allEmpty = allEmpty && r.status === 204 && r.body.length === 0;
     return r;
   };
@@ -169,7 +171,7 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     if (fail !== null) await hook({ hook_event_name: 'PostToolUseFailure', tool_name: tool, tool_use_id: id, tool_input: input, error: fail, ...who });
     else await hook({ hook_event_name: 'PostToolUse', tool_name: tool, tool_use_id: id, tool_input: input, tool_response: response, ...who });
   };
-  const statusline = () => postRaw(base, `/ingest/${launchId}/${secret}/statusline`, { session_id: sid });
+  const statusline = () => postRaw(ingestBase, `/ingest/${launchId}/${secret}/statusline`, { session_id: sid });
   // The launched session keeps reporting, as a real one's status line does
   // every 15 s (smoke's report window is 4 s).
   await statusline();

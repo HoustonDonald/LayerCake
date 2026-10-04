@@ -58,6 +58,9 @@ function freePort() {
 // would otherwise share one, and the loser's server dies of EADDRINUSE while
 // its checks run against the winner's server, fixture and code (#28).
 const PORT = Number(process.env.SMOKE_PORT || (await freePort()));
+// Every server smoke starts reports on a port Windows picks (#200), never the
+// fixed 5177 a running LayerCake holds.
+process.env.LAYERCAKE_INGEST_PORT = '0';
 const REPORT_WINDOW_MS = 4000;
 const CASTLE_TIME_SCALE = 0.05;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -574,6 +577,64 @@ try {
     runA.port > 0 && runB.port > 0 && runA.port !== runB.port && runA.key !== runB.key &&
       runA.record.port === runA.port && runA.record.key === runA.key && runA.record.pid === runA.child.pid && answered === 'ours',
     JSON.stringify({ a: runA.port, b: runB.port, recorded: runA.record.port, answered, out: runA.port ? '' : runA.out.slice(-300) }));
+
+  // --- a launched session reaches the next run (#200) ------------------------
+  // Run C launches a session (a dry run: nothing starts) and stops; run D starts
+  // on a new page port with the same data folder and reporting port. The
+  // session's next report, to the address its settings were given, reaches D.
+  const reportPort = await freePort();
+  const runWith = async (tag, ingestPort = reportPort) => {
+    const dataDir = path.join(smokeDir, 'resume-data');
+    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toUpperCase() !== 'PORT'));
+    Object.assign(env, {
+      LAYERCAKE_APPDATA_DIR: dataDir,
+      LAYERCAKE_SNAPSHOT_DIR: path.join(dataDir, 'snaps'),
+      LAYERCAKE_INGEST_PORT: String(ingestPort),
+      LAYERCAKE_LAUNCH_DRY_RUN: '1',
+      CLAUDE_CONFIG_DIR: configHome,
+      USERPROFILE: fakeHome,
+      HOME: fakeHome,
+      LAYERCAKE_CLAUDE_DATA_DIR: claudeData,
+    });
+    const child = spawn(process.execPath, [path.join(ROOT, 'server', 'index.js')], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    let out = '';
+    child.stdout.setEncoding('utf8').on('data', (c) => (out += c));
+    child.stderr.setEncoding('utf8').on('data', (c) => (out += c));
+    for (let i = 0; i < 200 && !/#t=[0-9a-f]{64}/.test(out); i += 1) await new Promise((r) => setTimeout(r, 50));
+    const m = /http:\/\/127\.0\.0\.1:(\d+)\/#t=([0-9a-f]{64})/.exec(out);
+    return { tag, child, base: m ? `http://127.0.0.1:${m[1]}` : null, headers: { 'X-LayerCake-Token': m?.[2] || '', 'Content-Type': 'application/json' }, out };
+  };
+  const runC = await runWith('c');
+  const cScan = await (await fetch(`${runC.base}/api/scan`, { method: 'POST', headers: runC.headers, body: JSON.stringify({ dir: proj }) })).json().catch(() => ({}));
+  const cLaunch = await (await fetch(`${runC.base}/api/launch`, { method: 'POST', headers: runC.headers, body: JSON.stringify({ scanId: cScan.scanId }) })).json().catch(() => ({}));
+  const cSettings = cLaunch.settingsPath ? JSON.parse(await fs.readFile(cLaunch.settingsPath, 'utf8')) : {};
+  const cHook = cSettings.hooks?.UserPromptSubmit?.[0]?.hooks?.[0]?.url || '';
+  runC.child.kill();
+  await new Promise((r) => runC.child.once('exit', r));
+  const runD = await runWith('d');
+  const posted = cHook ? await fetch(cHook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: cLaunch.sessionId, hook_event_name: 'UserPromptSubmit', prompt: 'after the restart' }) }) : null;
+  const dLaunches = runD.base ? await (await fetch(`${runD.base}/api/launches`, { headers: runD.headers })).json().catch(() => ({})) : {};
+  const heard = (dLaunches.launches || []).find((x) => x.id === cLaunch.launchId);
+  runD.child.kill();
+  check('a session launched by one run still reports to the next, on a new page port, through the fixed reporting port (#200)',
+    cHook.startsWith(`http://127.0.0.1:${reportPort}/ingest/`) && runC.base && runD.base && runC.base !== runD.base &&
+      posted?.status === 204 && Boolean(heard?.lastHookAt),
+    JSON.stringify({ cHook: cHook.replace(/\/[0-9a-f]{48}\//, '/<secret>/'), c: runC.base, d: runD.base, posted: posted?.status, heard: Boolean(heard), launch: cLaunch.message || null }));
+
+  // The reporting port held by something else: Start Claude here refuses, says
+  // why, and writes no launch; everything else works (#200).
+  const holder = net.createServer();
+  await new Promise((r) => holder.listen(0, '127.0.0.1', r));
+  const heldPort = holder.address().port;
+  const runE = await runWith('e', heldPort);
+  const eScan = await (await fetch(`${runE.base}/api/scan`, { method: 'POST', headers: runE.headers, body: JSON.stringify({ dir: proj }) })).json().catch(() => ({}));
+  const eLaunch = await fetch(`${runE.base}/api/launch`, { method: 'POST', headers: runE.headers, body: JSON.stringify({ scanId: eScan.scanId }) });
+  const eBody = await eLaunch.json().catch(() => ({}));
+  runE.child.kill();
+  holder.close();
+  check('with the reporting port held by something else, Start Claude here refuses and says why; the scan still works (#200)',
+    Boolean(eScan.scanId) && eLaunch.status === 409 && eBody.code === 'ENOINGEST' && new RegExp(`port ${heldPort}`).test(eBody.message || ''),
+    JSON.stringify({ scan: Boolean(eScan.scanId), status: eLaunch.status, body: eBody }));
 
   // --- the page's preferences, kept in LayerCake's data (#198) ---------------
   const prefsPost = await fetch(`${BASE}/api/prefs`, {

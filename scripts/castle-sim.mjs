@@ -90,6 +90,8 @@ export async function startSim({ project, port = 5190 }) {
       ...process.env,
       PORT: String(port),
       LAYERCAKE_LAUNCH_DRY_RUN: '1',
+      // Its sessions report on a port Windows picks (#200), beside a running LayerCake.
+      LAYERCAKE_INGEST_PORT: '0',
       LAYERCAKE_APPDATA_DIR: path.join(simRoot, 'appdata'),
       LAYERCAKE_SNAPSHOT_DIR: path.join(simRoot, 'snapshots'),
       LAYERCAKE_CLAUDE_DATA_DIR: claudeData,
