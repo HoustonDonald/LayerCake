@@ -4,6 +4,16 @@
   "private": true,
   "type": "module",
   "description": "Local explorer and manager for the Claude Code configuration inheritance lineage",
+  "license": "MIT",
+  "author": "Donald Murphy",
+  "homepage": "https://github.com/HoustonDonald/LayerCake#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HoustonDonald/LayerCake.git"
+  },
+  "bugs": {
+    "url": "https://github.com/HoustonDonald/LayerCake/issues"
+  },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
   },

@@ -6,3 +6,5 @@ dist/
 # Claude Code's personal project settings, and the git worktrees its agents work in.
 .claude/settings.local.json
 .claude/worktrees/
+# The maintainer's working notes between sessions: kept on their machine, never published.
+HANDOFF.md

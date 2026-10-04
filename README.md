@@ -1,0 +1,106 @@
+# LayerCake
+
+See which Claude Code configuration applies to a project folder, where each piece comes from, and
+which one wins. Edit those files safely, with a backup taken before every change, and roll back to
+any earlier state.
+
+![The lineage view of a demo project: the levels from the user's folder down to the project, each with what it holds, and the project's CLAUDE.md open beside them](docs/images/lineage.png)
+
+Claude Code reads its configuration from many places: a managed policy, your user folder, plugins,
+and every folder from the drive root down to your project. LayerCake scans them all for one project
+and shows you:
+
+- **The lineage:** each level in order, what it holds, and what was looked for and not found.
+- **What actually applies:** the CLAUDE.md files in the order Claude reads them, the merged settings
+  with the rule that merged them, and the agents, skills, commands and MCP servers in effect,
+  including any that another one shadows.
+- **Safe editing:** edit, create or delete a configuration file. A snapshot is taken first, and the
+  Snapshots tab compares any snapshot with what is on disk now and restores it.
+- **Change alerts:** a note when a configuration file changes on disk while LayerCake is open.
+- **Sessions:** your Claude Code sessions in that project, with their prompts, context use and health.
+- **The Castle:** a live picture of Claude at work, where each part of your project is a room that
+  lights up as Claude reads, edits and tests it.
+
+![The Castle: the project's rooms inside a keep, lit by what Claude is working on](docs/images/castle.png)
+
+LayerCake runs on Windows 10 and 11. It is an independent project, not made by or affiliated with
+Anthropic.
+
+## Get started
+
+1. Download **LayerCake.exe** from the
+   [latest release](https://github.com/HoustonDonald/LayerCake/releases/latest).
+2. Double-click it. There is nothing to install. Its window opens in Edge, which comes with Windows
+   (Chrome works too).
+   - Windows may say **"Windows protected your PC"**, because the file is not code-signed. Click
+     **More info**, then **Run anyway**.
+3. In the LayerCake window, type a project folder, such as `C:\dev\my-project`, and press **Scan**.
+
+Close the window to stop LayerCake.
+
+To check your download, compare its SHA-256 with the one listed on the release page. In PowerShell:
+
+```
+Get-FileHash .\LayerCake.exe
+```
+
+## What it does on your machine
+
+- **Stays local.** It serves its page on `127.0.0.1` only and makes no network requests.
+- **Reads** your Claude Code configuration files. It never opens credential files
+  (`.credentials.json`, `credentials.json`, `.env`, `.env.local`).
+- **Changes your configuration only when you ask** (save, create, delete or restore), and takes a
+  snapshot first. Its own data stays in `%LOCALAPPDATA%\LayerCake`. Snapshots are kept for 30
+  days in `%LOCALAPPDATA%\LayerCake\snapshots`. They can include files that hold sign-in tokens,
+  such as `~\.claude.json`, so keep that folder private, as you would the originals.
+- **Spends none of your Claude usage**, except the optional AI summary of a session, which runs only
+  when you click for it (Claude Haiku, with a spending cap).
+- **Start Claude here** (on the Sessions tab) opens Claude Code in Windows Terminal with a status
+  line and hooks that report to LayerCake on `127.0.0.1`, so it can show when Claude is waiting for
+  you. Nothing is added to your own Claude Code settings. Sessions you start yourself are only read,
+  from Claude Code's own session files.
+
+The detail is in the reference: [Network posture](docs/reference.md#network-posture) and
+[Write posture](docs/reference.md#write-posture).
+
+## Remove it
+
+Delete `LayerCake.exe` and the folder `%LOCALAPPDATA%\LayerCake`, which holds its snapshots, its own
+data and its window's browser profile.
+
+## If something goes wrong
+
+- **An error window about the port:** another program, or another copy of LayerCake, is using port
+  5178. Start it on another port from PowerShell: `$env:PORT = 5200; & .\LayerCake.exe`
+- **The exe shows no details:** it has no console. Run it from source (below) with `npm run app` to
+  see the same server's output.
+- **Found a bug?** Open an issue. For a security problem, see [SECURITY.md](SECURITY.md) instead.
+
+## Run from source
+
+You need [Node.js](https://nodejs.org) 20.19 or later (on Node 22, 22.12 or later) and Git.
+
+```
+git clone https://github.com/HoustonDonald/LayerCake.git
+cd LayerCake
+npm install
+npm run app
+```
+
+`npm run app` builds the page, starts LayerCake and opens its window. Running from source also gives
+you the command line tool, which answers without opening a window:
+
+```
+npm run cli -- here C:\dev\my-project     what applies in that folder, in about 20 lines
+npm run cli -- tree C:\dev\my-project     every level and its files
+```
+
+The other commands are listed in the [reference](docs/reference.md#requirements). To build your own
+`LayerCake.exe`, run `npm run build:exe` (Windows only; it lands in `dist\`). The test suite is
+`npm run smoke`.
+
+## More
+
+- [Full reference](docs/reference.md): everything it scans, every view, and every known limit.
+- [Security policy](SECURITY.md): how to report a vulnerability.
+- [MIT License](LICENSE).

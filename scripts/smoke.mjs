@@ -417,8 +417,8 @@ try {
     check('project slug replaces separators and the colon', projectSlug('C:\\dev\\LayerCake') === 'C--dev-LayerCake');
     check(
       'project slug replaces a dot (worktree path)',
-      projectSlug('C:\\dev\\beetle-etl\\.claude\\worktrees\\bold-leavitt-3a0334') ===
-        'C--dev-beetle-etl--claude-worktrees-bold-leavitt-3a0334'
+      projectSlug('C:\\dev\\my-app\\.claude\\worktrees\\bold-leavitt-3a0334') ===
+        'C--dev-my-app--claude-worktrees-bold-leavitt-3a0334'
     );
     check(
       'project slug replaces a space',

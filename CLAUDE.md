@@ -20,12 +20,15 @@ comparison surfaces that degrade badly at 80 columns.
 
 No test framework and no linter. Verification is manual and must happen at the consumer boundary,
 which for the API means HTTP, for the UI means a browser, and for the exe means launching it the way
-a double-click does. `README.md` is the
+a double-click does. `docs/reference.md` is the
 user-facing spec and is unusually complete, so read it before changing scan or write behavior, and
-update it in the same change.
+update it in the same change. `README.md` is the short front page for someone arriving on GitHub:
+download, first run, what LayerCake does on their machine, removal. Keep it short and keep its
+claims true; when a change alters one of them, update both.
 
 `HANDOFF.md` holds transient working state: what was just built, what is open, and what to do next.
-It is disposable and goes stale; this file and `README.md` win where they disagree.
+It is disposable and goes stale; this file and `docs/reference.md` win where they disagree. It is
+the maintainer's own file, listed in `.gitignore` and never published, so a fresh clone has none.
 
 **Every problem found is filed as a GitHub issue in `HoustonDonald/LayerCake`. Mandatory unless the
 owner says otherwise** (Donald, 2026-09-26). That covers bugs, review findings, gaps, unverified
@@ -164,7 +167,7 @@ These are the product, not implementation details. Breaking one silently is the 
 
 **Writes are confined to two modules.** `server/snapshot.js` and `server/writefile.js` are the only
 places a mutating `fs` call may appear. Everything else in `server/` stays on `readFile`, `readdir`,
-`stat`, `lstat`, and `fs.open(path, 'r')`. Audit with the command in README "Write posture", and
+`stat`, `lstat`, and `fs.open(path, 'r')`. Audit with the command in docs/reference.md "Write posture", and
 note it also matches the identifier `truncated`, so read the hits rather than counting them. The exe
 adds no write site: `desktop/main.js` and `desktop/window.js` write nothing, and only the build tool
 `desktop/build.mjs` writes, to `public/` and `dist/`. `server/appdata.js` writes LayerCake's own data
@@ -430,7 +433,7 @@ waits 30 s, a run may take up to 180 s) is left as "running", and `/api/usage` r
 interrupted, usage unknown (#3).
 A `claude` that exits without reading stdin must not take the server down: `child.stdin` has an
 error listener for exactly that, and smoke proves it with a stand-in claude (`LAYERCAKE_CLAUDE_CMD`).
-Nothing automatic may call it; adding anything that does breaks the promise the README makes.
+Nothing automatic may call it; adding anything that does breaks the promise the README and the reference make.
 
 **The CSRF guard belongs on `/api` only, never on the HTML routes.** A top-level navigation carries
 `Sec-Fetch-Site: cross-site` whenever the user arrives from a bookmark, a link, or the new tab page.
@@ -513,7 +516,7 @@ that produced it in the same payload, and the UI must show it.
 **Policy is derived and served, never copied.** `/api/manifest` exposes the write policy by reading
 the same sets the guards consult (`writePolicy()` in safety.js), and the client reads it from there.
 Do not hand-maintain a second list of editable categories in the client, in the manifest, or in the
-README: `/api/manifest` exists so the tool's claims can be checked against its behavior, and a copy
+docs: `/api/manifest` exists so the tool's claims can be checked against its behavior, and a copy
 makes that check meaningless the first time it drifts.
 
 **A backup must never truncate.** Files over the 2 MB cap are skipped and recorded, not stored
@@ -622,7 +625,7 @@ partially. A truncated file restored is silent data loss.
   to close, and then the exit is past `HANDOFF_MS` and counts as a close anyway.
 - **With no Edge or Chrome installed, the window falls back to the default browser**, in the user's
   own profile, so the `APP_FLAGS` invariant cannot hold there and the exe never sees the window
-  close. Stated in the README rather than refused, because the alternative is no app at all.
+  close. Stated in the reference rather than refused, because the alternative is no app at all.
 - **The exe's shutdown waits for handlers, not connections** (`desktop/inflight.js`). `server.close()`
   alone returned while a snapshot was still running, because the browser's sockets die with it; a
   save, snapshot or multi-file restore was then cut off. The wait is capped at 30 s (`DRAIN_MS`).
@@ -643,7 +646,7 @@ partially. A truncated file restored is silent data loss.
 - **Closing LayerCake under a launched session makes its hooks fail**, visibly: a "hook error" notice
   per event in that terminal. Claude does not see non-blocking hook errors, so it costs no tokens.
 - **Plain Windows is checked in Windows Sandbox** (enabled on this machine; no Git Bash, no
-  PowerShell 7, no Windows Terminal; README "Requirements"). There Claude Code 2.1.284 ran the
+  PowerShell 7, no Windows Terminal; docs/reference.md "Requirements"). There Claude Code 2.1.284 ran the
   launched status line's command under Windows PowerShell 5.1, its own choice (#11), and the console
   fallback opened it (#157). Map only scratch folders in, never a config or credential. A Claude Code
   that was never signed in exits at once without a network, even started directly, so a test of a
@@ -658,7 +661,7 @@ partially. A truncated file restored is silent data loss.
   files are not read. Each castle folds its latest 20,000 events (a refold of that many measured a
   median 18 ms under load) and says when older ones are left out. A unit walks only the room changes
   the page saw in its trail: more than 12 inside one push leaves the oldest out, and a subagent or
-  session ending in the same push as its last calls walks out without them (README "Things to know").
+  session ending in the same push as its last calls walks out without them (docs/reference.md "Things to know").
 - **The context window is inferred from the model id** (`contextWindow` in `health.js`, rule shipped
   with the payload): `[1m]` or a documented native-1M family is 1M, else 200K. A new model family
   needs adding there.
@@ -674,4 +677,4 @@ partially. A truncated file restored is silent data loss.
 
 Add the target to the manifest in `server/paths.js`, not inline in `scan.js`. `GET /api/manifest`
 serves that manifest to the UI so the tool's claims can be checked against its behavior, and a target
-hardcoded elsewhere breaks that correspondence. Then update the README table for the level.
+hardcoded elsewhere breaks that correspondence. Then update the table for the level in docs/reference.md.

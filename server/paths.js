@@ -347,7 +347,7 @@ export function isUncPath(p) {
  * letter or digit replaced by a dash. (Non-ASCII letters are assumed to be
  * replaced too; no such path existed to check against.)
  *   C:\dev\LayerCake                        -> C--dev-LayerCake
- *   C:\dev\beetle-etl\.claude\worktrees\x   -> C--dev-beetle-etl--claude-worktrees-x
+ *   C:\dev\my-app\.claude\worktrees\x       -> C--dev-my-app--claude-worktrees-x
  *   C:\Users\me\Finance Optimization        -> C--Users-me-Finance-Optimization
  *
  * An earlier rule replaced only separators and the colon. Checked 2026-09-26

@@ -8,7 +8,7 @@
  * permitted to call a mutating fs API, every write that replaces or removes a
  * file is preceded by an automatic snapshot, and every such target must have
  * been discovered by a prior scan. A new file goes only where the create
- * tables below allow (#15). See README "Write posture" for the audit command.
+ * tables below allow (#15). See docs/reference.md "Write posture" for the audit command.
  */
 
 import path from 'node:path';
