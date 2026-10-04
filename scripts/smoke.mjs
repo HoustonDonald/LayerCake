@@ -615,7 +615,13 @@ try {
   const posted = cHook ? await fetch(cHook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: cLaunch.sessionId, hook_event_name: 'UserPromptSubmit', prompt: 'after the restart' }) }).catch(() => null) : null;
   const dLaunches = runD.base ? await (await fetch(`${runD.base}/api/launches`, { headers: runD.headers })).json().catch(() => ({})) : {};
   const heard = (dLaunches.launches || []).find((x) => x.id === cLaunch.launchId);
+  // The same report, launch and secret real, sent to D's page port instead: the
+  // report routes are the reporting listener's alone. An unknown launch would
+  // not do, since the report routes answer that with 404 too.
+  const onPage = cHook && runD.base ? await fetch(`${runD.base}${new URL(cHook).pathname}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: cLaunch.sessionId, hook_event_name: 'UserPromptSubmit', prompt: 'to the page' }) }).catch(() => null) : null;
   runD.child.kill();
+  check('the page\'s port answers no report route, even for a real launch and secret the reporting port accepts (#200)',
+    posted?.status === 204 && onPage?.status === 404, JSON.stringify({ reportingPort: posted?.status, pagePort: onPage?.status }));
   check('a session launched by one run still reports to the next, on a new page port, through the fixed reporting port (#200)',
     cHook.startsWith(`http://127.0.0.1:${reportPort}/ingest/`) && runC.base && runD.base && runC.base !== runD.base &&
       posted?.status === 204 && Boolean(heard?.lastHookAt),
@@ -671,9 +677,6 @@ try {
   check('preferences need the key like every /api route (#198)', (await fetch(`${BASE}/api/prefs`)).status === 403);
   const page = await fetch(`${BASE}/`);
   await page.text();
-  // #200: the page's port answers no report route; they are the reporting listener's alone.
-  const reportOnPage = await fetch(`${BASE}/ingest/0123456789abcdef/${'0'.repeat(48)}/hook`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-  check('the page\'s port answers no report route (#200)', reportOnPage.status === 404, String(reportOnPage.status));
   check('the page clears its origin\'s cache before its files load, and /index.html is not served (#198, #199)',
     page.headers.get('clear-site-data') === '"cache"' && (await fetch(`${BASE}/index.html`)).status === 404,
     `${page.headers.get('clear-site-data')}`);
