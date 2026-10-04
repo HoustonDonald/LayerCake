@@ -34,7 +34,7 @@ import { getAsset, isSea } from 'node:sea';
 import { psQuote } from '../server/powershell.js';
 
 import { trackInflight } from './inflight.js';
-import { HOST, openWindow, probe, profileInUse, profileLock, showError } from './window.js';
+import { appAddress, openWindow, probe, profileInUse, profileLock, showError, verifyServer } from './window.js';
 
 // server/app.js is imported inside main(), not here. A static import runs every
 // server module's top level before the uncaughtException handler below exists,
@@ -205,6 +205,18 @@ async function serveUntilWindowsClose(server, inflight, appWindow) {
   process.exit(0);
 }
 
+/** Something answers on the port and is not this user's LayerCake (#189, #190). */
+function portTaken(port) {
+  return [
+    `Port ${port} is in use by something else`,
+    `Something is answering on port ${port}, but it is not your LayerCake: another program, or ` +
+      `LayerCake running for another person signed in to this computer. No window was opened on it.\n\n` +
+      `See what holds it (PowerShell):\n` +
+      `  Get-NetTCPConnection -LocalPort ${port} -State Listen\n\n` +
+      `Or start LayerCake on another port:\n  $env:PORT = 5200; & ${psQuote(process.execPath)}`,
+  ];
+}
+
 function listenFailure(err, port) {
   const relaunch = `  $env:PORT = 5200; & ${psQuote(process.execPath)}`;
   if (err.code === 'EADDRINUSE') {
@@ -233,14 +245,26 @@ function listenFailure(err, port) {
 
 async function main() {
   const port = readPort();
-  const url = `http://${HOST}:${port}`;
+  // This user's page key (#189): the window is handed it in its address.
+  const { pageKeyOrRunKey } = await import('../server/appdata.js');
+  const { key } = await pageKeyOrRunKey();
+  const url = appAddress(port, key);
 
   // Set when this launch opened its window before it had a server of its own.
   let appWindow = null;
 
   if (await probe(port)) {
-    appWindow = openAppWindow(url);
-    if (!(await stopsAnsweringWithin(port, REATTACH_MS))) process.exit(0);
+    // Only this user's LayerCake gets a window (#189, #190).
+    const who = await verifyServer(port, key);
+    if (who === 'foreign') {
+      showError(...portTaken(port));
+      process.exit(1);
+    }
+    // 'none': it went away between the two questions, so serve on its port.
+    if (who === 'ours') {
+      appWindow = openAppWindow(url);
+      if (!(await stopsAnsweringWithin(port, REATTACH_MS))) process.exit(0);
+    }
     // It went away: its last window had just closed. Serve on its port, so the
     // window just opened has a server again. If that window got Edge's "can't
     // reach this page", Edge retries it by itself on a backoff (measured: the
@@ -248,13 +272,17 @@ async function main() {
   }
 
   const { createApp, listen, memoryStatic } = await import('../server/app.js');
-  const app = createApp({ port, staticFiles: memoryStatic(embeddedClient()) });
+  const app = createApp({ port, staticFiles: memoryStatic(embeddedClient()), key });
   let server;
   try {
     server = await listen(app, port);
   } catch (err) {
-    // Lost a race with another launch: it is LayerCake after all, so use it.
+    // Lost a race with another launch: use it if it is this user's LayerCake.
     if (err.code === 'EADDRINUSE' && (await answersWithin(port, REPROBE_MS))) {
+      if ((await verifyServer(port, key)) !== 'ours') {
+        showError(...portTaken(port));
+        process.exit(1);
+      }
       if (!appWindow) openWindow(url);
       process.exit(0);
     }

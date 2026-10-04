@@ -631,8 +631,9 @@ export async function runCreateChecks({ base, token, check, skip, smokeDir, conf
     try {
       for (let i = 0; i < 200 && !said.includes('LayerCake  ->'); i += 1) await new Promise((r) => setTimeout(r, 50));
       const base2 = `http://127.0.0.1:${port}`;
-      const html = await (await fetch(`${base2}/`)).text();
-      const token2 = /name="layercake-token" content="([a-f0-9]+)"/.exec(html)?.[1];
+      // Its data folder is refused, so its page key is for this run only, and
+      // the address it prints is the one place to get it (#189).
+      const token2 = /#t=([0-9a-f]{64})/.exec(said)?.[1];
       const h2 = { 'X-LayerCake-Token': token2 };
       const list = await fetch(`${base2}/api/sessions`, { headers: h2 });
       const usage = await fetch(`${base2}/api/usage`, { headers: h2 });

@@ -484,6 +484,20 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
     await fs.writeFile(P('.git'), 'gitdir: //127.0.0.1/layercake-smoke-none/wt\n');
     check('a .git file pointing at a network share: the Sept does not follow it, and says so (#193)',
       await s1.untilState((st) => st.sept?.repo === false && st.sept.reason === 'share', 6000), JSON.stringify(s1.last('state')?.sept));
+    if (process.platform === 'win32') {
+      // The refusal must come before anything there is read, since the read
+      // is what connects out. The \\?\ form counts as a share and is readable
+      // locally: this one leads, through its commondir, to the real repository
+      // (moved aside above), so a Sept that read through it would find main.
+      await fs.mkdir(P('wt-gitdir'), { recursive: true });
+      await fs.writeFile(P('wt-gitdir', 'HEAD'), 'ref: refs/heads/main\n');
+      await fs.writeFile(P('wt-gitdir', 'commondir'), `${P('.git-away')}\n`);
+      await fs.writeFile(P('.git'), `gitdir: \\\\?\\${P('wt-gitdir')}\n`);
+      const followed = await s1.untilState((st) => st.sept?.repo === true, 4000);
+      check('... refused before anything behind it is read: a device-path gitdir leading to a real repository is not followed (#193)',
+        !followed && s1.last('state')?.sept?.reason === 'share', JSON.stringify(s1.last('state')?.sept));
+      await fs.rm(P('wt-gitdir'), { recursive: true, force: true });
+    }
     await fs.unlink(P('.git'));
     await fs.rename(P('.git-away'), P('.git'));
     check('and back again once it returns (#186)', await s1.untilState((st) => st.sept?.repo === true && st.sept.branch === 'main', 6000), JSON.stringify(s1.last('state')?.sept));

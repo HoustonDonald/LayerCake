@@ -11,6 +11,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -32,11 +33,15 @@ const PROBE_TIMEOUT_MS = 1000;
  *
  * The GET carries no Origin header, so it passes the server's CSRF origin
  * guard the same way curl does. It hits "/" rather than "/api/...", which
- * would need the per-start session token the launcher has no way to know.
+ * needs the page key. Answering proves only that something listens: before a
+ * window is opened on it, verifyServer below proves it is this user's
+ * LayerCake.
  */
 export function probe(port) {
   return new Promise((resolve) => {
-    const req = http.get({ host: HOST, port, path: '/', timeout: PROBE_TIMEOUT_MS }, (res) => {
+    // A fresh connection (agent: false): a kept-alive socket to a server that
+    // has since closed answers with a reset, not with the truth about the port.
+    const req = http.get({ host: HOST, port, path: '/', timeout: PROBE_TIMEOUT_MS, agent: false }, (res) => {
       res.resume();
       resolve(true);
     });
@@ -46,6 +51,60 @@ export function probe(port) {
     });
     req.on('error', () => resolve(false));
   });
+}
+
+/** Long enough for a busy LayerCake, which must not be taken for a stranger. */
+const VERIFY_TIMEOUT_MS = 5000;
+
+/**
+ * Whether what answers on `port` is LayerCake running for this user (#189,
+ * #190): 'ours' when it proves it knows the page key, 'none' when nothing
+ * answers, else 'foreign'. A launch opens its window only on 'ours'. Anything
+ * else could be another signed-in user's LayerCake, whose files the window
+ * would then show and edit, or a program that took the port first and would
+ * serve the window a page of its own, which could plant a service worker in
+ * the window's profile. The key is never sent: the server answers a random
+ * nonce with HMAC-SHA256 under the key (keyProof in server/security.js),
+ * computed again here rather than imported, so this check does not lean on
+ * the code it checks.
+ */
+export function verifyServer(port, key) {
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const want = crypto.createHmac('sha256', key).update(nonce).digest('hex');
+  return new Promise((resolve) => {
+    const req = http.get({ host: HOST, port, path: `/hello?nonce=${nonce}`, timeout: VERIFY_TIMEOUT_MS, agent: false }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (d) => {
+        if (body.length < 4096) body += d;
+      });
+      res.on('end', () => {
+        let proof = null;
+        try {
+          proof = JSON.parse(body).proof;
+        } catch {
+          /* not LayerCake's answer */
+        }
+        const ok = typeof proof === 'string' && proof.length === want.length && crypto.timingSafeEqual(Buffer.from(proof), Buffer.from(want));
+        resolve(ok ? 'ours' : 'foreign');
+      });
+      res.on('error', () => resolve('foreign'));
+    });
+    // No answer at all: a server going away right then (a relaunch as the last
+    // window closes) looks like this too, so ask again whether anything is
+    // there before calling it a stranger.
+    const unanswered = () => probe(port).then((there) => resolve(there ? 'foreign' : 'none'));
+    req.on('timeout', () => {
+      req.destroy();
+      unanswered();
+    });
+    req.on('error', (err) => (err.code === 'ECONNREFUSED' ? resolve('none') : unanswered()));
+  });
+}
+
+/** The window's address: the page key in the fragment, which no request carries (#189). */
+export function appAddress(port, key) {
+  return `http://${HOST}:${port}/#t=${key}`;
 }
 
 /* ------------------------------------------------------------ browser location */

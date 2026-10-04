@@ -46,7 +46,9 @@ Get-FileHash .\LayerCake.exe
 
 ## What it does on your machine
 
-- **Stays local.** It serves its page on `127.0.0.1` only and makes no network requests.
+- **Stays local, and yours.** It serves its page on `127.0.0.1` only and makes no network requests.
+  Other people signed in to the same computer cannot use your LayerCake: its key stays in your own
+  data folder.
 - **Reads** your Claude Code configuration files. It never opens credential files
   (`.credentials.json`, `credentials.json`, `.env`, `.env.local`).
 - **Changes your configuration only when you ask** (save, create, delete or restore), and takes a

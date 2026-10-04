@@ -19,7 +19,7 @@ opens Windows Terminal (or a console window without it), and its status line use
 ```
 npm install
 npm run app        # build if stale, serve, and open a chromeless app window
-npm start          # same without the window: http://127.0.0.1:5178
+npm start          # same without the window: open the address it prints, key included
 npm run build:exe  # one-file Windows app, no Node needed to run it: dist\LayerCake.exe
 ```
 
@@ -677,7 +677,7 @@ Implementation notes that matter if you change this:
 - Events carry a path and a verb, never file content. Reading a body still goes through `/api/file`
   and its allowlist check.
 - The client reads the stream with `fetch` and a stream reader, not `EventSource`, because
-  `EventSource` cannot set a request header and the session token is not going in a query string.
+  `EventSource` cannot set a request header and the page key is not going in a query string.
 
 Known: `~/.claude.json` is a real member of the lineage and Claude Code rewrites it every few
 seconds during a session, so it appears in the bar often. It is reported rather than filtered
@@ -1169,8 +1169,27 @@ that the castle sees.
 - `/api/file` and `/api/write` only touch a path the preceding scan discovered. The scan result *is*
   the allowlist, so neither is a general-purpose file reader or writer even though the scan input is
   a directory you type. Requests outside it return 403.
-- **Every `/api` route requires a session token**, generated per server start and injected into the
-  served HTML. A cross-origin page cannot read that HTML, so it cannot obtain the token.
+- **Every `/api` route requires the page key** (#189): 32 random bytes made once and kept in your
+  LayerCake data folder (`%LOCALAPPDATA%\LayerCake\data\page-key`), which only you can read there.
+  It is never in the page. A port on 127.0.0.1 is open to every user signed in to the computer, so
+  anything in the page could be read by another of them; until #189 the key was, and another user
+  could have used LayerCake as you. Instead, the launch that opens the window gives the address
+  the key after a `#` (`http://127.0.0.1:5178/#t=...`), a part of the address no request carries
+  and that another user cannot read from the browser's command line. The page keeps it in its own
+  storage and takes it out of the address bar. `npm start` prints that address on your console.
+  Delete the file to make a new key at the next start. If the data folder cannot keep it (refused,
+  unwritable), the server makes a key for that run only and says so.
+- **A launch opens its window only on your own LayerCake** (#189, #190). When something already
+  answers on the port, the launch sends a random challenge to `/hello` and checks the answer, an
+  HMAC of the challenge under the key, against its own; the key itself is never sent. A server that
+  cannot answer is another program or another user's LayerCake, and the launch says so and opens
+  nothing. Without that, a second user's LayerCake opened on the first user's files, and a program
+  that took the port first could serve the window a page of its own, which could leave a service
+  worker in the window's profile to rewrite LayerCake's pages later. In case one ever got there,
+  the server answers any service worker update check with a 404 and `Clear-Site-Data: "storage"`,
+  which removes it, serves the page at `/` only, and sends a Content-Security-Policy allowing
+  scripts and requests from its own origin only, and no workers.
+- A cross-origin page cannot read the window's storage or address, so it cannot obtain the key.
 
   This matters because writes changed the threat model. While the app was read-only, a hostile page
   could send requests but not read replies, and a JSON POST triggers a CORS preflight that fails, so
@@ -1181,11 +1200,12 @@ that the castle sees.
   Guarding the HTML refuses the app itself. The HTML sends `X-Frame-Options: DENY`.
 - **Every route, HTML included, refuses a `Host` header other than `127.0.0.1:<port>` or
   `localhost:<port>`.** That closes DNS rebinding: a hostile site re-points its own hostname at
-  127.0.0.1, after which the browser treats this server as that site and would let its page read the
-  HTML and the token in it. The Host header still names the hostile site, so the request is refused.
+  127.0.0.1, after which the browser treats this server as that site and would let its page read
+  whatever the server answers. The Host header still names the hostile site, so the request is refused.
   Nothing legitimate is affected: LayerCake's own callers address the server as `127.0.0.1` (the CLI
   calls the server modules directly and makes no HTTP call), and a bookmark to
-  `http://127.0.0.1:5178` sends the right Host.
+  `http://127.0.0.1:5178` sends the right Host. In a browser that has opened LayerCake before, the page still has its key;
+  in any other, its requests are refused with a message saying how to open LayerCake (#189).
 - None of this defends against a hostile process already running as you. It can write these files
   directly and does not need this app. The guard closes the browser path only.
 - **The app window runs with `--disable-extensions --disable-sync`.** A browser extension is not a
@@ -1223,7 +1243,7 @@ for session data only), `LAYERCAKE_BROWSER_PROFILE_DIR` (the app window's browse
 server/
   app.js         express app, localhost bind, per-scan allowlist, routes; never listens on import
   index.js       entry for npm start and the launcher: serves public/ from disk
-  security.js    localhost CSRF guard and per-start session token
+  security.js    localhost CSRF guard, the page key check, the launch's challenge
   scan.js        lineage resolver
   paths.js       platform paths, the scan manifest, snapshot root
   readfile.js    the only file-body reader
@@ -1337,7 +1357,7 @@ What to know:
   and a browser that showed one and then left the profile empty was closed, not handed off.
 - **Without Edge or Chrome** (Edge can be uninstalled in the EEA), it falls back to your default
   browser: a normal window in your normal profile, where your extensions run and can read the page,
-  including the session token. It also cannot tell when that window closes, so it keeps running.
+  including the page key. It also cannot tell when that window closes, so it keeps running.
 - **It is named LayerCake, with its own icon.** Task Manager's Processes tab lists it as
   "LayerCake", Explorer's Properties > Details shows that name with the version in `package.json`,
   and Explorer shows the cake icon.
@@ -1362,12 +1382,12 @@ Open the dev page at `http://localhost:5179`, not `http://127.0.0.1:5179`: Vite 
 loopback (`::1`) by default, so the IPv4 address does not connect.
 
 `dev:client` needs `dev:server` already running on the same `PORT`, and a built client
-(`npm run build`, once). The page Vite serves takes its session token from the server's own page,
-the way the built page does, and the server only serves that page from `public/`. If either is
-missing, Vite's error page says which. Only this page's own requests (the browser marks them
+(`npm run build`, once). When Vite is listening it prints `LayerCake dev page:` with the address to
+open, the page key after the `#` (#189), the way `npm start` does; the page keeps it, so reloads
+and hot updates go on working. Only this page's own requests (the browser marks them
 same-origin) are presented to the origin guard as the server's page, and Vite's CORS is off so no
-other localhost page can read the token. All of it lives in `vite.config.js` and none of it reaches a
-build. The dev server serves the cake at `/favicon.ico` too, straight from `desktop/layercake.ico`.
+other localhost page can read what the proxy returns. All of it lives in `vite.config.js` and none
+of it reaches a build. The dev server serves the cake at `/favicon.ico` too, straight from `desktop/layercake.ico`.
 
 `npm run smoke` rebuilds the client first if `public/` is stale (the same rule as `npm start`),
 creates its own fixture tree, starts a server on its own port with its own snapshot

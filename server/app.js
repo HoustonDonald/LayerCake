@@ -50,7 +50,7 @@ import {
   readSnapshotFile,
 } from './snapshot.js';
 import { MAX_FILE_BYTES, isSecret, describeError, writePolicy } from './safety.js';
-import { hostGuard, injectToken, originGuard, requireToken } from './security.js';
+import { hostGuard, keyProof, originGuard, requireToken } from './security.js';
 import { registerSessionRoutes } from './session-routes.js';
 import { closeCastleStreamsFor, registerCastleRoutes } from './castle-routes.js';
 import { listLaunches, registerIngestRoutes } from './ingest.js';
@@ -140,9 +140,11 @@ function registerScan(lineage) {
 /**
  * Builds the app. `port` is the one it will listen on, which the origin guard
  * needs to recognise our own pages; `staticFiles` is where the client comes from
- * (diskStatic or memoryStatic below).
+ * (diskStatic or memoryStatic below); `key` is the page key (ensurePageKey in
+ * appdata.js, #189), which every /api request must present.
  */
-export function createApp({ port, staticFiles }) {
+export function createApp({ port, staticFiles, key }) {
+  if (!/^[0-9a-f]{64}$/.test(String(key || ''))) throw new Error('createApp needs the page key (ensurePageKey in appdata.js)');
   // Where Claude Code's home is, for the session routes before the first scan
   // (#64). In the background: a home on a slow share must not delay startup.
   resolveConfigHome().catch(() => {});
@@ -150,6 +152,16 @@ export function createApp({ port, staticFiles }) {
   // First, and on every route including the HTML: see hostGuard for why this
   // one, unlike the origin guard below, must not be scoped to /api.
   app.use(hostGuard(port));
+  // A browser checking a service worker for an update sends Service-Worker:
+  // script. We register none, so one only exists if something else answered
+  // on this port once and planted it in the window's profile, where it would
+  // rewrite our pages on every later visit (#190). Not found, and the site's
+  // storage cleared, which takes the worker with it (and the page key the
+  // page kept; the next launch hands it over again).
+  app.use((req, res, next) => {
+    if (!req.get('service-worker')) return next();
+    res.set('Clear-Site-Data', '"storage"').status(404).type('text').send('Not found.');
+  });
   // Must clear MAX_WRITE_BYTES with room for JSON escaping, or a write inside the
   // documented 2 MB cap would be rejected by the body parser instead.
   app.use(express.json({ limit: '8mb' }));
@@ -157,15 +169,21 @@ export function createApp({ port, staticFiles }) {
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
-    // The served HTML carries the session token. A cross-origin page cannot read
-    // a response it did not get CORS permission for, and cannot read a frame's
-    // document across origins, but there is no reason to be framed at all.
+    // There is no reason to be framed at all.
     res.setHeader('X-Frame-Options', 'DENY');
     // img-src and media-src: rendered markdown (a Claude reply, a CLAUDE.md)
     // can contain ![x](https://host/?d=...), and without these the browser
     // fetches it: an outbound request, and the classic exfiltration channel
     // for text a model was tricked into writing. Only our own origin and data:.
-    res.setHeader('Content-Security-Policy', "frame-ancestors 'none'; img-src 'self' data:; media-src 'self'");
+    // The rest (#190): scripts and requests only from this origin, so a script
+    // that got in some other way can neither load more nor send anything out;
+    // no workers, plugins, <base> or foreign form targets. Styles may be inline
+    // (React sets style attributes).
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'; " +
+        "connect-src 'self'; font-src 'self' data:; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+    );
     next();
   });
 
@@ -176,11 +194,19 @@ export function createApp({ port, staticFiles }) {
   // or Chrome's new tab page. Refusing those refuses the app itself, which is
   // exactly what happened the first time this was wired up.
   //
-  // Leaving the HTML open costs nothing: a hostile page can cause a navigation
-  // but cannot read the result, so it cannot lift the token out of the markup.
-  // The token is what actually gates every state-changing route.
+  // Leaving the HTML open costs nothing: it holds no secret (#189). The page
+  // key, which only our own window is handed, is what gates every /api route.
+  //
+  // The launch's challenge (#189, #190), outside /api because the launch must
+  // not send the key to a server it has not yet verified: it sends a random
+  // nonce and checks the answer against its own key.
+  app.get('/hello', (req, res) => {
+    const nonce = String(req.query.nonce || '');
+    if (!/^[0-9a-f]{32,128}$/.test(nonce)) return res.status(400).json({ message: 'A hex nonce is required.', code: 'ENONCE' });
+    res.set('Cache-Control', 'no-store').json({ app: 'LayerCake', proof: keyProof(key, nonce) });
+  });
   app.use('/api', originGuard(port));
-  app.use('/api', requireToken);
+  app.use('/api', requireToken(key));
 
   /** The scan manifest, so the UI can show exactly what will be probed. */
   app.get('/api/manifest', (req, res) => {
@@ -581,14 +607,15 @@ export function createApp({ port, staticFiles }) {
   // route (/api/validate, #67) still looked like it existed.
   app.use('/api', (req, res) => res.status(404).json({ message: 'No such API route.', code: 'ENOROUTE' }));
 
-  // Assets are served normally. Only the HTML shell carries the secret, and it
-  // gets it from the injector below, never from the static source.
+  // Assets are served normally; the page holds no secret.
   app.use(staticFiles.middleware);
 
-  app.get('*', async (req, res) => {
+  // The page at / only. It has no routes of its own, and answering every path
+  // with it is what let a planted service worker's update check pass (#190).
+  app.get('/', async (req, res) => {
     try {
       const html = await staticFiles.readIndexHtml();
-      res.type('html').set('Cache-Control', 'no-store').send(injectToken(html));
+      res.type('html').set('Cache-Control', 'no-store').send(html);
     } catch {
       res
         .status(503)
@@ -596,6 +623,7 @@ export function createApp({ port, staticFiles }) {
         .send('Client bundle missing. Run "npm run build" (or use "npm start", which builds first).');
     }
   });
+  app.use((req, res) => res.status(404).type('text').send('Not found.'));
 
   return app;
 }

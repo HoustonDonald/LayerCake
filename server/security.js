@@ -9,17 +9,22 @@
  * Writes end that. A cross-origin <form> POST is a "simple request": no
  * preflight, it just fires. The attacker never reads the response and does not
  * need to, because the write already happened. So state-changing routes need a
- * real origin check plus a secret the calling page must be able to read, and a
- * cross-origin page cannot read our HTML.
+ * real origin check plus a secret the calling page must hold.
  *
- * Not a defense against a hostile *local process*: it can write these files
- * directly and does not need us. This closes the browser path only.
+ * That secret is the page key (#189, ensurePageKey in appdata.js). It is never
+ * in the HTML: anything that can connect to the port could read the HTML,
+ * another signed-in Windows user included, since a loopback port is open to
+ * every user of the machine. The launch that opens our window passes it in the
+ * address's fragment, which is never sent to a server and which another user
+ * cannot read from the browser's command line; the page keeps it.
+ *
+ * Not a defense against a hostile process running as the same user: it can
+ * write these files, and read the key, directly. This closes the browser path
+ * and the other-user path.
  */
 
 import crypto from 'node:crypto';
 
-/** Regenerated every start. A restart invalidates open tabs, which is correct. */
-export const SESSION_TOKEN = crypto.randomBytes(32).toString('hex');
 export const TOKEN_HEADER = 'x-layercake-token';
 
 function allowedOrigins(port) {
@@ -87,29 +92,33 @@ export function hostGuard(port) {
 }
 
 /**
- * Requires the per-start token, which is served only inside our own HTML.
- * Compared in constant time out of habit rather than need: a timing oracle on
- * localhost is not the realistic attack, but the correct comparison is free.
+ * Requires the page key. Compared in constant time out of habit rather than
+ * need: a timing oracle on localhost is not the realistic attack, but the
+ * correct comparison is free.
  */
-export function requireToken(req, res, next) {
-  const supplied = req.get(TOKEN_HEADER) || '';
-  const a = Buffer.from(supplied);
-  const b = Buffer.from(SESSION_TOKEN);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-    return res.status(403).json({
-      message: 'Missing or stale session token. Reload the page.',
-      code: 'EBADTOKEN',
-    });
-  }
-  return next();
+export function requireToken(key) {
+  if (!/^[0-9a-f]{64}$/.test(String(key || ''))) throw new Error('requireToken needs the page key');
+  const b = Buffer.from(key);
+  return (req, res, next) => {
+    const a = Buffer.from(req.get(TOKEN_HEADER) || '');
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      return res.status(403).json({
+        message: "This page does not have LayerCake's key. Open LayerCake from its own window, or the address npm start printed.",
+        code: 'EBADTOKEN',
+      });
+    }
+    return next();
+  };
 }
 
 /**
- * Injects the token into the served HTML. Done at serve time rather than build
- * time so the built bundle in public/ never contains a secret.
+ * The answer to a launch's challenge (#189, #190): HMAC-SHA256 of the nonce
+ * under the page key. A launch that finds something answering on the port
+ * asks /hello?nonce=<random> and compares this with its own computation, so it
+ * opens its window only on a server that knows its user's key, never sending
+ * the key to one that might not. HMAC under a random 256-bit key reveals
+ * nothing about the key, whatever nonces anyone asks for.
  */
-export function injectToken(html) {
-  const meta = `<meta name="layercake-token" content="${SESSION_TOKEN}">`;
-  if (html.includes('<head>')) return html.replace('<head>', `<head>${meta}`);
-  return meta + html;
+export function keyProof(key, nonce) {
+  return crypto.createHmac('sha256', key).update(String(nonce)).digest('hex');
 }

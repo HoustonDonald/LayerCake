@@ -46,7 +46,7 @@ terminal.
 ## Commands
 
 ```
-npm start          # build client if stale, then serve http://127.0.0.1:5178
+npm start          # build client if stale, then serve on 127.0.0.1:5178; open the address it prints (key after #, #189)
 npm run app        # same, then open a chromeless app-mode browser window
 npm run cli -- here    # effective environment for the current directory
 npm run cli -- session # the current Claude Code session here (no Claude usage)
@@ -134,7 +134,7 @@ server/flatten.js   the four flattened views
 server/watch.js     directory watches over a scanned lineage, polling on a share (UNC or mapped drive); never opens a body
 server/snapshot.js  capture, compare, restore, and the atomic write primitive
 server/writefile.js the ONLY edit path; depends on snapshot.js by design
-server/security.js  localhost CSRF guard and session token
+server/security.js  localhost CSRF guard, the page key check (#189), the launch's challenge (keyProof)
 server/app.js       express app, 127.0.0.1 bind, per-scan allowlist; builds, never listens on import
 server/index.js     terminal entry: app.js serving public/ from disk, listens on load
 server/transcript.js the ONLY reader of Claude Code session transcripts -> normalized session model
@@ -175,9 +175,9 @@ These are the product, not implementation details. Breaking one silently is the 
 places a mutating `fs` call may appear. Everything else in `server/` stays on `readFile`, `readdir`,
 `stat`, `lstat`, and `fs.open(path, 'r')`. Audit with the command in docs/reference.md "Write posture", and
 note it also matches the identifier `truncated`, so read the hits rather than counting them. The exe
-adds no write site: `desktop/main.js` and `desktop/window.js` write nothing, and only the build tool
+adds no write site: `desktop/main.js` and `desktop/window.js` write nothing themselves (main.js has appdata.js make the page key, #189), and only the build tool
 `desktop/build.mjs` writes, to `public/` and `dist/`. `server/appdata.js` writes LayerCake's own data
-through `snapshot.js`'s `atomicWrite`, so it adds a caller, not a mutating call site; it is policy
+through `snapshot.js`'s `atomicWrite` (and `createExclusive` for the page key), so it adds a caller, not a mutating call site; it is policy
 like `writefile.js`, confined to `appDataRoot()`, and refuses a root inside `~/.claude` or the
 Claude data folder.
 
@@ -457,28 +457,44 @@ Nothing automatic may call it; adding anything that does breaks the promise the 
 **The CSRF guard belongs on `/api` only, never on the HTML routes.** A top-level navigation carries
 `Sec-Fetch-Site: cross-site` whenever the user arrives from a bookmark, a link, or the new tab page.
 Guarding the HTML refuses the app itself; this was shipped once and broke the whole UI while an HTTP
-test suite stayed green, because Node's `fetch` sends no `Sec-Fetch-*` headers. The session token is
-what actually gates state change, and a hostile page cannot read our HTML to steal it.
+test suite stayed green, because Node's `fetch` sends no `Sec-Fetch-*` headers. The page key is
+what actually gates state change.
+
+**The page key is never in the HTML** (#189). A loopback port is open to every signed-in user of the
+machine, so whatever the page carries, another user can read. The key is made once and kept in
+LayerCake's data folder (`ensurePageKey` in appdata.js, an exclusive create so two first launches
+agree; `pageKeyOrRunKey` makes a key for that run only when the folder cannot keep one, so a refused
+data folder still reports itself instead of stopping the server). The launch that opens the window
+puts it in the address's fragment (`appAddress` in desktop/window.js), which no request carries; the
+page keeps it in its origin's localStorage and strips the address; `npm start` and the Vite dev
+server print the address on the user's own console. **A launch opens a window only on a server that
+proves it knows the key** (`verifyServer`): `/hello` answers a random nonce with HMAC-SHA256 under the
+key (`keyProof`), which the launch computes again itself, never sending the key. Without that, a
+second user's launch attached to the first user's server, and a program that took the port first
+could serve the window its own page and leave a service worker in the profile (#190). The server
+answers any request carrying `Service-Worker` with a 404 and `Clear-Site-Data: "storage"`, serves
+the page at `/` only, and its CSP allows scripts and requests from its own origin only and no workers.
+The data folder's default place (%LOCALAPPDATA%) is private to the user; a `LAYERCAKE_APPDATA_DIR`
+elsewhere must be too, or the key is not.
 
 **The Host guard is the opposite: every route, the HTML included, and first** (`hostGuard` in
-`security.js`). A DNS rebinding page is same-origin with us as far as the browser knows, so it can
-read the HTML and the token unless the server refuses a Host that is not `127.0.0.1:<port>` or
+`security.js`). A DNS rebinding page is same-origin with us as far as the browser knows, so it could
+call /hello and read anything we serve unless the server refuses a Host that is not `127.0.0.1:<port>` or
 `localhost:<port>`. It does not repeat the CSRF-guard mistake, because a bookmark or link to this
 server carries our own Host however the user arrived. Anything that calls the server must address it
-by one of those two names. The CLI imports modules and never calls the API; the dev-only token read
-of `/` and `/api/` proxy in `vite.config.js` use `127.0.0.1`, the proxy through `changeOrigin`,
-without which the Host guard refuses it.
+by one of those two names. The CLI imports modules and never calls the API; the `/api/` proxy in
+`vite.config.js` uses `127.0.0.1` through `changeOrigin`, without which the Host guard refuses it.
 
 **Localhost only.** `HOST` is hardcoded `127.0.0.1`. No outbound requests exist anywhere; keep it
 that way, including in the client.
 
 **The app window runs with `--disable-extensions --disable-sync`** (`APP_FLAGS` in
-`desktop/window.js`). The session token sits in our DOM, and the CSRF design rests on "a hostile page
-cannot read our HTML". An extension is not a page, and a separate `--user-data-dir` profile does NOT
+`desktop/window.js`). The page key sits in the window's storage and our page's memory, and the CSRF
+design rests on no other page being able to read them. An extension is not a page, and a separate `--user-data-dir` profile does NOT
 keep extensions out: Edge signs a new profile in to the Windows Microsoft account, turns sync on, and
 sync installs the user's extensions. That was measured on this machine, including a shopping extension
 with access to every URL. Removing either flag reopens it silently: nothing breaks, the UI works, and
-a third party can read the token. `APP_FLAGS` also carries `--disable-features=msEdgeStartupBoost`
+a third party can read the key. `APP_FLAGS` also carries `--disable-features=msEdgeStartupBoost`
 (#58), for a different reason: without it every close started a background Edge for the user's
 default profile. Chromium honours only the last `--disable-features` on a command line, so another
 feature goes into that same flag, comma separated, never into a second one.

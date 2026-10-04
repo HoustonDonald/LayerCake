@@ -113,8 +113,12 @@ export async function startSim({ project, port = 5190 }) {
     server.kill();
     throw new Error(`the scratch server did not answer on ${base} (is port ${port} in use? --port picks another)`);
   }
-  const token = /name="layercake-token" content="([^"]+)"/.exec(html)?.[1];
+  // The page key (#189): made by the scratch server in its own data folder
+  // before it listens, never in its HTML.
+  const token = fs.readFileSync(path.join(simRoot, 'appdata', 'page-key'), 'utf8').trim();
   const H = { 'X-LayerCake-Token': token, 'Content-Type': 'application/json' };
+  // The address a window opens at: the key in the fragment, as a launch does.
+  const pageUrl = `${base}/#t=${token}`;
   const post = async (route, body) => {
     const res = await fetch(`${base}${route}`, { method: 'POST', headers: H, body: JSON.stringify(body) });
     const json = await res.json().catch(() => ({}));
@@ -125,6 +129,7 @@ export async function startSim({ project, port = 5190 }) {
 
   return {
     base,
+    pageUrl,
     claudeData,
     project,
     /** A dry-run launch: a session id and its hook channel. Nothing starts. */
@@ -163,7 +168,7 @@ export async function startSim({ project, port = 5190 }) {
       const browser = findBrowser();
       if (!browser) return false;
       const profile = path.join(simRoot, 'browser');
-      spawn(browser.exe, [`--app=${base}`, `--user-data-dir=${profile}`, ...APP_FLAGS, '--remote-debugging-port=0'], { detached: true, stdio: 'ignore' }).unref();
+      spawn(browser.exe, [`--app=${pageUrl}`, `--user-data-dir=${profile}`, ...APP_FLAGS, '--remote-debugging-port=0'], { detached: true, stdio: 'ignore' }).unref();
       // Chromium writes the port, then the browser's WebSocket path.
       for (let i = 0; i < 100 && !cdp; i += 1) {
         try {

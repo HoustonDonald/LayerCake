@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+import { ensurePageKey } from './server/appdata.js';
+
 const API_PORT = process.env.PORT || 5178;
 const API_ORIGIN = `http://127.0.0.1:${API_PORT}`;
 
@@ -43,47 +45,30 @@ function favicon() {
 
 /**
  * Dev only (npm run dev:client; `apply: 'serve'` keeps it out of every build).
- * Every /api route requires the per-start session token, which the server
- * writes into the HTML it serves (injectToken in server/security.js). Vite
- * serves client/index.html itself, so without this the page has no token.
- *
- * The token is read from the running server's own page, the place the
- * production page gets it, rather than from a route that hands it out: such a
- * route would give the token to anything that can reach the port. It is read
- * on every page load because dev:server makes a new token each time it starts,
- * and a reload is what the app's stale-token message asks for.
- *
- * The server serves that page from public/, so it answers with a token only
- * once the client has been built (npm run build). The error below says so.
+ * Every /api route requires the page key (#189), which no page carries: the
+ * production window is handed it in its address fragment. The dev page gets it
+ * the same way: this prints the address to open, key included, on the
+ * developer's own console once Vite is listening. Never in the HTML, which
+ * anything that can reach the port could read. Opened once, the page keeps the
+ * key in this origin's localStorage, so reloads and HMR keep working.
  */
-function devSessionToken() {
+function devPageAddress() {
   return {
-    name: 'layercake-dev-session-token',
+    name: 'layercake-dev-page-address',
     apply: 'serve',
-    async transformIndexHtml() {
-      let res;
-      try {
-        res = await fetch(`${API_ORIGIN}/`, { signal: AbortSignal.timeout(5000) });
-      } catch (err) {
-        throw new Error(
-          `No LayerCake server answered at ${API_ORIGIN} (${err.cause?.code || err.name}). ` +
-            'Start it with "npm run dev:server", then reload.'
-        );
-      }
-      const body = await res.text();
-      // Hex only, so nothing but a token can reach the page from here.
-      const token = /<meta name="layercake-token" content="([0-9a-f]+)">/.exec(body)?.[1];
-      if (!token) {
-        throw new Error(`${API_ORIGIN}/ answered ${res.status} without a session token: ${body.slice(0, 200)}`);
-      }
-      return [{ tag: 'meta', attrs: { name: 'layercake-token', content: token }, injectTo: 'head-prepend' }];
+    configureServer(server) {
+      server.httpServer?.once('listening', async () => {
+        const key = await ensurePageKey();
+        const { port } = server.httpServer.address();
+        server.config.logger.info(`\n  LayerCake dev page:  http://localhost:${port}/#t=${key}\n`);
+      });
     },
   };
 }
 
 export default defineConfig({
   root: 'client',
-  plugins: [react(), devSessionToken(), favicon()],
+  plugins: [react(), devPageAddress(), favicon()],
   build: {
     outDir: '../public',
     emptyOutDir: true,
@@ -91,9 +76,8 @@ export default defineConfig({
   server: {
     port: 5179,
     // Vite's default CORS lets any localhost origin (another dev server's page,
-    // say) read what this server returns, and the page it returns now carries
-    // the session token. The security design rests on no other page being able
-    // to read that token, and nothing legitimate here is cross-origin.
+    // say) read what this server returns, including /api answers proxied
+    // through it. Nothing legitimate here is cross-origin.
     cors: false,
     proxy: {
       // '/api/' and not '/api': a proxy key is a plain prefix match, and '/api'

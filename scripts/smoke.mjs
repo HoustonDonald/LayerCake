@@ -424,9 +424,14 @@ try {
     throw new Error('server did not start');
   }
 
+  // The page key (#189): kept in the server's own data folder and printed in
+  // its address, never written into the page anything on the port can read.
+  for (let i = 0; i < 100 && !/#t=[0-9a-f]{64}/.test(serverOut); i += 1) await new Promise((r) => setTimeout(r, 50));
+  const printedKey = /#t=([0-9a-f]{64})/.exec(serverOut)?.[1];
+  const token = (await fs.readFile(path.join(appData, 'page-key'), 'utf8').catch(() => '')).trim();
   const html = await (await fetch(`${BASE}/`)).text();
-  const token = /name="layercake-token" content="([a-f0-9]+)"/.exec(html)?.[1];
-  check('token is injected into served HTML', Boolean(token));
+  check('the page key is kept in LayerCake\'s data folder and printed in the address (#189)', /^[0-9a-f]{64}$/.test(token) && printedKey === token, JSON.stringify({ printedKey: Boolean(printedKey) }));
+  check('the served page does not carry the key (#189)', html.includes('<div id="root">') && !html.includes(token) && !/layercake-token/.test(html));
 
   // Pinned against folder names Claude Code actually created (2026-09-26): a
   // dot and a space are replaced too, not just separators and the colon.
@@ -456,7 +461,7 @@ try {
     },
   });
   check('a cross-site top-level navigation still loads the app', nav.status === 200);
-  check('that navigation still receives a usable token', /layercake-token/.test(await nav.text()));
+  check('that navigation receives the page, with no key in it (#189)', (await nav.text()).includes('<div id="root">'));
   check(
     'HTML denies framing',
     (await fetch(`${BASE}/`)).headers.get('x-frame-options') === 'DENY'
@@ -476,11 +481,62 @@ try {
     (await fetch(`${BASE}/api/manifest`, { headers: { ...H, 'Sec-Fetch-Site': 'cross-site' } })).status === 403
   );
 
+  // --- a launch's challenge, and what it refuses (#189, #190) ---------------
+  // The server proves it knows the key without being sent it: HMAC-SHA256 of a
+  // nonce, computed again here, independently of security.js.
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const hello = await (await fetch(`${BASE}/hello?nonce=${nonce}`)).json().catch(() => ({}));
+  check('/hello answers a nonce with HMAC-SHA256 under the page key, and asks for no key (#189)',
+    hello.proof === crypto.createHmac('sha256', token).update(nonce).digest('hex') && (await fetch(`${BASE}/hello?nonce=x`)).status === 400,
+    JSON.stringify(hello));
+  const { verifyServer } = await import('../desktop/window.js');
+  // A stranger on a port: answers everything, as a squatter would, with a made-up proof.
+  const squatter = http.createServer((req, res) => res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ app: 'LayerCake', proof: '0'.repeat(64) })));
+  await new Promise((r) => squatter.listen(0, '127.0.0.1', r));
+  const squatPort = squatter.address().port;
+  const verdicts = { ours: await verifyServer(PORT, token), squatter: await verifyServer(squatPort, token), wrongKey: await verifyServer(PORT, 'f'.repeat(64)) };
+  // npm run app's launcher, pointed at the squatter: it refuses before it
+  // builds, starts or opens anything. Its own key is smoke's (same data folder).
+  // Spawned, not spawnSync: the squatter answers from this process, which
+  // spawnSync would block.
+  const launcher = await new Promise((resolve) => {
+    const child = spawn(process.execPath, [path.join(ROOT, 'scripts', 'launch.js'), '--port', String(squatPort)], {
+      env: { ...process.env, LAYERCAKE_APPDATA_DIR: appData, LAYERCAKE_BROWSER_PROFILE_DIR: path.join(smokeDir, 'launcher-browser') },
+      windowsHide: true,
+    });
+    const got = { status: null, stdout: '', stderr: '' };
+    child.stdout.setEncoding('utf8').on('data', (c) => (got.stdout += c));
+    child.stderr.setEncoding('utf8').on('data', (c) => (got.stderr += c));
+    const timer = setTimeout(() => child.kill(), 30000);
+    child.on('exit', (code) => {
+      clearTimeout(timer);
+      got.status = code;
+      resolve(got);
+    });
+  });
+  check('npm run app refuses a port held by something that is not this user\'s LayerCake, and opens no window (#189, #190)',
+    launcher.status === 1 && /not your LayerCake/.test(launcher.stderr) && !/Opening/.test(launcher.stdout) && !fsSync.existsSync(path.join(smokeDir, 'launcher-browser')),
+    JSON.stringify({ status: launcher.status, out: launcher.stdout.slice(-300), err: launcher.stderr.slice(-300) }));
+  await new Promise((r) => squatter.close(r));
+  verdicts.nothing = await verifyServer(squatPort, token);
+  check('a launch opens only on its own user\'s LayerCake: ours, not a squatter, not another key, nothing on an empty port (#189, #190)',
+    verdicts.ours === 'ours' && verdicts.squatter === 'foreign' && verdicts.wrongKey === 'foreign' && verdicts.nothing === 'none',
+    JSON.stringify(verdicts));
+  // A service worker planted by a squatter is purged at its next update check.
+  const swCheck = await fetch(`${BASE}/sw.js`, { headers: { 'Service-Worker': 'script' } });
+  check('a service worker update check gets a 404 and clears the site\'s storage (#190)',
+    swCheck.status === 404 && swCheck.headers.get('clear-site-data') === '"storage"', `${swCheck.status} ${swCheck.headers.get('clear-site-data')}`);
+  check('the page is served at / only: any other path is a 404, not the page (#190)',
+    (await fetch(`${BASE}/sw.js`)).status === 404 && (await fetch(`${BASE}/some/route`)).status === 404);
+  const csp = (await fetch(`${BASE}/`)).headers.get('content-security-policy') || '';
+  check('the page\'s policy allows scripts and requests from its own origin only, and no workers (#190)',
+    /script-src 'self'/.test(csp) && /connect-src 'self'/.test(csp) && /worker-src 'none'/.test(csp) && /img-src 'self' data:/.test(csp), csp);
+
   // --- DNS rebinding: the Host guard, on the HTML as well as the API ------
   const rebound = `rebind.example:${PORT}`;
   const reboundHtml = await getWithHost('/', rebound);
   check('HTML refuses a foreign Host header', reboundHtml.status === 403, `got ${reboundHtml.status}`);
-  check('a refused HTML response carries no token', !/layercake-token/.test(reboundHtml.body));
+  check('a refused HTML response carries no key', !reboundHtml.body.includes(token));
   check(
     'API refuses a rebinding request shaped exactly like one (same-origin, valid token, foreign Host)',
     (await getWithHost('/api/manifest', rebound, { 'X-LayerCake-Token': token, 'Sec-Fetch-Site': 'same-origin' }))

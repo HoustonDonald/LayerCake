@@ -12,13 +12,18 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { HOST, createApp, diskStatic, listen } from './app.js';
+import { pageKeyOrRunKey } from './appdata.js';
 import { homeDir, rootState, snapshotRoot } from './paths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const PORT = Number(process.env.PORT || 5178);
 
-const app = createApp({ port: PORT, staticFiles: diskStatic(PUBLIC_DIR) });
+// The page key (#189): /api needs it, and the page gets it only from the
+// address printed below or from a launcher's window.
+const { key, kept, reason } = await pageKeyOrRunKey();
+if (!kept) process.stderr.write(`\nPage key for this run only: ${reason}\n`);
+const app = createApp({ port: PORT, staticFiles: diskStatic(PUBLIC_DIR), key });
 
 try {
   await listen(app, PORT);
@@ -28,7 +33,7 @@ try {
   if (err.code === 'EADDRINUSE') {
     process.stderr.write(
       `\nPort ${PORT} is already in use, most likely by an earlier LayerCake.\n\n` +
-        `  Open the running one:   http://${HOST}:${PORT}\n` +
+        `  Open the running one:   npm run app\n` +
         `  Or free the port:       Stop-Process -Id (Get-NetTCPConnection -LocalPort ${PORT} -State Listen).OwningProcess -Force\n` +
         `  Or use another port:    $env:PORT = 5200; npm start\n\n`
     );
@@ -42,7 +47,9 @@ try {
   process.exit(1);
 }
 
-process.stdout.write(`\nLayerCake  ->  http://${HOST}:${PORT}\n`);
+// With the key in the fragment, which the browser keeps to itself: open this
+// address, not a bare one. It is printed on this user's own console only.
+process.stdout.write(`\nLayerCake  ->  http://${HOST}:${PORT}/#t=${key}\n`);
 process.stdout.write(`Home: ${homeDir()}  Platform: ${process.platform}\n`);
 const snaps = rootState(snapshotRoot);
 process.stdout.write(snaps.error ? `Snapshots: REFUSED. ${snaps.error}\n\n` : `Snapshots: ${snaps.root}\n\n`);

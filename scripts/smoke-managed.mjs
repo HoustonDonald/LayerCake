@@ -149,8 +149,10 @@ export async function runManagedChecks({ root, check, skip, smokeDir }) {
       html = await fetch(`${base}/`).then((r) => (r.ok ? r.text() : null), () => null);
       if (!html) await new Promise((r) => setTimeout(r, 200));
     }
-    const token = /name="layercake-token" content="([a-f0-9]+)"/.exec(html || '')?.[1];
-    check('managed policy: its own server comes up (#147)', Boolean(token), serverOut.slice(-2000));
+    // The page key (#189) is in the address the server prints, never in its HTML.
+    for (let i = 0; i < 100 && !/#t=[0-9a-f]{64}/.test(serverOut); i += 1) await new Promise((r) => setTimeout(r, 50));
+    const token = /#t=([0-9a-f]{64})/.exec(serverOut)?.[1];
+    check('managed policy: its own server comes up (#147)', Boolean(html && token), serverOut.slice(-2000));
     if (!token) return;
     const H = { 'X-LayerCake-Token': token, 'Content-Type': 'application/json' };
     const scanRaw = async () => {

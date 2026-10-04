@@ -18,7 +18,8 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { HOST, openWindow, probe } from '../desktop/window.js';
+import { appAddress, openWindow, probe, verifyServer } from '../desktop/window.js';
+import { ensurePageKey } from '../server/appdata.js';
 import { buildClientIfStale } from './build-if-stale.js';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -71,7 +72,20 @@ if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
   process.stderr.write(`\nNot a usable port: ${opts.port || process.env.PORT}\n\n`);
   process.exit(1);
 }
-const appUrl = `http://${HOST}:${PORT}`;
+// This user's page key (#189); the window gets it in its address.
+const key = await ensurePageKey();
+const appUrl = appAddress(PORT, key);
+
+/** Something answers on the port and is not this user's LayerCake (#189, #190). */
+function refuseForeign() {
+  process.stderr.write(
+    `\nSomething is answering on port ${PORT}, but it is not your LayerCake: another program, or ` +
+      `LayerCake running for another person signed in to this computer. No window was opened on it.\n\n` +
+      `  See what holds it:  Get-NetTCPConnection -LocalPort ${PORT} -State Listen\n` +
+      `  Or use another port: node scripts\\launch.js --port 5200\n\n`
+  );
+  process.exit(1);
+}
 
 /* -------------------------------------------------------------- readiness wait */
 
@@ -98,8 +112,9 @@ async function waitForServer(isDead) {
 
 /** Already serving: attach to it rather than fighting it for the port. */
 if (await probe(PORT)) {
+  if ((await verifyServer(PORT, key)) !== 'ours') refuseForeign();
   process.stdout.write(
-    `\nLayerCake is already running on ${appUrl}. Not starting a second server.\n`
+    `\nLayerCake is already running on port ${PORT}. Not starting a second server.\n`
   );
   process.stdout.write(`Opening the running instance in ${openWindow(appUrl).description}.\n\n`);
   process.stdout.write(
@@ -180,6 +195,13 @@ if (!ready) {
   process.exit(1);
 }
 
+// Our child answered, unless something took the port in the meantime and our
+// child is failing to bind: open the window only on a server that proves it.
+if ((await verifyServer(PORT, key)) !== 'ours') {
+  shuttingDown = true;
+  if (!serverExited) server.kill();
+  refuseForeign();
+}
 serving = true;
 process.stdout.write(`Opening LayerCake in ${openWindow(appUrl).description}.\n`);
 process.stdout.write('Close this window or press Ctrl+C to stop the server.\n\n');

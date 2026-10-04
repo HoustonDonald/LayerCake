@@ -14,13 +14,14 @@
  * Reads go through readForDisplay, the one file-body reader.
  */
 
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { appDataRoot, claudeTrees, isInsideDir } from './paths.js';
 import { readForDisplay } from './readfile.js';
 import { DIR_TIMEOUT_MS, withTimeout } from './safety.js';
-import { atomicWrite } from './snapshot.js';
+import { atomicWrite, createExclusive } from './snapshot.js';
 
 const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 /** Enough history to answer "what has LayerCake cost me"; old entries roll off. */
@@ -181,4 +182,58 @@ export async function listLaunchRecords() {
 /** Where the data lives, for the UI to state. */
 export function dataRoot() {
   return root();
+}
+
+/**
+ * The key LayerCake's own page presents on /api (#189): 32 random bytes in hex,
+ * made once and kept in this user's LayerCake data folder, which in its default
+ * place (%LOCALAPPDATA%) only this user can read. It used to be written into
+ * the page, which anything able to connect to the port could fetch, another
+ * signed-in Windows user included. Now the launch that opens the window hands
+ * it over in the address's fragment (never sent to a server), and every launch
+ * and server reads it from here. Made with an exclusive create, so two first
+ * launches agree on one key; deleting the file makes a new one at next start.
+ */
+const KEY_RE = /^[0-9a-f]{64}$/;
+export async function ensurePageKey() {
+  const file = target('page-key');
+  const fresh = () => `${crypto.randomBytes(32).toString('hex')}\n`;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    let text = null;
+    try {
+      text = (await fs.readFile(file, 'utf8')).trim();
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+    if (text && KEY_RE.test(text)) return text;
+    if (text === null) {
+      try {
+        await createExclusive(file, fresh());
+      } catch (err) {
+        if (err.code !== 'EEXIST') throw err;
+      }
+      continue;
+    }
+    // Empty: another launch is between its placeholder and its rename.
+    // Anything else is not a key (edited by hand): replaced. It guards no file
+    // of the user's, so no snapshot is owed.
+    if (text === '') await new Promise((r) => setTimeout(r, 25));
+    else await atomicWrite(file, fresh());
+  }
+  throw new Error(`Could not read or create LayerCake's page key at ${file}.`);
+}
+
+/**
+ * The page key, or, when the data folder cannot keep one (refused, unwritable),
+ * a key for this run only, with the reason. A server must still start then:
+ * the data folder's problem is reported in the payloads that use it. Only a
+ * launch in the same process (the exe) or the address printed by npm start
+ * can hand that key over; another launch cannot verify such a server.
+ */
+export async function pageKeyOrRunKey() {
+  try {
+    return { key: await ensurePageKey(), kept: true };
+  } catch (err) {
+    return { key: crypto.randomBytes(32).toString('hex'), kept: false, reason: err.message };
+  }
 }

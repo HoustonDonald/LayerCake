@@ -1,10 +1,31 @@
 /**
- * The per-start session token, injected into our HTML by the server.
- * A cross-origin page cannot read it, which is what stops a hostile tab from
- * driving the write endpoints. Read once: a stale token means the server
- * restarted, and the 403 tells the user to reload.
+ * The page key (#189). It is not in our HTML, which anything able to connect
+ * to the port can read, another signed-in Windows user included. The launch
+ * that opens this window puts it in the address's fragment (#t=...), which no
+ * request carries; it is kept in this origin's localStorage, so a reload or a
+ * restarted server (the key is kept across starts) still has it, and taken out
+ * of the address bar at once. A cross-origin page cannot read either. The dev
+ * server (vite.config.js) prints an address with it the same way. Without it, every
+ * /api call answers 403 with a message saying how to open LayerCake.
  */
-const TOKEN = document.querySelector('meta[name="layercake-token"]')?.content || '';
+const KEY_STORE = 'layercake-key';
+const TOKEN = (() => {
+  const fromAddress = /(?:^#|&)t=([0-9a-f]{64})(?:&|$)/.exec(window.location.hash)?.[1];
+  if (fromAddress) {
+    try {
+      localStorage.setItem(KEY_STORE, fromAddress);
+    } catch {
+      /* storage refused: this page load still has it */
+    }
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    return fromAddress;
+  }
+  try {
+    return localStorage.getItem(KEY_STORE) || '';
+  } catch {
+    return '';
+  }
+})();
 
 async function request(url, options = {}) {
   const res = await fetch(url, {
