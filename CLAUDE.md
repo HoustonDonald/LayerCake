@@ -591,6 +591,11 @@ partially. A truncated file restored is silent data loss.
   it (#102). Whoever can plant a junction in a config folder can already write there. A link inside
   a tree (a skill folder that is a junction) is walked too, since Claude Code loads through it
   (measured, #144), and each file behind it names the link and says edits land in the target.
+- **The pre-release review's narrower cases are stated, not fixed** (#196, docs/reference.md "Write
+  posture" Limits): saving a file that is a link breaks the link (the snapshot keeps the bytes);
+  rendered Markdown hides link-reference definitions; a credential is recognised by its name, so a
+  symlink named otherwise is read; launch records and their secrets are kept; another signed-in user
+  can hold the dev build's lock pipe. Error answers carry no stack, and ingest fields are bounded.
 - **Case twins in a case-sensitive folder cannot be edited or deleted.** With `a.md` and `A.md` in a
   folder WSL or `fsutil` made case-sensitive, a snapshot keeps one of them (paths are folded on
   Windows), so a save or delete of either is refused rather than risk the other (#110).

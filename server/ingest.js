@@ -364,17 +364,28 @@ function pendingToolId(s, toolName) {
   return found;
 }
 
+/** At most this many distinct event names are counted; Claude Code has about 25 (#196). */
+const MAX_EVENT_NAMES = 64;
+/** A tool call started and never reported finished stays listed; past this many, the oldest goes (#196). */
+const MAX_RUNNING = 200;
+/** A Windows path is at most 32,767 characters; one in a hook post is clipped well below that (#196). */
+const MAX_PATH_CHARS = 1024;
+
 function applyHook(s, h, at) {
-  const event = str(h.hook_event_name) || 'unknown';
-  const tool = str(h.tool_name);
-  const toolUseId = str(h.tool_use_id);
+  // Every field kept is bounded: a post carries the launch's secret, but its
+  // body is still untrusted, and 40 posts of 4 MB paths once grew the heap by
+  // 158 MB (#196).
+  const event = clip(str(h.hook_event_name), 60) || 'unknown';
+  const tool = clip(str(h.tool_name), 120);
+  const toolUseId = clip(str(h.tool_use_id), 80);
   s.lastHookAt = at;
-  s.hookCounts[event] = (s.hookCounts[event] || 0) + 1;
+  if (event in s.hookCounts || Object.keys(s.hookCounts).length < MAX_EVENT_NAMES) s.hookCounts[event] = (s.hookCounts[event] || 0) + 1;
   if (RESUMING.has(event)) s.waiting = null;
 
   const summary = tool ? toolSummary(tool, h.tool_input) : '';
   if (event === 'PreToolUse' && toolUseId) {
     s.running.set(toolUseId, { name: tool, summary, at });
+    if (s.running.size > MAX_RUNNING) s.running.delete(s.running.keys().next().value);
   } else if ((event === 'PostToolUse' || event === 'PostToolUseFailure' || event === 'PermissionDenied') && toolUseId) {
     s.running.delete(toolUseId);
     if (event === 'PostToolUseFailure') s.toolFailures += 1;
@@ -403,11 +414,11 @@ function applyHook(s, h, at) {
   }
   if (event === 'InstructionsLoaded' && str(h.file_path)) {
     s.instructionsLoaded.push({
-      path: str(h.file_path),
-      memoryType: str(h.memory_type) || null,
-      reason: str(h.load_reason) || null,
-      trigger: str(h.trigger_file_path) || null,
-      parent: str(h.parent_file_path) || null,
+      path: clip(str(h.file_path), MAX_PATH_CHARS),
+      memoryType: clip(str(h.memory_type), 60) || null,
+      reason: clip(str(h.load_reason), 60) || null,
+      trigger: clip(str(h.trigger_file_path), MAX_PATH_CHARS) || null,
+      parent: clip(str(h.parent_file_path), MAX_PATH_CHARS) || null,
       at,
     });
     if (s.instructionsLoaded.length > MAX_EVENTS) s.instructionsLoaded.shift();

@@ -625,6 +625,22 @@ export function createApp({ port, staticFiles, key }) {
   });
   app.use((req, res) => res.status(404).type('text').send('Not found.'));
 
+  // Errors Express raises itself, before any route ran: a malformed or
+  // oversized JSON body, mostly. Its default handler answers with an HTML page
+  // and the stack (NODE_ENV is unset), to anyone, ahead of the token check
+  // (#196). A hook post is still answered with an empty 204, as every hook post
+  // is (ingest.js); anything else with a short JSON message and no stack.
+  // eslint-disable-next-line no-unused-vars
+  app.use((err, req, res, next) => {
+    if (res.headersSent) return res.end();
+    if (req.path.startsWith('/ingest/')) return res.status(204).end();
+    const status = Number.isInteger(err?.status) && err.status >= 400 && err.status < 500 ? err.status : 500;
+    return res.status(status).json({
+      message: status === 413 ? 'The request body is too large.' : status < 500 ? 'The request body could not be read.' : 'The request failed.',
+      code: status === 413 ? 'ETOOLARGE' : status < 500 ? 'EBADBODY' : 'EREQUEST',
+    });
+  });
+
   return app;
 }
 

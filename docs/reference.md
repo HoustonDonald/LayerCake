@@ -487,6 +487,25 @@ understand, and editing an unclassified file is how you corrupt something struct
 the same set. On top of the categories, a file in the plugin cache is read only whatever its
 category (`write.readOnly`; see [02 Plugins](#02-plugins)): the viewer says "read only" and why.
 
+### Limits
+
+Found in the pre-release security review (#196) and kept, each because it needs a narrower case
+than ordinary use:
+
+- **Saving a file that is itself a link breaks the link.** A save writes a new file and renames it
+  over the name, so a configuration file that is a hard link (or a file-level symbolic link) into a
+  dotfiles folder becomes a file of its own, and the other name keeps the old content. Nothing is
+  lost: the snapshot holds the old bytes. A linked *folder* (a junction) is not affected.
+- **Rendered Markdown hides what Markdown hides.** A link-reference definition such as
+  `[//]: # "text"` renders as nothing, so a CLAUDE.md can hold an instruction the rendered view does
+  not show while Claude reads it. **Edit** shows the file's text as it is. Links in rendered
+  Markdown are followed on a click.
+- **A file is recognised as a credential by its name**, so a symbolic link named `x.md` that points
+  at `.credentials.json` would be listed and read. Making one needs a symbolic link in a
+  configuration folder (Developer Mode on Windows), and Claude Code would load it too.
+- **Launch records are kept**, each with its secret, in LayerCake's data folder, so an old launch's
+  session can still report after a restart. They are only readable by you there.
+
 ## Snapshots
 
 A snapshot is a mirrored directory tree plus a `manifest.json`, not an archive format. If this tool
@@ -1388,6 +1407,10 @@ and hot updates go on working. Only this page's own requests (the browser marks 
 same-origin) are presented to the origin guard as the server's page, and Vite's CORS is off so no
 other localhost page can read what the proxy returns. All of it lives in `vite.config.js` and none
 of it reaches a build. The dev server serves the cake at `/favicon.ico` too, straight from `desktop/layercake.ico`.
+
+On a computer shared by several signed-in users, the client build's lock (a named pipe,
+`\\.\pipe\layercake-client-build-<hash>`) can be held by another user, and `npm start` would then wait
+for it (#196; reasoned from the code, not tested). The exe and a built tree are not affected.
 
 `npm run smoke` rebuilds the client first if `public/` is stale (the same rule as `npm start`),
 creates its own fixture tree, starts a server on its own port with its own snapshot

@@ -468,6 +468,12 @@ try {
   );
 
   check('API refuses a request with no token', (await fetch(`${BASE}/api/manifest`)).status === 403);
+  // #196: Express's own errors (a malformed body, before any route) answer
+  // with a short JSON message, never its HTML page and stack.
+  const badBody = await fetch(`${BASE}/api/scan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"dir": ' });
+  const badText = await badBody.text();
+  check('a malformed request body gets a short JSON answer, no stack trace (#196)',
+    badBody.status === 400 && /"code":"EBADBODY"/.test(badText) && !/node_modules|at [A-Za-z.]+ \(|<pre>/.test(badText), `${badBody.status} ${badText.slice(0, 200)}`);
   check(
     'API refuses a wrong token',
     (await fetch(`${BASE}/api/manifest`, { headers: { 'X-LayerCake-Token': 'deadbeef' } })).status === 403

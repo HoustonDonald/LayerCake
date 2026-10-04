@@ -978,6 +978,23 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
     JSON.stringify({ counts: ld.wrapped.hookCounts, running: ld.wrapped.running }));
   check('an event named "constructor" is counted as a number', ld.wrapped.hookCounts.constructor === 1, JSON.stringify(ld.wrapped.hookCounts));
 
+  // #196: every field kept from a hook post is bounded.
+  const huge = 'x'.repeat(5000);
+  await hookVia(ingest, { session_id: lid, hook_event_name: 'InstructionsLoaded', file_path: `C:\\${huge}\\CLAUDE.md`, load_reason: huge });
+  await hookVia(ingest, { session_id: lid, hook_event_name: huge });
+  for (let i = 0; i < 70; i += 1) await hookVia(ingest, { session_id: lid, hook_event_name: `Made-up-${i}` });
+  ld = await session(lid);
+  const loaded = ld.wrapped.instructionsLoaded.at(-1) || {};
+  const names = Object.keys(ld.wrapped.hookCounts);
+  check('fields kept from a hook post are bounded: a path, a reason, event names and their number (#196)',
+    loaded.path?.length <= 1024 && loaded.reason?.length <= 60 && names.every((k) => k.length <= 60) && names.length <= 64,
+    JSON.stringify({ path: loaded.path?.length, reason: loaded.reason?.length, longest: Math.max(...names.map((k) => k.length)), names: names.length }));
+  // A malformed body is a value too: still an empty 204.
+  const torn = await fetch(`${base}/ingest/${launchId}/${secret}/hook`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"session_id": "torn' });
+  const tornBody = await torn.text();
+  allEmpty = allEmpty && torn.status === 204 && tornBody.length === 0;
+  check('a hook post with a malformed body is answered with an empty 204, no error page (#196)', torn.status === 204 && tornBody === '', `${torn.status} ${tornBody.slice(0, 120)}`);
+
   check('every hook answer is 204 with an EMPTY body, on every path above', allEmpty);
   check('no response carries a hook\'s tool input', !bodies.join('\n').includes(SENTINELS.hookToolInput));
 }

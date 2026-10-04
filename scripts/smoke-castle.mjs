@@ -139,7 +139,16 @@ export async function runCastleChecks({ base, token, check, smokeDir, claudeData
   const scan = JSON.parse((await postRaw(base, '/api/scan', { dir: proj }, H)).body);
   const scanId = scan.scanId;
 
-  check('the castle stream refuses a request with no token', (await get(base, `/api/castle/stream?scanId=${scanId}`, {})).status === 403);
+  // Headers only, and a deadline: a stream wrongly let through never ends, and
+  // must fail this check rather than hang the run (a mutant accepting any key did).
+  const keyless = await fetch(`${base}/api/castle/stream?scanId=${scanId}`, { signal: AbortSignal.timeout(5000) }).then(
+    (r) => {
+      r.body?.cancel().catch(() => {});
+      return r.status;
+    },
+    () => 'no answer in 5 s'
+  );
+  check('the castle stream refuses a request with no token', keyless === 403, String(keyless));
   check('the castle stream refuses an unknown scan', (await get(base, '/api/castle/stream?scanId=scan-nope', H)).status === 404);
 
   // A dry-run launch gives this project a hook channel of its own.
