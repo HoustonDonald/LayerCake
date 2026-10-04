@@ -30,11 +30,21 @@ project, not made by or affiliated with Anthropic.
 
 1. Download **LayerCake.exe** from the
    [latest release](https://github.com/HoustonDonald/LayerCake/releases/latest).
-2. Double-click it. There is nothing to install. Its window opens in Edge, which comes with Windows
+2. Unblock it. Windows marks a file downloaded from the internet, and because LayerCake is not
+   code-signed, that mark makes Windows stop it on first run. To clear the mark:
+   1. Right-click **LayerCake.exe** and choose **Properties** (or select it and press Alt+Enter).
+   2. On the **General** tab, at the bottom, tick **Unblock**.
+   3. Click **OK**.
+
+   <img src="docs/images/unblock.png" width="320" alt="LayerCake.exe Properties, General tab: at the bottom, the Security line reads 'This file came from another computer and might be blocked to help protect this computer', with the Unblock checkbox outlined in red, not yet ticked"> <img src="docs/images/unblock-ticked.png" width="320" alt="The same Properties dialog with the Unblock checkbox ticked, ready for OK">
+
+   No **Unblock** checkbox means the file has no mark, and there is nothing to do. In PowerShell,
+   `Unblock-File .\LayerCake.exe` does the same thing.
+3. Double-click it. There is nothing to install. Its window opens in Edge, which comes with Windows
    (Chrome works too).
-   - Windows may say **"Windows protected your PC"**, because the file is not code-signed. Click
-     **More info**, then **Run anyway**.
-3. In the LayerCake window, type a project folder, such as `C:\dev\my-project`, and press **Scan**.
+   - If you skipped step 2, Windows may say **"Windows protected your PC"**. Click **More info**, then
+     **Run anyway**.
+4. In the LayerCake window, type a project folder, such as `C:\dev\my-project`, and press **Scan**.
 
 Close the window to stop LayerCake.
 

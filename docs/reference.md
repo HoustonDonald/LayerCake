@@ -1384,7 +1384,8 @@ What to know:
   change it, which would expose the running server's key and the window's history (#199). Keep them
   under your own profile.
 - **It is unsigned.** Fine on the machine that built it. Downloaded onto another machine (so marked
-  as coming from the internet), SmartScreen will warn on first run.
+  as coming from the internet), SmartScreen will warn on first run, unless the file is unblocked
+  first (Properties, **Unblock**, or `Unblock-File`; the README's "Get started" has screenshots).
 - **The CLI is not in it.** `layercake here` still runs from source (`npm run cli -- here`).
 - **It follows the browser profile, not just its own browser.** If an Edge for the LayerCake profile
   is already running (a window left open after the server was killed, say, or an `npm run app`
