@@ -21,7 +21,7 @@ import path from 'node:path';
 import { appDataRoot, claudeTrees, isInsideDir } from './paths.js';
 import { readForDisplay } from './readfile.js';
 import { DIR_TIMEOUT_MS, withTimeout } from './safety.js';
-import { atomicWrite, createExclusive } from './snapshot.js';
+import { atomicWrite } from './snapshot.js';
 
 const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 /** Enough history to answer "what has LayerCake cost me"; old entries roll off. */
@@ -185,55 +185,82 @@ export function dataRoot() {
 }
 
 /**
- * The key LayerCake's own page presents on /api (#189): 32 random bytes in hex,
- * made once and kept in this user's LayerCake data folder, which in its default
- * place (%LOCALAPPDATA%) only this user can read. It used to be written into
- * the page, which anything able to connect to the port could fetch, another
- * signed-in Windows user included. Now the launch that opens the window hands
- * it over in the address's fragment (never sent to a server), and every launch
- * and server reads it from here. Made with an exclusive create, so two first
- * launches agree on one key; deleting the file makes a new one at next start.
+ * The page key for one run of a server (#189, #198): 32 random bytes in hex,
+ * new every time a server starts, so a key that ever leaked dies with its run.
+ * It is never in the page: the launch that opens the window hands it over in
+ * the address's fragment, and the page keeps it for that tab only.
  */
+export function newRunKey() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
 const KEY_RE = /^[0-9a-f]{64}$/;
-export async function ensurePageKey() {
-  const file = target('page-key');
-  const fresh = () => `${crypto.randomBytes(32).toString('hex')}\n`;
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    let text = null;
-    try {
-      text = (await fs.readFile(file, 'utf8')).trim();
-    } catch (err) {
-      if (err.code !== 'ENOENT') throw err;
-    }
-    if (text && KEY_RE.test(text)) return text;
-    if (text === null) {
-      try {
-        await createExclusive(file, fresh());
-      } catch (err) {
-        if (err.code !== 'EEXIST') throw err;
-      }
-      continue;
-    }
-    // Empty: another launch is between its placeholder and its rename.
-    // Anything else is not a key (edited by hand): replaced. It guards no file
-    // of the user's, so no snapshot is owed.
-    if (text === '') await new Promise((r) => setTimeout(r, 25));
-    else await atomicWrite(file, fresh());
+
+/**
+ * The running server's record, { port, key, pid, startedAt }, written once it
+ * listens: how a launch finds this user's LayerCake, on a port Windows chose
+ * (#198), and the key it must prove it holds before a window opens on it. In
+ * LayerCake's data folder, which in its default place (%LOCALAPPDATA%) only
+ * this user can read. A record left by a server that has gone is harmless: the
+ * launch's challenge fails and it starts its own.
+ */
+export async function writeRunRecord(record) {
+  await atomicWrite(target('server.json'), `${JSON.stringify(record)}\n`);
+}
+
+/** The run record, or null when there is none or it is not one. */
+export async function readRunRecord() {
+  let parsed;
+  try {
+    parsed = JSON.parse(await fs.readFile(target('server.json'), 'utf8'));
+  } catch {
+    return null;
   }
-  throw new Error(`Could not read or create LayerCake's page key at ${file}.`);
+  const { port, key, pid } = parsed || {};
+  if (!Number.isInteger(port) || port < 1 || port > 65535 || !KEY_RE.test(String(key)) || !Number.isInteger(pid)) return null;
+  return { port, key, pid, startedAt: typeof parsed.startedAt === 'string' ? parsed.startedAt : null };
 }
 
 /**
- * The page key, or, when the data folder cannot keep one (refused, unwritable),
- * a key for this run only, with the reason. A server must still start then:
- * the data folder's problem is reported in the payloads that use it. Only a
- * launch in the same process (the exe) or the address printed by npm start
- * can hand that key over; another launch cannot verify such a server.
+ * The page's preferences (#198): the last and recent folders, muted files and
+ * the notification choice. They lived in the browser's storage, which belongs
+ * to the page's origin, and every run is a new origin now (a new port), so they
+ * are kept here instead. The server stores them and never acts on them: a mute
+ * still filters nothing it sends (#13). Each field is checked; anything else
+ * is dropped.
  */
-export async function pageKeyOrRunKey() {
-  try {
-    return { key: await ensurePageKey(), kept: true };
-  } catch (err) {
-    return { key: crypto.randomBytes(32).toString('hex'), kept: false, reason: err.message };
+const PREF_TEXT = 4096;
+const textPref = (v) => (typeof v === 'string' && v.length <= PREF_TEXT ? v : undefined);
+function cleanPrefs(input) {
+  const p = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const out = {};
+  if (p.lastDir === null) out.lastDir = null;
+  else if (textPref(p.lastDir) !== undefined) out.lastDir = p.lastDir;
+  if (Array.isArray(p.recent)) out.recent = p.recent.filter((d) => textPref(d) !== undefined).slice(0, 12);
+  if (p.muted && typeof p.muted === 'object' && !Array.isArray(p.muted)) {
+    out.muted = Object.fromEntries(
+      Object.entries(p.muted)
+        .filter(([k, v]) => textPref(k) !== undefined && textPref(v) !== undefined)
+        .slice(0, 2000)
+    );
   }
+  if (typeof p.notify === 'boolean') out.notify = p.notify;
+  return out;
+}
+
+export async function readPrefs() {
+  return cleanPrefs(await readJson(target('prefs.json')));
+}
+
+// One update at a time, so two quick changes (a mute, then a folder) cannot
+// read the same old file and lose one of them.
+let prefsQueue = Promise.resolve();
+export function updatePrefs(patch) {
+  const run = prefsQueue.then(async () => {
+    const next = { ...(await readPrefs()), ...cleanPrefs(patch) };
+    await atomicWrite(target('prefs.json'), `${JSON.stringify(next, null, 2)}\n`);
+    return next;
+  });
+  prefsQueue = run.catch(() => {});
+  return run;
 }

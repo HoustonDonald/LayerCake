@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { watchScan } from './api.js';
+import { getPrefs, savePrefs, watchScan } from './api.js';
 
 /**
  * Live filesystem changes for the current scan.
@@ -11,7 +11,6 @@ import { watchScan } from './api.js';
  * carries a button rather than a countdown.
  */
 
-const NOTIFY_KEY = 'layercake.notifyOnChange';
 
 /**
  * How long a path stays suppressed after LayerCake writes it.
@@ -38,12 +37,13 @@ function pathKey(p) {
  * Files the viewer has muted in the bar (#13): lowercased-on-win32 path ->
  * the path as the server spelled it, kept for display.
  *
- * A mute is this viewer's preference about what may light the bar, so it lives
- * in this browser and nowhere else. The server never hears of it and keeps
- * reporting every event: the stream stays a truthful account of the disk, and
- * the mute decides only what the bar does about one file.
+ * A mute is a preference about what may light the bar. It is kept in
+ * LayerCake's data folder (/api/prefs, #198), since each run is a new browser
+ * origin and the browser's storage starts empty; the server stores it and never
+ * acts on it, and keeps reporting every event: the stream stays a truthful
+ * account of the disk, and the mute decides only what the bar does about one
+ * file (#13).
  */
-const MUTE_KEY = 'layercake.watch.muted';
 
 /**
  * Unlike pathKey above, case is folded only where the filesystem folds it.
@@ -54,29 +54,10 @@ function muteKeyFor(platform) {
   return (p) => (platform === 'win32' ? String(p || '').toLowerCase() : String(p || ''));
 }
 
-/**
- * The stored mutes. Storage can be blocked, cleared or edited by hand: odd
- * content reads as no mutes, and storage that cannot be read at all as null,
- * so a caller can tell "none stored" from "cannot know".
- */
-function readMuted() {
-  let raw;
-  try {
-    raw = localStorage.getItem(MUTE_KEY);
-  } catch {
-    return null;
-  }
-  try {
-    const stored = JSON.parse(raw || '{}');
-    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return new Map();
-    return new Map(Object.entries(stored).filter(([, shown]) => typeof shown === 'string'));
-  } catch {
-    return new Map();
-  }
-}
-
-function loadMuted() {
-  return readMuted() || new Map();
+/** The stored mutes, as a Map; anything odd reads as none. */
+function mutedFrom(stored) {
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return new Map();
+  return new Map(Object.entries(stored).filter(([, shown]) => typeof shown === 'string'));
 }
 
 export default function useWatch(scanId, platform) {
@@ -87,14 +68,29 @@ export default function useWatch(scanId, platform) {
   // permission once shared it, and the bar then read "Not watching for
   // changes" and hid real events until a rescan (#128).
   const [notifyError, setNotifyError] = useState(null);
-  const [notify, setNotify] = useState(() => {
-    try {
-      return localStorage.getItem(NOTIFY_KEY) === 'yes';
-    } catch {
-      return false;
-    }
-  });
-  const [muted, setMuted] = useState(loadMuted);
+  const [notify, setNotify] = useState(false);
+  const [muted, setMuted] = useState(() => new Map());
+  // The stored preferences, once. Notification permission belongs to the
+  // browser origin, and each run is a new one (#198), so a stored "notify"
+  // takes effect only where the browser already allows it; otherwise the bar
+  // says it needs allowing again.
+  useEffect(() => {
+    let alive = true;
+    getPrefs()
+      .then((p) => {
+        if (!alive) return;
+        setMuted(mutedFrom(p.muted));
+        if (p.notify === true) {
+          const allowed = 'Notification' in window && Notification.permission === 'granted';
+          setNotify(allowed);
+          if (!allowed) setNotifyError('Change notifications were on: LayerCake opens on a new address each run, so allow them again with Notify me.');
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const keyOf = useMemo(() => muteKeyFor(platform), [platform]);
   const isMuted = useCallback((p) => muted.has(keyOf(p)), [muted, keyOf]);
@@ -109,41 +105,26 @@ export default function useWatch(scanId, platform) {
   const isMutedRef = useRef(isMuted);
   isMutedRef.current = isMuted;
 
-  // A toggle starts from what is STORED, not this tab's copy: another tab may
-  // have muted something since, and writing this tab's older list back erased
-  // it (#77). Storage that cannot be read falls back to this tab's list.
+  // A toggle starts from what is STORED, not this window's copy: another
+  // window may have muted something since, and writing this window's older
+  // list back erased it (#77). Stored preferences that cannot be read fall back
+  // to this window's list. Another window sees the change on its next toggle
+  // or reload.
   const toggleMute = useCallback(
-    (absPath) => {
+    async (absPath) => {
+      const stored = await getPrefs().then((p) => mutedFrom(p.muted), () => null);
+      const key = keyOf(absPath);
       setMuted((prev) => {
-        const next = new Map(readMuted() || prev);
-        const key = keyOf(absPath);
+        const next = new Map(stored || prev);
         if (next.has(key)) next.delete(key);
         else next.set(key, absPath);
+        // Idempotent, so React running this updater twice costs a repeat only.
+        savePrefs({ muted: Object.fromEntries(next) }).catch(() => {});
         return next;
       });
     },
     [keyOf]
   );
-
-  // Another tab changed the mutes: take its list, so this bar agrees with it
-  // without a reload (#77). The event fires only in the OTHER tabs.
-  useEffect(() => {
-    const onStorage = (e) => {
-      if (e.key === MUTE_KEY || e.key === null) setMuted(loadMuted());
-    };
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
-  }, []);
-
-  // Written after the change rather than inside the updater, which React may
-  // run twice.
-  useEffect(() => {
-    try {
-      localStorage.setItem(MUTE_KEY, JSON.stringify(Object.fromEntries(muted)));
-    } catch {
-      /* blocked storage: the mute holds until this tab closes */
-    }
-  }, [muted]);
 
   const suppress = useCallback((paths) => {
     const until = Date.now() + SUPPRESS_MS;
@@ -211,11 +192,7 @@ export default function useWatch(scanId, platform) {
     if (permission === 'default') permission = await Notification.requestPermission();
     const granted = permission === 'granted';
     setNotify(granted);
-    try {
-      localStorage.setItem(NOTIFY_KEY, granted ? 'yes' : 'no');
-    } catch {
-      /* private mode: the toggle just does not persist */
-    }
+    savePrefs({ notify: granted }).catch(() => {});
     setNotifyError(granted ? null : 'Notifications are blocked for this site. Re-enable them in site settings.');
     return granted;
   }, []);
@@ -223,11 +200,7 @@ export default function useWatch(scanId, platform) {
   const disableNotifications = useCallback(() => {
     setNotify(false);
     setNotifyError(null);
-    try {
-      localStorage.setItem(NOTIFY_KEY, 'no');
-    } catch {
-      /* not worth reporting */
-    }
+    savePrefs({ notify: false }).catch(() => {});
   }, []);
 
   const notifySupported = useMemo(() => typeof window !== 'undefined' && 'Notification' in window, []);

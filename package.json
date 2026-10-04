@@ -30,7 +30,7 @@
     "build:exe": "node desktop/build.mjs",
     "server": "node server/index.js",
     "dev:client": "vite",
-    "dev:server": "node server/index.js"
+    "dev:server": "node server/index.js --port 5178"
   },
   "dependencies": {
     "diff": "^9.0.0",

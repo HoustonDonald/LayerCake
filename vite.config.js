@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-import { ensurePageKey } from './server/appdata.js';
+import { readRunRecord } from './server/appdata.js';
 
 const API_PORT = process.env.PORT || 5178;
 const API_ORIGIN = `http://127.0.0.1:${API_PORT}`;
@@ -47,10 +47,12 @@ function favicon() {
  * Dev only (npm run dev:client; `apply: 'serve'` keeps it out of every build).
  * Every /api route requires the page key (#189), which no page carries: the
  * production window is handed it in its address fragment. The dev page gets it
- * the same way: this prints the address to open, key included, on the
- * developer's own console once Vite is listening. Never in the HTML, which
- * anything that can reach the port could read. Opened once, the page keeps the
- * key in this origin's localStorage, so reloads and HMR keep working.
+ * the same way: this prints the address to open, with the key of the running
+ * dev:server (its run record, #198), on the developer's own console once Vite
+ * is listening. Never in the HTML, which anything that can reach the port could
+ * read. The page keeps the key for its tab, so reloads and HMR keep working; a
+ * restarted dev:server has a new key, and Vite prints the address again when
+ * it is restarted too.
  */
 function devPageAddress() {
   return {
@@ -58,9 +60,13 @@ function devPageAddress() {
     apply: 'serve',
     configureServer(server) {
       server.httpServer?.once('listening', async () => {
-        const key = await ensurePageKey();
+        const record = await readRunRecord();
         const { port } = server.httpServer.address();
-        server.config.logger.info(`\n  LayerCake dev page:  http://localhost:${port}/#t=${key}\n`);
+        if (record && String(record.port) === String(API_PORT)) {
+          server.config.logger.info(`\n  LayerCake dev page:  http://localhost:${port}/#t=${record.key}\n`);
+        } else {
+          server.config.logger.warn(`\n  No LayerCake dev server on ${API_PORT}: start "npm run dev:server", then restart this one.\n`);
+        }
       });
     },
   };

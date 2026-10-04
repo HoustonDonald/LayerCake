@@ -1,19 +1,19 @@
 /**
- * The page key (#189). It is not in our HTML, which anything able to connect
- * to the port can read, another signed-in Windows user included. The launch
- * that opens this window puts it in the address's fragment (#t=...), which no
- * request carries; it is kept in this origin's localStorage, so a reload or a
- * restarted server (the key is kept across starts) still has it, and taken out
- * of the address bar at once. A cross-origin page cannot read either. The dev
- * server (vite.config.js) prints an address with it the same way. Without it, every
- * /api call answers 403 with a message saying how to open LayerCake.
+ * The page key for this server's run (#189, #198). It is not in our HTML, which
+ * anything able to connect to the port can read, another signed-in Windows user
+ * included. The launch that opens this window puts it in the address after #t=
+ * (a part no request carries); it is taken out of the address bar at once and
+ * kept in sessionStorage, for this tab only, so a reload still has it. Each run
+ * of the server has its own key and its own port (a new origin), so a key a
+ * stranger could ever read from this tab is a dead one. Without it, every /api
+ * call answers 403 with a message saying how to open LayerCake.
  */
 const KEY_STORE = 'layercake-key';
 const TOKEN = (() => {
   const fromAddress = /(?:^#|&)t=([0-9a-f]{64})(?:&|$)/.exec(window.location.hash)?.[1];
   if (fromAddress) {
     try {
-      localStorage.setItem(KEY_STORE, fromAddress);
+      sessionStorage.setItem(KEY_STORE, fromAddress);
     } catch {
       /* storage refused: this page load still has it */
     }
@@ -21,7 +21,7 @@ const TOKEN = (() => {
     return fromAddress;
   }
   try {
-    return localStorage.getItem(KEY_STORE) || '';
+    return sessionStorage.getItem(KEY_STORE) || '';
   } catch {
     return '';
   }
@@ -49,6 +49,19 @@ async function request(url, options = {}) {
     throw err;
   }
   return payload;
+}
+
+/** The page's preferences, kept in LayerCake's data folder (#198). */
+export function getPrefs() {
+  return request('/api/prefs');
+}
+
+export function savePrefs(patch) {
+  return request('/api/prefs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
 }
 
 export function getManifest() {

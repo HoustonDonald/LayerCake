@@ -50,7 +50,8 @@ import {
   readSnapshotFile,
 } from './snapshot.js';
 import { MAX_FILE_BYTES, isSecret, describeError, writePolicy } from './safety.js';
-import { hostGuard, keyProof, originGuard, requireToken } from './security.js';
+import { readPrefs, updatePrefs } from './appdata.js';
+import { hostGuard, keyProof, originGuard, portOf, requireToken } from './security.js';
 import { registerSessionRoutes } from './session-routes.js';
 import { closeCastleStreamsFor, registerCastleRoutes } from './castle-routes.js';
 import { listLaunches, registerIngestRoutes } from './ingest.js';
@@ -138,20 +139,21 @@ function registerScan(lineage) {
 }
 
 /**
- * Builds the app. `port` is the one it will listen on, which the origin guard
- * needs to recognise our own pages; `staticFiles` is where the client comes from
- * (diskStatic or memoryStatic below); `key` is the page key (ensurePageKey in
- * appdata.js, #189), which every /api request must present.
+ * Builds the app. `staticFiles` is where the client comes from (diskStatic or
+ * memoryStatic below); `key` is this run's page key (newRunKey in appdata.js,
+ * #189, #198), which every /api request must present. The port is not needed
+ * here: a server may bind port 0, and the guards read the port each request
+ * arrived on (portOf in security.js).
  */
-export function createApp({ port, staticFiles, key }) {
-  if (!/^[0-9a-f]{64}$/.test(String(key || ''))) throw new Error('createApp needs the page key (ensurePageKey in appdata.js)');
+export function createApp({ staticFiles, key }) {
+  if (!/^[0-9a-f]{64}$/.test(String(key || ''))) throw new Error('createApp needs the page key (newRunKey in appdata.js)');
   // Where Claude Code's home is, for the session routes before the first scan
   // (#64). In the background: a home on a slow share must not delay startup.
   resolveConfigHome().catch(() => {});
   const app = express();
   // First, and on every route including the HTML: see hostGuard for why this
   // one, unlike the origin guard below, must not be scoped to /api.
-  app.use(hostGuard(port));
+  app.use(hostGuard());
   // A browser checking a service worker for an update sends Service-Worker:
   // script. We register none, so one only exists if something else answered
   // on this port once and planted it in the window's profile, where it would
@@ -203,10 +205,31 @@ export function createApp({ port, staticFiles, key }) {
   app.get('/hello', (req, res) => {
     const nonce = String(req.query.nonce || '');
     if (!/^[0-9a-f]{32,128}$/.test(nonce)) return res.status(400).json({ message: 'A hex nonce is required.', code: 'ENONCE' });
-    res.set('Cache-Control', 'no-store').json({ app: 'LayerCake', proof: keyProof(key, nonce) });
+    res.set('Cache-Control', 'no-store').json({ app: 'LayerCake', proof: keyProof(key, portOf(req), nonce) });
   });
-  app.use('/api', originGuard(port));
+  app.use('/api', originGuard());
   app.use('/api', requireToken(key));
+
+  /**
+   * The page's preferences (#198): last and recent folders, mutes, the notify
+   * choice. Kept in LayerCake's data folder because each run is a new origin
+   * and the browser's storage starts empty; checked field by field in
+   * appdata.js. The server never acts on them: a mute filters nothing (#13).
+   */
+  app.get('/api/prefs', async (req, res) => {
+    try {
+      res.json(await readPrefs());
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+  app.post('/api/prefs', async (req, res) => {
+    try {
+      res.json(await updatePrefs(req.body));
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
 
   /** The scan manifest, so the UI can show exactly what will be probed. */
   app.get('/api/manifest', (req, res) => {
@@ -589,7 +612,7 @@ export function createApp({ port, staticFiles, key }) {
     if (!scan) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan first.', code: 'ESCANGONE' });
     try {
       const screen = req.body?.screen && typeof req.body.screen === 'object' ? req.body.screen : null;
-      return res.json(await launchClaude({ dir: scan.lineage.projectDir, port, screen }));
+      return res.json(await launchClaude({ dir: scan.lineage.projectDir, port: portOf(req), screen }));
     } catch (err) {
       return sendError(res, err);
     }
@@ -607,7 +630,9 @@ export function createApp({ port, staticFiles, key }) {
   // route (/api/validate, #67) still looked like it existed.
   app.use('/api', (req, res) => res.status(404).json({ message: 'No such API route.', code: 'ENOROUTE' }));
 
-  // Assets are served normally; the page holds no secret.
+  // Assets are served normally; the page holds no secret. Not index.html under
+  // its own name: the page is served at / only (#199).
+  app.use((req, res, next) => (req.path.toLowerCase() === '/index.html' ? res.status(404).type('text').send('Not found.') : next()));
   app.use(staticFiles.middleware);
 
   // The page at / only. It has no routes of its own, and answering every path
@@ -615,7 +640,12 @@ export function createApp({ port, staticFiles, key }) {
   app.get('/', async (req, res) => {
     try {
       const html = await staticFiles.readIndexHtml();
-      res.type('html').set('Cache-Control', 'no-store').send(html);
+      // The origin's cache is cleared before the page's own files load (#198):
+      // a stranger who once answered on this address could have left a script
+      // there under the bundle's name (it is predictable from the source), and
+      // the page would run it. A new port every run makes that a new origin;
+      // this covers a fixed PORT too.
+      res.type('html').set('Cache-Control', 'no-store').set('Clear-Site-Data', '"cache"').send(html);
     } catch {
       res
         .status(503)

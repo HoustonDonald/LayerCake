@@ -220,15 +220,18 @@ export function localTime(iso) {
  */
 const OWN_SGR = new Set(['1', '2', '22', '31', '32', '33', '34', '36', '39']);
 const caret = (c) => {
-  const code = c.charCodeAt(0);
+  const code = c.codePointAt(0);
   if (code < 0x20 || code === 0x7f) return `^${String.fromCharCode(code ^ 0x40)}`;
   return `<U+${code.toString(16).toUpperCase().padStart(4, '0')}>`;
 };
 export function sanitize(text) {
   return String(text)
     .replace(/\r\n/g, '\n')
-    .replace(/\u001b\[([0-9;]*)m|[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, (m, params) =>
-      params !== undefined && params.split(';').every((p) => OWN_SGR.has(p)) ? m : m.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, caret)
+    // Also invisible marks that reorder or hide text (#199): the Arabic letter
+    // mark, zero-width and joiner characters, line and paragraph separators, a
+    // byte-order mark, and the tag characters, which spell text unseen.
+    .replace(/\u001b\[([0-9;]*)m|[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff\u{e0000}-\u{e007f}]/gu, (m, params) =>
+      params !== undefined && params.split(';').every((p) => OWN_SGR.has(p)) ? m : m.replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff\u{e0000}-\u{e007f}]/gu, caret)
     );
 }
 

@@ -12,39 +12,55 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { HOST, createApp, diskStatic, listen } from './app.js';
-import { pageKeyOrRunKey } from './appdata.js';
+import { newRunKey, writeRunRecord } from './appdata.js';
 import { homeDir, rootState, snapshotRoot } from './paths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
-const PORT = Number(process.env.PORT || 5178);
+// A fixed port only when asked for (--port N or PORT): otherwise Windows picks
+// a free one at bind time (port 0), a new one every run (#198), so every run is
+// a new browser origin and nothing a stranger planted under one origin (a
+// script in the cache, a service worker, the stored key) reaches the next.
+const portArg = process.argv.indexOf('--port');
+const FIXED = portArg !== -1 ? Number(process.argv[portArg + 1]) : process.env.PORT ? Number(process.env.PORT) : null;
+if (FIXED !== null && !(Number.isInteger(FIXED) && FIXED > 0 && FIXED < 65536)) {
+  process.stderr.write(`\nNot a port: ${process.argv[portArg + 1] ?? process.env.PORT}\n\n`);
+  process.exit(1);
+}
 
-// The page key (#189): /api needs it, and the page gets it only from the
-// address printed below or from a launcher's window.
-const { key, kept, reason } = await pageKeyOrRunKey();
-if (!kept) process.stderr.write(`\nPage key for this run only: ${reason}\n`);
-const app = createApp({ port: PORT, staticFiles: diskStatic(PUBLIC_DIR), key });
+// The page key for this run (#189, #198): /api needs it, and the page gets it
+// only from the address printed below or from a launcher's window.
+const key = newRunKey();
+const app = createApp({ staticFiles: diskStatic(PUBLIC_DIR), key });
 
+let server;
 try {
-  await listen(app, PORT);
+  server = await listen(app, FIXED ?? 0);
 } catch (err) {
-  // A busy port is an ordinary condition, usually a previous instance still
-  // running. Say what to do about it instead of dumping a stack trace.
+  // A busy fixed port is an ordinary condition, usually a previous instance
+  // still running. Say what to do about it instead of dumping a stack trace.
   if (err.code === 'EADDRINUSE') {
     process.stderr.write(
-      `\nPort ${PORT} is already in use, most likely by an earlier LayerCake.\n\n` +
+      `\nPort ${FIXED} is already in use, most likely by an earlier LayerCake.\n\n` +
         `  Open the running one:   npm run app\n` +
-        `  Or free the port:       Stop-Process -Id (Get-NetTCPConnection -LocalPort ${PORT} -State Listen).OwningProcess -Force\n` +
-        `  Or use another port:    $env:PORT = 5200; npm start\n\n`
+        `  Or free the port:       Stop-Process -Id (Get-NetTCPConnection -LocalPort ${FIXED} -State Listen).OwningProcess -Force\n` +
+        `  Or let Windows pick one: npm start, with PORT unset\n\n`
     );
   } else if (err.code === 'EACCES') {
-    process.stderr.write(
-      `\nNot allowed to bind port ${PORT}. Pick a port above 1024: $env:PORT = 5200; npm start\n\n`
-    );
+    process.stderr.write(`\nNot allowed to bind port ${FIXED}. Leave PORT unset and Windows picks a free one.\n\n`);
   } else {
     process.stderr.write(`\nCould not start the server: ${err.message}\n\n`);
   }
   process.exit(1);
+}
+const PORT = server.address().port;
+
+// How a launch finds this server and checks it is its user's (#198). A data
+// folder that cannot hold it costs only that: the address below still works.
+try {
+  await writeRunRecord({ port: PORT, key, pid: process.pid, startedAt: new Date().toISOString() });
+} catch (err) {
+  process.stderr.write(`\nRun record not written, so npm run app cannot find this server: ${err.message}\n`);
 }
 
 // With the key in the fragment, which the browser keeps to itself: open this

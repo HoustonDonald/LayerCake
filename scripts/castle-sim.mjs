@@ -93,6 +93,13 @@ export async function startSim({ project, port = 5190 }) {
       LAYERCAKE_APPDATA_DIR: path.join(simRoot, 'appdata'),
       LAYERCAKE_SNAPSHOT_DIR: path.join(simRoot, 'snapshots'),
       LAYERCAKE_CLAUDE_DATA_DIR: claudeData,
+      // A configuration home and user folder of its own (#199): its window has
+      // a DevTools port another signed-in user could reach, and nothing reached
+      // through this server may write the real settings. The Castle needs
+      // neither; replay copies the transcripts it reads into claudeData.
+      CLAUDE_CONFIG_DIR: path.join(simRoot, 'config-home'),
+      USERPROFILE: path.join(simRoot, 'home'),
+      HOME: path.join(simRoot, 'home'),
     },
     stdio: 'ignore',
   });
@@ -113,9 +120,9 @@ export async function startSim({ project, port = 5190 }) {
     server.kill();
     throw new Error(`the scratch server did not answer on ${base} (is port ${port} in use? --port picks another)`);
   }
-  // The page key (#189): made by the scratch server in its own data folder
-  // before it listens, never in its HTML.
-  const token = fs.readFileSync(path.join(simRoot, 'appdata', 'page-key'), 'utf8').trim();
+  // The page key (#189, #198): in the scratch server's run record, written once
+  // it listens; never in its HTML.
+  const token = JSON.parse(fs.readFileSync(path.join(simRoot, 'appdata', 'server.json'), 'utf8')).key;
   const H = { 'X-LayerCake-Token': token, 'Content-Type': 'application/json' };
   // The address a window opens at: the key in the fragment, as a launch does.
   const pageUrl = `${base}/#t=${token}`;

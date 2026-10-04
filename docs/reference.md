@@ -630,11 +630,13 @@ is still listed (marked muted), and still goes into a Rescan; what it loses is t
 bar, or to raise a desktop notification. So a file that changes every few seconds, `~/.claude.json`
 while Claude Code runs, stops burying the change you care about without disappearing. Muted files
 that have not changed are behind a `1 muted` button in the bar, each with **Unmute**, so a mute set
-long ago cannot quietly hide a file. A mute is a preference of this browser: it is kept in
-`localStorage` (`layercake.watch.muted`, keyed by the path, lowercased on Windows), applies to that
-path in every project you scan, and survives a reload. Every open LayerCake tab shares it: a mute set
-in one shows in the others at once, and never undoes one set elsewhere. The server never sees it: the stream still
-reports every event, so the mute changes what the bar does, never what the watcher reports.
+long ago cannot quietly hide a file. A mute is kept in LayerCake's data folder (`prefs.json`, keyed
+by the path, lowercased on Windows; #198: each run opens on a new address, whose browser storage
+starts empty), applies to that path in every project you scan, and survives a reload and a restart.
+A mute set in one window never undoes one set in another; the other window shows it at its next
+toggle or reload. The server stores it and never acts on it: the stream still reports every event,
+so the mute changes what the bar does, never what the watcher reports. "Notify me" is the browser's
+permission for one address, so after a restart the bar asks for it again.
 
 **Desktop notifications** are opt-in behind the **Notify me** button, and fire only when the window
 is in the background. `127.0.0.1` counts as a secure context, so this needs no HTTPS. The toast is
@@ -1188,26 +1190,33 @@ that the castle sees.
 - `/api/file` and `/api/write` only touch a path the preceding scan discovered. The scan result *is*
   the allowlist, so neither is a general-purpose file reader or writer even though the scan input is
   a directory you type. Requests outside it return 403.
-- **Every `/api` route requires the page key** (#189): 32 random bytes made once and kept in your
-  LayerCake data folder (`%LOCALAPPDATA%\LayerCake\data\page-key`), which only you can read there.
-  It is never in the page. A port on 127.0.0.1 is open to every user signed in to the computer, so
+- **Every `/api` route requires the page key** (#189): 32 random bytes, new each time LayerCake
+  starts, never in the page. A port on 127.0.0.1 is open to every user signed in to the computer, so
   anything in the page could be read by another of them; until #189 the key was, and another user
-  could have used LayerCake as you. Instead, the launch that opens the window gives the address
-  the key after a `#` (`http://127.0.0.1:5178/#t=...`), a part of the address no request carries
-  and that another user cannot read from the browser's command line. The page keeps it in its own
-  storage and takes it out of the address bar. `npm start` prints that address on your console.
-  Delete the file to make a new key at the next start. If the data folder cannot keep it (refused,
-  unwritable), the server makes a key for that run only and says so.
-- **A launch opens its window only on your own LayerCake** (#189, #190). When something already
-  answers on the port, the launch sends a random challenge to `/hello` and checks the answer, an
-  HMAC of the challenge under the key, against its own; the key itself is never sent. A server that
-  cannot answer is another program or another user's LayerCake, and the launch says so and opens
-  nothing. Without that, a second user's LayerCake opened on the first user's files, and a program
+  could have used LayerCake as you. Instead, the launch that opens the window gives the address the
+  key after a `#` (`http://127.0.0.1:<port>/#t=...`), a part of the address no request carries and
+  that another user cannot read from the browser's command line. The page keeps it for that tab and
+  takes it out of the address bar. `npm start` prints that address on your console.
+- **Each run opens on a new port** (#198). Unless `PORT` is set, the server lets Windows pick a free
+  port when it starts, so each run is a new browser origin: whatever a stranger might once have left
+  in the window's browser for one address (a cached script, a service worker, a stored key) never
+  reaches the next run, and a key stolen from an old window is already dead. The server writes its
+  port, key and process id to `server.json` in your LayerCake data folder, which only you can read
+  in its default place; that is how a second launch finds the running one. The page's own
+  preferences (last and recent folders, muted files, the notify choice) are kept beside it in
+  `prefs.json`, since a new address starts with empty browser storage.
+- **A launch opens its window only on your own LayerCake** (#189, #190, #197). The launch sends a
+  random challenge to `/hello` on the port it means to open and checks the answer, an HMAC of the
+  port and the challenge under the key, against its own; the key itself is never sent, and a server
+  that relays the challenge to your real LayerCake on another port gets the port wrong. A server that
+  cannot answer is another program or another user's LayerCake: with a fixed `PORT`, the launch says
+  so and opens nothing; without one, it starts your own on a new port. Without that, a second user's LayerCake opened on the first user's files, and a program
   that took the port first could serve the window a page of its own, which could leave a service
   worker in the window's profile to rewrite LayerCake's pages later. In case one ever got there,
   the server answers any service worker update check with a 404 and `Clear-Site-Data: "storage"`,
-  which removes it, serves the page at `/` only, and sends a Content-Security-Policy allowing
-  scripts and requests from its own origin only, and no workers.
+  which removes it, clears the address's cache every time the page loads, serves the page at `/`
+  only, and sends a Content-Security-Policy allowing scripts and requests from its own origin only,
+  and no workers.
 - A cross-origin page cannot read the window's storage or address, so it cannot obtain the key.
 
   This matters because writes changed the threat model. While the app was read-only, a hostile page
@@ -1223,8 +1232,8 @@ that the castle sees.
   whatever the server answers. The Host header still names the hostile site, so the request is refused.
   Nothing legitimate is affected: LayerCake's own callers address the server as `127.0.0.1` (the CLI
   calls the server modules directly and makes no HTTP call), and a bookmark to
-  `http://127.0.0.1:5178` sends the right Host. In a browser that has opened LayerCake before, the page still has its key;
-  in any other, its requests are refused with a message saying how to open LayerCake (#189).
+  LayerCake sends the right Host. A bookmark does not outlive a run, though: the next run is on
+  another port, with another key (#198).
 - None of this defends against a hostile process already running as you. It can write these files
   directly and does not need this app. The guard closes the browser path only.
 - **The app window runs with `--disable-extensions --disable-sync`.** A browser extension is not a
@@ -1251,7 +1260,7 @@ Unreadable paths degrade to an error badge on the affected level; the rest of th
 | Malformed YAML frontmatter | Parse error banner plus the raw block, markdown body still renders |
 | File over 2 MB | Read capped at 2 MB with a truncation notice; JSON parsing is skipped |
 
-Configurable via env: `PORT` (default 5178), `CLAUDE_EXPLORER_DIR_TIMEOUT_MS` (default 3000),
+Configurable via env: `PORT` (unset: Windows picks a free port each run, #198), `CLAUDE_EXPLORER_DIR_TIMEOUT_MS` (default 3000),
 `LAYERCAKE_SNAPSHOT_DIR`, `LAYERCAKE_APPDATA_DIR`, `LAYERCAKE_CLAUDE_DATA_DIR` (default `~/.claude`,
 for session data only), `LAYERCAKE_BROWSER_PROFILE_DIR` (the app window's browser profile, default
 `%LOCALAPPDATA%\LayerCake\browser`).
@@ -1362,8 +1371,13 @@ What to know:
 - **It prints nothing.** A GUI program has no console. A failure to start (usually the port) opens
   an error window saying what to do; an unexpected crash opens one with the stack. For anything
   deeper, run `npm run app` from a terminal, which is the same server with its output visible.
-- **Another port:** `$env:PORT = 5200; & 'C:\path\to\LayerCake.exe'`. The browser keeps the
-  remembered directory per port, so a different port starts without it.
+- **Its port changes every run** (#198), chosen by Windows, so nothing needs freeing and a bookmark
+  does not carry over. To pin one anyway: `$env:PORT = 5200; & 'C:\path\to\LayerCake.exe'`; with a
+  fixed port, something else holding it is an error rather than a reason to pick another.
+- **Its data folders must stay private.** `LAYERCAKE_APPDATA_DIR` and `LAYERCAKE_BROWSER_PROFILE_DIR`
+  move them; a folder under `C:\` inherits permissions that let other signed-in users read and
+  change it, which would expose the running server's key and the window's history (#199). Keep them
+  under your own profile.
 - **It is unsigned.** Fine on the machine that built it. Downloaded onto another machine (so marked
   as coming from the internet), SmartScreen will warn on first run.
 - **The CLI is not in it.** `layercake here` still runs from source (`npm run cli -- here`).
@@ -1391,7 +1405,7 @@ What to know:
 ## Development
 
 ```
-npm run dev:server     # API on 5178
+npm run dev:server     # API on the fixed port 5178
 npm run dev:client     # Vite with HMR on 5179, proxying /api/
 npm run smoke          # end to end test over the real HTTP API
 npm run build:exe      # the single executable, see above

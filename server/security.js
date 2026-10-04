@@ -44,11 +44,16 @@ function allowedOrigins(port) {
  *  - Sec-Fetch-Site is set by the browser and cannot be forged by page script,
  *    so "cross-site" / "same-site" is a reliable reject even when Origin is absent.
  */
-export function originGuard(port) {
-  const allowed = allowedOrigins(port);
+/**
+ * The port a request arrived on (#198). A server may bind port 0 and learn its
+ * number only then, and a request can only have come in on a port it holds.
+ */
+export const portOf = (req) => req.socket.localPort;
+
+export function originGuard() {
   return (req, res, next) => {
     const origin = req.get('origin');
-    if (origin && !allowed.has(origin)) {
+    if (origin && !allowedOrigins(portOf(req)).has(origin)) {
       return res.status(403).json({ message: 'Cross-origin request refused.', code: 'ECROSSORIGIN' });
     }
     const site = req.get('sec-fetch-site');
@@ -76,13 +81,14 @@ export function originGuard(port) {
  * [::1] is not listed because the server binds 127.0.0.1 only. Port 80 is the
  * one case where a browser omits the port from Host.
  */
-export function hostGuard(port) {
-  const allowed = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
-  if (port === 80) {
-    allowed.add('127.0.0.1');
-    allowed.add('localhost');
-  }
+export function hostGuard() {
   return (req, res, next) => {
+    const port = portOf(req);
+    const allowed = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
+    if (port === 80) {
+      allowed.add('127.0.0.1');
+      allowed.add('localhost');
+    }
     if (allowed.has(String(req.headers.host || '').toLowerCase())) return next();
     return res
       .status(403)
@@ -112,13 +118,15 @@ export function requireToken(key) {
 }
 
 /**
- * The answer to a launch's challenge (#189, #190): HMAC-SHA256 of the nonce
- * under the page key. A launch that finds something answering on the port
- * asks /hello?nonce=<random> and compares this with its own computation, so it
- * opens its window only on a server that knows its user's key, never sending
- * the key to one that might not. HMAC under a random 256-bit key reveals
- * nothing about the key, whatever nonces anyone asks for.
+ * The answer to a launch's challenge (#189, #190, #197): HMAC-SHA256 of
+ * "<port>:<nonce>" under the page key, where port is the one the question
+ * arrived on. A launch asks /hello?nonce=<random> on the port it means to
+ * open and compares this with its own computation, so it opens its window only
+ * on a server that knows its user's key, never sending the key to one that
+ * might not. The port is in it so that a squatter cannot pass by relaying the
+ * question to the user's real LayerCake on another port. HMAC under a random
+ * 256-bit key reveals nothing about the key, whatever anyone asks.
  */
-export function keyProof(key, nonce) {
-  return crypto.createHmac('sha256', key).update(String(nonce)).digest('hex');
+export function keyProof(key, port, nonce) {
+  return crypto.createHmac('sha256', key).update(`${port}:${nonce}`).digest('hex');
 }

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 
-import { createFile, deleteFile, getManifest, getSession, listSessions, readFile, scan } from './api.js';
+import { createFile, deleteFile, getManifest, getPrefs, getSession, listSessions, readFile, savePrefs, scan } from './api.js';
 import useWatch from './useWatch.js';
 import { pathKey } from './sessionFormat.js';
 
@@ -64,28 +64,14 @@ async function loadOverlay(projectDir) {
   };
 }
 
-// Persisted in the browser, never on disk: the server writes only config edits
-// (snapshot first) and its own data store, and UI preferences belong in neither.
-// Keys keep the old product name on purpose. Renaming them would silently drop
-// the remembered directory and recent list on first launch after the rename,
-// which is a worse trade than an inconsistent string nobody sees.
-const LAST_KEY = 'claude-explorer.lastDir';
-const RECENT_KEY = 'claude-explorer.recentDirs';
+// The last and recent folders are kept in LayerCake's own data folder (#198,
+// /api/prefs): each run is a new browser origin (a new port), so the browser's
+// storage starts empty every time.
 const MAX_RECENT = 6;
 
-function loadRecent() {
-  try {
-    const raw = localStorage.getItem(RECENT_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.filter((x) => typeof x === 'string') : [];
-  } catch {
-    return [];
-  }
-}
-
 export default function App() {
-  const [dir, setDir] = useState(() => localStorage.getItem(LAST_KEY) || '');
-  const [recent, setRecent] = useState(loadRecent);
+  const [dir, setDir] = useState('');
+  const [recent, setRecent] = useState([]);
   const [lineage, setLineage] = useState(null);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState(null);
@@ -142,13 +128,13 @@ export default function App() {
         // while the scan ran: the scan on load is not the user's, and replacing
         // what they typed meanwhile submitted a path nobody typed (#180).
         setDir((cur) => (cur.trim() === value ? result.projectDir : cur));
-        localStorage.setItem(LAST_KEY, result.projectDir);
         setRecent((prev) => {
           const next = [result.projectDir, ...prev.filter((p) => p !== result.projectDir)].slice(
             0,
             MAX_RECENT
           );
-          localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+          // Idempotent, so React running this updater twice costs a repeat only.
+          savePrefs({ lastDir: result.projectDir, recent: next }).catch(() => {});
           return next;
         });
         return result;
@@ -177,10 +163,23 @@ export default function App() {
     };
   }, [lineage]);
 
-  // Scan the remembered directory once on load, so a reopened tab lands ready.
+  // Scan the remembered directory once on load, so a reopened window lands
+  // ready. The box takes it only if nothing was typed while it loaded (#180).
   useEffect(() => {
-    const last = localStorage.getItem(LAST_KEY);
-    if (last) runScan(last);
+    let alive = true;
+    getPrefs()
+      .then((p) => {
+        if (!alive) return;
+        if (Array.isArray(p.recent)) setRecent(p.recent.slice(0, MAX_RECENT));
+        if (p.lastDir) {
+          setDir((cur) => cur || p.lastDir);
+          runScan(p.lastDir);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

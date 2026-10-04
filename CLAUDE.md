@@ -46,11 +46,11 @@ terminal.
 ## Commands
 
 ```
-npm start          # build client if stale, then serve on 127.0.0.1:5178; open the address it prints (key after #, #189)
+npm start          # build client if stale, then serve on a port Windows picks; open the address it prints (key after #)
 npm run app        # same, then open a chromeless app-mode browser window
 npm run cli -- here    # effective environment for the current directory
 npm run cli -- session # the current Claude Code session here (no Claude usage)
-npm run dev:server # API only on 5178
+npm run dev:server # API only, on the fixed port 5178 (Vite's proxy needs it)
 npm run dev:client # Vite HMR on 5179, proxying /api/ to 5178; needs dev:server and a built client
 npm run smoke      # end to end over the real HTTP API
 npm run castle-sim -- stress   # the Castle under a synthetic workload, in a window of its own
@@ -80,7 +80,7 @@ serves an embedded copy through `desktop/main.js`. After touching `server/app.js
 which would lend it one), then check that a window opens, the UI loads, and closing the window ends
 `LayerCake.exe`. The exe prints nothing, so a failure there shows as an error window or as silence.
 
-Env knobs: `PORT` (default 5178), `CLAUDE_EXPLORER_DIR_TIMEOUT_MS` (default 3000),
+Env knobs: `PORT` (unset: Windows picks a free port each run, #198), `CLAUDE_EXPLORER_DIR_TIMEOUT_MS` (default 3000),
 `LAYERCAKE_SNAPSHOT_DIR` (default `%LOCALAPPDATA%\LayerCake\snapshots`), `LAYERCAKE_APPDATA_DIR`
 (default `%LOCALAPPDATA%\LayerCake\data`) and `LAYERCAKE_CLAUDE_DATA_DIR` (default: Claude Code's
 configuration home, read for session data only; smoke points it at a synthetic folder so real
@@ -284,11 +284,12 @@ absence, every folder from a `.claude/` subtree's root down to each entry in it,
 scan marked `dirExists` (present, no config yet), because a new skill is a new folder and only the
 folder above it can see it arrive (#56).
 
-**A mute never reaches the server** (#13). Muting a file in the watch bar is a per-viewer preference
-kept in the browser's `localStorage` (keyed by path, lowercased on win32). The server stream keeps
-reporting every event for that file; the bar counts and lists it, marked muted, and only declines to
-light up or notify for it. Filtering on the server would make the stream lie, and would make one
-viewer's mute everyone's.
+**A mute never filters the server's stream** (#13). Muting a file in the watch bar is a preference
+kept with the page's others (last and recent folders, the notify choice) in LayerCake's data folder,
+`prefs.json` through `/api/prefs` (#198: each run is a new browser origin, so the browser's storage
+starts empty). The server stores it and never reads it. The stream keeps reporting every event for
+that file; the bar counts and lists it, marked muted, and only declines to light up or notify for it.
+Filtering on the server would make the stream lie.
 
 **Session ids come from discovery, the way file paths come from a scan.** Every `/api/session*`
 route resolves its id through `sessions.js`, which only knows ids it found as
@@ -461,17 +462,27 @@ test suite stayed green, because Node's `fetch` sends no `Sec-Fetch-*` headers. 
 what actually gates state change.
 
 **The page key is never in the HTML** (#189). A loopback port is open to every signed-in user of the
-machine, so whatever the page carries, another user can read. The key is made once and kept in
-LayerCake's data folder (`ensurePageKey` in appdata.js, an exclusive create so two first launches
-agree; `pageKeyOrRunKey` makes a key for that run only when the folder cannot keep one, so a refused
-data folder still reports itself instead of stopping the server). The launch that opens the window
-puts it in the address's fragment (`appAddress` in desktop/window.js), which no request carries; the
-page keeps it in its origin's localStorage and strips the address; `npm start` and the Vite dev
-server print the address on the user's own console. **A launch opens a window only on a server that
-proves it knows the key** (`verifyServer`): `/hello` answers a random nonce with HMAC-SHA256 under the
-key (`keyProof`), which the launch computes again itself, never sending the key. Without that, a
+machine, so whatever the page carries, another user can read. **Each run has its own key and its own
+port** (#198): `newRunKey` in appdata.js, and without `PORT` the server binds port 0, so Windows
+picks a free port; every run is a new browser origin, so nothing a stranger once planted under an
+origin (a cached script, a service worker, a stored key) reaches the next run, and a key a stranger
+could ever read is a dead one. The server writes `{ port, key, pid }` to `server.json` in
+LayerCake's data folder once it listens (`writeRunRecord`); that is how a launch finds the user's
+running LayerCake. The guards and the challenge read the port each request arrived on (`portOf` in
+security.js), never a configured one. The launch that opens the window puts the key in the address's
+fragment (`appAddress` in desktop/window.js), which no request carries; the page keeps it in
+sessionStorage, for that tab, and strips the address; `npm start` and the Vite dev server print the
+address on the user's own console. **A launch opens a window only on a server that proves the key on
+that port** (`verifyServer`): `/hello` answers HMAC-SHA256 of "<its port>:<nonce>" under the key
+(`keyProof`), which the launch computes again itself, never sending the key; the port is in it so a
+squatter cannot pass by relaying to the real server on another port (#197). Without the challenge, a
 second user's launch attached to the first user's server, and a program that took the port first
-could serve the window its own page and leave a service worker in the profile (#190). The server
+could serve the window its own page and leave a service worker in the profile (#190). A stale record
+whose port now answers as something else is ignored and a new server started; with `PORT` set, that
+is an error naming the port. A takeover (the old server went away while the new launch attached)
+opens a new window on the new server, since the attach window holds the old run's address and key.
+The page clears its origin's cache on every load (`Clear-Site-Data: "cache"` on `/`), which covers a
+fixed `PORT`. The server
 answers any request carrying `Service-Worker` with a 404 and `Clear-Site-Data: "storage"`, serves
 the page at `/` only, and its CSP allows scripts and requests from its own origin only and no workers.
 The data folder's default place (%LOCALAPPDATA%) is private to the user; a `LAYERCAKE_APPDATA_DIR`

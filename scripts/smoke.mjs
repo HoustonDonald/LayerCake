@@ -424,13 +424,16 @@ try {
     throw new Error('server did not start');
   }
 
-  // The page key (#189): kept in the server's own data folder and printed in
-  // its address, never written into the page anything on the port can read.
+  // The page key (#189, #198): this run's, in the server's run record and the
+  // address it prints, never written into the page anything on the port can read.
   for (let i = 0; i < 100 && !/#t=[0-9a-f]{64}/.test(serverOut); i += 1) await new Promise((r) => setTimeout(r, 50));
   const printedKey = /#t=([0-9a-f]{64})/.exec(serverOut)?.[1];
-  const token = (await fs.readFile(path.join(appData, 'page-key'), 'utf8').catch(() => '')).trim();
+  const runRecord = JSON.parse(await fs.readFile(path.join(appData, 'server.json'), 'utf8').catch(() => '{}'));
+  const token = String(runRecord.key || '');
   const html = await (await fetch(`${BASE}/`)).text();
-  check('the page key is kept in LayerCake\'s data folder and printed in the address (#189)', /^[0-9a-f]{64}$/.test(token) && printedKey === token, JSON.stringify({ printedKey: Boolean(printedKey) }));
+  check('the run record names this server, its port and its key, and the printed address carries the same key (#189, #198)',
+    /^[0-9a-f]{64}$/.test(token) && printedKey === token && runRecord.port === PORT && runRecord.pid === server.pid,
+    JSON.stringify({ port: runRecord.port, pid: runRecord.pid === server.pid, printed: printedKey === token }));
   check('the served page does not carry the key (#189)', html.includes('<div id="root">') && !html.includes(token) && !/layercake-token/.test(html));
 
   // Pinned against folder names Claude Code actually created (2026-09-26): a
@@ -492,15 +495,31 @@ try {
   // nonce, computed again here, independently of security.js.
   const nonce = crypto.randomBytes(16).toString('hex');
   const hello = await (await fetch(`${BASE}/hello?nonce=${nonce}`)).json().catch(() => ({}));
-  check('/hello answers a nonce with HMAC-SHA256 under the page key, and asks for no key (#189)',
-    hello.proof === crypto.createHmac('sha256', token).update(nonce).digest('hex') && (await fetch(`${BASE}/hello?nonce=x`)).status === 400,
+  check('/hello answers HMAC-SHA256 of "<its port>:<nonce>" under the page key, and asks for no key (#189, #197)',
+    hello.proof === crypto.createHmac('sha256', token).update(`${PORT}:${nonce}`).digest('hex') && (await fetch(`${BASE}/hello?nonce=x`)).status === 400,
     JSON.stringify(hello));
   const { verifyServer } = await import('../desktop/window.js');
   // A stranger on a port: answers everything, as a squatter would, with a made-up proof.
   const squatter = http.createServer((req, res) => res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ app: 'LayerCake', proof: '0'.repeat(64) })));
   await new Promise((r) => squatter.listen(0, '127.0.0.1', r));
   const squatPort = squatter.address().port;
-  const verdicts = { ours: await verifyServer(PORT, token), squatter: await verifyServer(squatPort, token), wrongKey: await verifyServer(PORT, 'f'.repeat(64)) };
+  // A squatter that relays the challenge to this user's real LayerCake on
+  // another port (#197): the proof names the port it was asked on, so it fails.
+  const relay = http.createServer((req, res) => {
+    fetch(`${BASE}${req.url}`).then(
+      async (r) => res.writeHead(r.status, { 'Content-Type': 'application/json' }).end(await r.text()),
+      () => res.writeHead(502).end()
+    );
+  });
+  await new Promise((r) => relay.listen(0, '127.0.0.1', r));
+  const relayPort = relay.address().port;
+  const verdicts = {
+    ours: await verifyServer(PORT, token),
+    squatter: await verifyServer(squatPort, token),
+    wrongKey: await verifyServer(PORT, 'f'.repeat(64)),
+    relay: await verifyServer(relayPort, token),
+  };
+  await new Promise((r) => relay.close(r));
   // npm run app's launcher, pointed at the squatter: it refuses before it
   // builds, starts or opens anything. Its own key is smoke's (same data folder).
   // Spawned, not spawnSync: the squatter answers from this process, which
@@ -525,9 +544,56 @@ try {
     JSON.stringify({ status: launcher.status, out: launcher.stdout.slice(-300), err: launcher.stderr.slice(-300) }));
   await new Promise((r) => squatter.close(r));
   verdicts.nothing = await verifyServer(squatPort, token);
-  check('a launch opens only on its own user\'s LayerCake: ours, not a squatter, not another key, nothing on an empty port (#189, #190)',
-    verdicts.ours === 'ours' && verdicts.squatter === 'foreign' && verdicts.wrongKey === 'foreign' && verdicts.nothing === 'none',
+  check('a launch opens only on its own user\'s LayerCake: ours; not a squatter, not one relaying to the real server, not another key; nothing on an empty port (#189, #190, #197)',
+    verdicts.ours === 'ours' && verdicts.squatter === 'foreign' && verdicts.relay === 'foreign' && verdicts.wrongKey === 'foreign' && verdicts.nothing === 'none',
     JSON.stringify(verdicts));
+
+  // --- a new port every run (#198) -------------------------------------------
+  // Without PORT the server lets Windows pick a free port when it binds, a new
+  // one each run, and records it. Two runs side by side, each with a data
+  // folder of its own.
+  const freeRun = async (tag) => {
+    const dataDir = path.join(smokeDir, `free-port-${tag}`);
+    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toUpperCase() !== 'PORT'));
+    Object.assign(env, { LAYERCAKE_APPDATA_DIR: dataDir, LAYERCAKE_SNAPSHOT_DIR: path.join(dataDir, 'snaps'), CLAUDE_CONFIG_DIR: configHome, USERPROFILE: fakeHome, HOME: fakeHome, LAYERCAKE_CLAUDE_DATA_DIR: claudeData });
+    const child = spawn(process.execPath, [path.join(ROOT, 'server', 'index.js')], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    let out = '';
+    child.stdout.setEncoding('utf8').on('data', (c) => (out += c));
+    child.stderr.setEncoding('utf8').on('data', (c) => (out += c));
+    for (let i = 0; i < 200 && !/#t=[0-9a-f]{64}/.test(out); i += 1) await new Promise((r) => setTimeout(r, 50));
+    const m = /http:\/\/127\.0\.0\.1:(\d+)\/#t=([0-9a-f]{64})/.exec(out);
+    const record = JSON.parse(await fs.readFile(path.join(dataDir, 'server.json'), 'utf8').catch(() => '{}'));
+    return { child, port: m ? Number(m[1]) : null, key: m?.[2] || null, record, out };
+  };
+  const runA = await freeRun('a');
+  const runB = await freeRun('b');
+  const answered = runA.port ? await verifyServer(runA.port, runA.key) : null;
+  runA.child.kill();
+  runB.child.kill();
+  check('without PORT a server binds a port Windows picks, a new one and a new key each run, and records both (#198)',
+    runA.port > 0 && runB.port > 0 && runA.port !== runB.port && runA.key !== runB.key &&
+      runA.record.port === runA.port && runA.record.key === runA.key && runA.record.pid === runA.child.pid && answered === 'ours',
+    JSON.stringify({ a: runA.port, b: runB.port, recorded: runA.record.port, answered, out: runA.port ? '' : runA.out.slice(-300) }));
+
+  // --- the page's preferences, kept in LayerCake's data (#198) ---------------
+  const prefsPost = await fetch(`${BASE}/api/prefs`, {
+    method: 'POST',
+    headers: H,
+    body: JSON.stringify({ lastDir: 'C:\\smoke\\last', recent: ['C:\\a', 7, 'C:\\b'], muted: { 'c:\\x\\settings.json': 'C:\\x\\settings.json', bad: 3 }, notify: true, injected: 'dropped', lastDir2: 'x'.repeat(5000) }),
+  });
+  const prefsBack = await (await fetch(`${BASE}/api/prefs`, { headers: H })).json().catch(() => ({}));
+  const prefsFile = JSON.parse(await fs.readFile(path.join(appData, 'prefs.json'), 'utf8').catch(() => '{}'));
+  check('preferences are kept in LayerCake\'s data folder, field by field: bad values and unknown fields dropped (#198)',
+    prefsPost.status === 200 && prefsBack.lastDir === 'C:\\smoke\\last' && JSON.stringify(prefsBack.recent) === JSON.stringify(['C:\\a', 'C:\\b']) &&
+      prefsBack.muted?.['c:\\x\\settings.json'] === 'C:\\x\\settings.json' && !('bad' in (prefsBack.muted || {})) && prefsBack.notify === true &&
+      !('injected' in prefsBack) && !('lastDir2' in prefsBack) && prefsFile.lastDir === prefsBack.lastDir,
+    JSON.stringify(prefsBack));
+  check('preferences need the key like every /api route (#198)', (await fetch(`${BASE}/api/prefs`)).status === 403);
+  const page = await fetch(`${BASE}/`);
+  await page.text();
+  check('the page clears its origin\'s cache before its files load, and /index.html is not served (#198, #199)',
+    page.headers.get('clear-site-data') === '"cache"' && (await fetch(`${BASE}/index.html`)).status === 404,
+    `${page.headers.get('clear-site-data')}`);
   // A service worker planted by a squatter is purged at its next update check.
   const swCheck = await fetch(`${BASE}/sw.js`, { headers: { 'Service-Worker': 'script' } });
   check('a service worker update check gets a 404 and clears the site\'s storage (#190)',
@@ -2027,7 +2093,7 @@ try {
   // server's: the fixture's homes, never the machine's.
   const hostile = path.join(smokeRoot, 'cli-hostile');
   await fs.mkdir(hostile, { recursive: true });
-  await fs.writeFile(path.join(hostile, '.mcp.json'), JSON.stringify({ mcpServers: { 'evil\u001b]52;c;U01PS0U=\u0007': { command: 'safe\u001b[2K\r\u001b[1Ahidden\u202etxt.exe' } } }));
+  await fs.writeFile(path.join(hostile, '.mcp.json'), JSON.stringify({ mcpServers: { 'evil\u001b]52;c;U01PS0U=\u0007': { command: 'safe\u001b[2K\r\u001b[1Ahidden\u202etxt.exe\u061c\u{e0041}' } } }));
   await fs.writeFile(path.join(hostile, 'CLAUDE.md'), '# first line\r\nshown \u001b[8mconcealed\u001b[28m\r\nlast line\r\n');
   const cliEnv = { ...process.env, CLAUDE_CONFIG_DIR: configHome, USERPROFILE: fakeHome, HOME: fakeHome, LAYERCAKE_SNAPSHOT_DIR: snaps, LAYERCAKE_APPDATA_DIR: appData, LAYERCAKE_CLAUDE_DATA_DIR: claudeData, NO_COLOR: '' };
   const cliOut = ['mcp', 'claude-md']
@@ -2035,14 +2101,14 @@ try {
     .join('\n');
   check('the CLI prints control sequences from configuration visibly, never acting on them, and CRLF as lines (#192)',
     !/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e]/.test(cliOut) &&
-      cliOut.includes('evil^[]52;c;U01PS0U=^G') && cliOut.includes('safe^[[2K^M^[[1Ahidden<U+202E>txt.exe') &&
+      cliOut.includes('evil^[]52;c;U01PS0U=^G') && cliOut.includes('safe^[[2K^M^[[1Ahidden<U+202E>txt.exe<U+061C><U+E0041>') &&
       cliOut.includes('shown ^[[8mconcealed^[[28m') && /# first line\nshown/.test(cliOut),
     JSON.stringify(cliOut.slice(0, 1200)));
   // Invisible formatting characters in source (bidirectional overrides, zero-width
   // marks, a byte-order mark) make code read differently from how it runs, and
   // an editing tool once turned \u escapes into them unseen (#192). Written as
   // escapes they are visible; this keeps it so. Walked from the folders, not git.
-  const INVISIBLE = /[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/;
+  const INVISIBLE = /[\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff\u{e0000}-\u{e007f}]/u;
   const sources = [];
   const walkSource = async (dir) => {
     for (const d of await fs.readdir(dir, { withFileTypes: true })) {

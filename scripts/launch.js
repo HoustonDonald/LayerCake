@@ -19,7 +19,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { appAddress, openWindow, probe, verifyServer } from '../desktop/window.js';
-import { ensurePageKey } from '../server/appdata.js';
+import { readRunRecord } from '../server/appdata.js';
 import { buildClientIfStale } from './build-if-stale.js';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -58,31 +58,31 @@ if (opts.help) {
   process.stdout.write(
     '\nLayerCake desktop launcher\n\n' +
       '  node scripts\\launch.js [--port <n>]\n\n' +
-      '  --port <n>   Port to serve on. Defaults to $env:PORT, then 5178.\n' +
+      '  --port <n>   Port to serve on. Defaults to $env:PORT; unset, Windows picks a free one.\n' +
       '  --help       This text.\n\n' +
       'Builds the client if stale, starts the server, waits for it to answer,\n' +
-      'then opens it in an app-mode browser window. If the port is already\n' +
-      'serving, it opens that instance instead of starting a second one.\n\n'
+      'then opens it in an app-mode browser window. If your LayerCake is already\n' +
+      'running, it opens a window on that one instead of starting a second.\n\n'
   );
   process.exit(0);
 }
 
-const PORT = Number(opts.port || process.env.PORT || 5178);
-if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+// A fixed port only when asked for (--port or PORT). Otherwise the server
+// lets Windows pick a free one, a new one every run (#198), and says which in
+// its run record, with the key for that run.
+const FIXED = opts.port || process.env.PORT ? Number(opts.port || process.env.PORT) : null;
+if (FIXED !== null && !(Number.isInteger(FIXED) && FIXED > 0 && FIXED < 65536)) {
   process.stderr.write(`\nNot a usable port: ${opts.port || process.env.PORT}\n\n`);
   process.exit(1);
 }
-// This user's page key (#189); the window gets it in its address.
-const key = await ensurePageKey();
-const appUrl = appAddress(PORT, key);
 
 /** Something answers on the port and is not this user's LayerCake (#189, #190). */
-function refuseForeign() {
+function refuseForeign(port) {
   process.stderr.write(
-    `\nSomething is answering on port ${PORT}, but it is not your LayerCake: another program, or ` +
+    `\nSomething is answering on port ${port}, but it is not your LayerCake: another program, or ` +
       `LayerCake running for another person signed in to this computer. No window was opened on it.\n\n` +
-      `  See what holds it:  Get-NetTCPConnection -LocalPort ${PORT} -State Listen\n` +
-      `  Or use another port: node scripts\\launch.js --port 5200\n\n`
+      `  See what holds it:  Get-NetTCPConnection -LocalPort ${port} -State Listen\n` +
+      `  Or leave the port to Windows: node scripts\\launch.js, with no --port and PORT unset\n\n`
   );
   process.exit(1);
 }
@@ -92,48 +92,55 @@ function refuseForeign() {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Polls until the server answers or the deadline passes. Polling rather than a
- * fixed sleep because a cold first build and a warm restart differ by seconds,
- * and either guess would be wrong half the time. `isDead` lets the caller abort
- * early when the child process has already exited, so a server that dies on
- * startup reports its own error instead of stalling here for the full timeout.
+ * Polls until the server we started has written its run record and answers on
+ * the port it names, or the deadline passes. Polling rather than a fixed sleep
+ * because a cold first build and a warm restart differ by seconds. `isDead`
+ * lets the caller abort early when the child process has already exited, so a
+ * server that dies on startup reports its own error instead of stalling here.
  */
-async function waitForServer(isDead) {
+async function waitForServer(pid, isDead) {
   const deadline = Date.now() + READY_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    if (isDead && isDead()) return false;
-    if (await probe(PORT)) return true;
+    if (isDead && isDead()) return null;
+    const record = await readRunRecord();
+    if (record && record.pid === pid && (await probe(record.port))) return record;
     await sleep(PROBE_INTERVAL_MS);
   }
-  return false;
+  return null;
 }
 
 /* ------------------------------------------------------------------------ main */
 
-/** Already serving: attach to it rather than fighting it for the port. */
-if (await probe(PORT)) {
-  if ((await verifyServer(PORT, key)) !== 'ours') refuseForeign();
-  process.stdout.write(
-    `\nLayerCake is already running on port ${PORT}. Not starting a second server.\n`
-  );
-  process.stdout.write(`Opening the running instance in ${openWindow(appUrl).description}.\n\n`);
-  process.stdout.write(
-    `  To restart it instead, stop the other one first:\n` +
-      `    Stop-Process -Id (Get-NetTCPConnection -LocalPort ${PORT} -State Listen).OwningProcess -Force\n\n`
-  );
-  process.exit(0);
+// This user's running LayerCake, if there is one: its record names its port
+// and key, and it must prove the key on that port before a window opens on it
+// (#189, #190, #197). With a fixed port, only a server on that port.
+const running = await readRunRecord();
+const target = FIXED ?? running?.port ?? null;
+if (target !== null && (await probe(target))) {
+  const who = running && running.port === target ? await verifyServer(target, running.key) : 'foreign';
+  if (who === 'ours') {
+    process.stdout.write(`\nLayerCake is already running on port ${target}. Not starting a second server.\n`);
+    process.stdout.write(`Opening the running instance in ${openWindow(appAddress(target, running.key)).description}.\n\n`);
+    process.stdout.write(
+      `  To restart it instead, stop the other one first:\n` +
+        `    Stop-Process -Id ${running.pid} -Force\n\n`
+    );
+    process.exit(0);
+  }
+  if (FIXED !== null) refuseForeign(FIXED);
+  // No fixed port: the record is stale and its port belongs to something else
+  // now. Not ours to open; start our own below.
 }
 
 await buildClientIfStale();
 
 // Spawned rather than imported so this process keeps a handle on it. An import
 // would put the listener inside this process, and Ctrl+C handling would then be
-// a matter of hoping the server unwinds cleanly.
-const server = spawn(process.execPath, [serverEntry], {
-  cwd: root,
-  stdio: 'inherit',
-  env: { ...process.env, PORT: String(PORT) },
-});
+// a matter of hoping the server unwinds cleanly. PORT is passed only when one
+// was asked for; otherwise it is removed, so the server lets Windows choose.
+const childEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toUpperCase() !== 'PORT'));
+if (FIXED !== null) childEnv.PORT = String(FIXED);
+const server = spawn(process.execPath, [serverEntry], { cwd: root, stdio: 'inherit', env: childEnv });
 
 let serverExited = false;
 let serverExitCode = null;
@@ -175,9 +182,9 @@ process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 process.on('SIGHUP', shutdown);
 
-const ready = await waitForServer(() => serverExited);
+const ours = await waitForServer(server.pid, () => serverExited);
 
-if (!ready) {
+if (!ours) {
   if (serverExited) {
     // The server diagnoses its own startup failures, busy port included, so
     // this only has to explain why the launcher is stopping too.
@@ -185,23 +192,22 @@ if (!ready) {
     process.exit(serverExitCode === null || serverExitCode === 0 ? 1 : serverExitCode);
   }
   process.stderr.write(
-    `\nLayerCake did not answer on ${appUrl} within ${READY_TIMEOUT_MS / 1000} seconds.\n\n` +
-      `  Check the server output above for the real error.\n` +
-      `  See what holds the port:  Get-NetTCPConnection -LocalPort ${PORT} -State Listen\n` +
-      `  Or try another port:      node scripts\\launch.js --port 5200\n\n`
+    `\nThe server did not report itself ready within ${READY_TIMEOUT_MS / 1000} seconds.\n\n` +
+      `  Check its output above: if it printed a LayerCake address, open that one.\n` +
+      `  If its run record could not be written (its data folder refused), this launcher cannot find it.\n\n`
   );
   shuttingDown = true;
   if (!serverExited) server.kill();
   process.exit(1);
 }
 
-// Our child answered, unless something took the port in the meantime and our
-// child is failing to bind: open the window only on a server that proves it.
-if ((await verifyServer(PORT, key)) !== 'ours') {
+// Our child's record and answer, but only a server that proves the key on that
+// port gets a window, whatever took the port in between.
+if ((await verifyServer(ours.port, ours.key)) !== 'ours') {
   shuttingDown = true;
   if (!serverExited) server.kill();
-  refuseForeign();
+  refuseForeign(ours.port);
 }
 serving = true;
-process.stdout.write(`Opening LayerCake in ${openWindow(appUrl).description}.\n`);
+process.stdout.write(`Opening LayerCake in ${openWindow(appAddress(ours.port, ours.key)).description}.\n`);
 process.stdout.write('Close this window or press Ctrl+C to stop the server.\n\n');

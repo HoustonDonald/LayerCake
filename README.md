@@ -47,8 +47,8 @@ Get-FileHash .\LayerCake.exe
 ## What it does on your machine
 
 - **Stays local, and yours.** It serves its page on `127.0.0.1` only and makes no network requests.
-  Other people signed in to the same computer cannot use your LayerCake: its key stays in your own
-  data folder.
+  Other people signed in to the same computer cannot use your LayerCake: each run has a new
+  address and a new key, which only your own window is given.
 - **Reads** your Claude Code configuration files. It never opens credential files
   (`.credentials.json`, `credentials.json`, `.env`, `.env.local`).
 - **Changes your configuration only when you ask** (save, create, delete or restore), and takes a
@@ -72,8 +72,8 @@ data and its window's browser profile.
 
 ## If something goes wrong
 
-- **An error window about the port:** another program, or another copy of LayerCake, is using port
-  5178. Start it on another port from PowerShell: `$env:PORT = 5200; & .\LayerCake.exe`
+- **A page saying it does not have LayerCake's key:** it was opened from an old window or a bookmark.
+  LayerCake uses a new address every time it starts; open it again from `LayerCake.exe`.
 - **The exe shows no details:** it has no console. Run it from source (below) with `npm run app` to
   see the same server's output.
 - **Hook errors in a Claude session you started from LayerCake:** that session reports to LayerCake,

@@ -70,7 +70,8 @@ const VERIFY_TIMEOUT_MS = 5000;
  */
 export function verifyServer(port, key) {
   const nonce = crypto.randomBytes(16).toString('hex');
-  const want = crypto.createHmac('sha256', key).update(nonce).digest('hex');
+  // Bound to the port asked (#197): a relay to another port fails.
+  const want = crypto.createHmac('sha256', key).update(`${port}:${nonce}`).digest('hex');
   return new Promise((resolve) => {
     const req = http.get({ host: HOST, port, path: `/hello?nonce=${nonce}`, timeout: VERIFY_TIMEOUT_MS, agent: false }, (res) => {
       let body = '';

@@ -84,8 +84,15 @@ const DRAIN_MS = 30000;
 const REPROBE_MS = 3000;
 const REPROBE_INTERVAL_MS = 250;
 
+/**
+ * A fixed port only when PORT is set (#198). Otherwise null, and Windows picks
+ * a free port when the server binds, a new one every run, so every run is a new
+ * browser origin and nothing planted under one (a cached script, a service
+ * worker, a stored key) reaches the next.
+ */
 function readPort() {
-  const port = Number(process.env.PORT || 5178);
+  if (!process.env.PORT) return null;
+  const port = Number(process.env.PORT);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error(`Not a usable port: ${process.env.PORT}`);
   }
@@ -244,65 +251,67 @@ function listenFailure(err, port) {
 }
 
 async function main() {
-  const port = readPort();
-  // This user's page key (#189): the window is handed it in its address.
-  const { pageKeyOrRunKey } = await import('../server/appdata.js');
-  const { key } = await pageKeyOrRunKey();
-  const url = appAddress(port, key);
+  const fixed = readPort();
+  const { newRunKey, readRunRecord, writeRunRecord } = await import('../server/appdata.js');
 
-  // Set when this launch opened its window before it had a server of its own.
+  // Set when this launch opened its window on a server it did not start.
   let appWindow = null;
 
-  if (await probe(port)) {
-    // Only this user's LayerCake gets a window (#189, #190).
-    const who = await verifyServer(port, key);
-    if (who === 'foreign') {
-      showError(...portTaken(port));
+  // This user's running LayerCake, if there is one: its record names its port
+  // and key (#198), and it must prove the key on that port before a window
+  // opens on it (#189, #190, #197). With PORT set, only a server on that port.
+  const record = await readRunRecord();
+  const target = fixed ?? record?.port ?? null;
+  if (target !== null && (await probe(target))) {
+    const who = record && record.port === target ? await verifyServer(target, record.key) : 'foreign';
+    if (who === 'foreign' && fixed !== null) {
+      showError(...portTaken(fixed));
       process.exit(1);
     }
-    // 'none': it went away between the two questions, so serve on its port.
+    // 'foreign' without PORT: the record is stale, and its port belongs to
+    // something else now. It is not ours to open, and we start our own below.
     if (who === 'ours') {
-      appWindow = openAppWindow(url);
-      if (!(await stopsAnsweringWithin(port, REATTACH_MS))) process.exit(0);
+      appWindow = openAppWindow(appAddress(target, record.key));
+      if (!(await stopsAnsweringWithin(target, REATTACH_MS))) process.exit(0);
+      // It went away: its last window had just closed. Start our own below
+      // and open a window on it: the one just opened holds the old run's
+      // address and key.
     }
-    // It went away: its last window had just closed. Serve on its port, so the
-    // window just opened has a server again. If that window got Edge's "can't
-    // reach this page", Edge retries it by itself on a backoff (measured: the
-    // retry about 6 s after the failure picked up a server started at 2.6 s).
   }
 
+  const key = newRunKey();
   const { createApp, listen, memoryStatic } = await import('../server/app.js');
-  const app = createApp({ port, staticFiles: memoryStatic(embeddedClient()), key });
+  const app = createApp({ staticFiles: memoryStatic(embeddedClient()), key });
   let server;
   try {
-    server = await listen(app, port);
+    server = await listen(app, fixed ?? 0);
   } catch (err) {
-    // Lost a race with another launch: use it if it is this user's LayerCake.
-    if (err.code === 'EADDRINUSE' && (await answersWithin(port, REPROBE_MS))) {
-      if ((await verifyServer(port, key)) !== 'ours') {
-        showError(...portTaken(port));
+    // Lost a race for a fixed port: use it if it is this user's LayerCake.
+    if (fixed !== null && err.code === 'EADDRINUSE' && (await answersWithin(fixed, REPROBE_MS))) {
+      const now = await readRunRecord();
+      if (!now || now.port !== fixed || (await verifyServer(fixed, now.key)) !== 'ours') {
+        showError(...portTaken(fixed));
         process.exit(1);
       }
-      if (!appWindow) openWindow(url);
+      if (!appWindow) openWindow(appAddress(fixed, now.key));
       process.exit(0);
     }
-    showError(...listenFailure(err, port));
+    showError(...listenFailure(err, fixed ?? 0));
     process.exit(1);
+  }
+  const port = server.address().port;
+  try {
+    await writeRunRecord({ port, key, pid: process.pid, startedAt: new Date().toISOString() });
+  } catch {
+    // The window below still gets its key; only a second launch cannot find
+    // this server, and starts one of its own.
   }
   const inflight = trackInflight(server);
 
-  if (!appWindow) {
-    appWindow = openAppWindow(url);
-  } else if (handedOff(appWindow) && !(await profileInUse())) {
-    // Taking over, and our browser handed the window to another one that has
-    // since exited: the old server's, which was closing as the hand-off
-    // arrived. Nothing holds the profile, so nothing is showing our window;
-    // open it again, on our own server now. Without this, 1 of 9 relaunches
-    // 0.2 s after a close ended with a server and no window (the hand-off is
-    // reasoned from the timing; a test that kills the receiving browser
-    // reproduces the same end state every time).
-    appWindow = openAppWindow(url);
-  }
+  // Our own window, on the first start and on a takeover alike. If a browser
+  // already holds the profile (the takeover's earlier window), Edge takes this
+  // window itself and ours exits; serveUntilWindowsClose follows the profile.
+  appWindow = openAppWindow(appAddress(port, key));
   // No app-mode browser, so no process that tracks the window: stay up.
   if (!appWindow.child) return;
   await serveUntilWindowsClose(server, inflight, appWindow);
