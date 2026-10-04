@@ -37,6 +37,12 @@ reproduced or reasoned, and classify reachability (a) or (b) as in `C:\dev\CLAUD
 commit closes its issue (`Fixes #n`). Issues are the list of what is open; `HANDOFF.md` points at
 them rather than restating them. Pass bodies with `--body-file`, never as a shell argument.
 
+**The repository is public** (owner decision, 2026-10-04, #187), so every issue, comment and commit
+message is read by anyone. Keep out of them the maintainer's personal data, the names of his other
+projects, and paths or contents from his own machine's configuration; describe a measurement on
+"this machine" by what it shows, not by what is in it. A secret never goes anywhere but the
+terminal.
+
 ## Commands
 
 ```
