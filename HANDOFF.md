@@ -43,7 +43,7 @@ it), **515 passed, 0 failed, 3 skipped** with #178 and again with #163 (which ti
 rather than adding one), the same three skips throughout. `ui-motion.mjs` (the walking checks,
 scratchpad below) 26 of 26 at every step, #163 included.
 
-**2026-10-03:** #186 shipped in 207cc03 (and closed): **the Sept**, a seven-sided hall in the
+**2026-10-03:** #186 shipped in 207cc03 (and closed; its exe is in `dist`): **the Sept**, a seven-sided hall in the
 lower west band (Hollowmere moved up), where a shell call starting with git or gh walks its unit
 (commit lights a candle, push hauls the bell rope and the bell swings, reads read the ledger), with
 the branch on a banner and a window lit per commit not pushed, read from `.git` as files by
@@ -114,12 +114,11 @@ castle log for a project), `docs-alarm.mjs`, `sim-watch.mjs`, `page-errors.mjs`,
 capped live run and its MCP server). Write scripts with the Write tool, never inline in a shell:
 backslashes and backticks were eaten five times today.
 
-`dist\LayerCake.exe` is **one behind**: it is 42bf49e (#183), and he started it himself at 18:53 on
-2026-10-02, so it was running when #186 shipped. The 207cc03 (#186) exe is built and checked in the
-06df0862 scratchpad's `exe-tree\dist` (grepped for "git at the Sept", "not pushed: unknown", the
-`gh status` rule and `gitReading`; launch-checked headful 16 of 16, his window untouched). **To do
-once he has closed his:** copy it and `sea\` into `dist`, compare hashes, run `fix-sea-config.mjs`,
-and start it through Explorer only if he asks. Before that, 42bf49e was built in a tree copy, grepped for the fork's road
+`dist\LayerCake.exe` is **current**: 207cc03 (#186), built in the 06df0862 scratchpad's
+`exe-tree\dist` (grepped for "git at the Sept", "not pushed: unknown", the `gh status` rule and
+`gitReading`; launch-checked headful 16 of 16, his window untouched), then copied into `dist` with
+`sea\` on 2026-10-03 once he had closed his copy (hashes equal, `fix-sea-config.mjs`: every path
+exists). **Not started for him**: start it through Explorer when he asks. Before that, 42bf49e was built in a tree copy, grepped for the fork's road
 and the mere, launch-checked headful 16 of 16, and copied into `dist` with `sea\` (hashes equal) while
 no LayerCake was running: he had closed his own. It was not started for him, since he closed it himself. `fix-sea-config.mjs` then printed one MISSING bundle name,
 which is #185, not a fault. Before that 4665aae (#163's session rhythm), built in a tree copy (the
