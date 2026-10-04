@@ -4,8 +4,9 @@ Working state for picking this up in a new session. **Disposable.** Durable rule
 `CLAUDE.md`, user-facing spec in `README.md`. If something here contradicts those, they win and this
 file is stale.
 
-Last verified: **2026-10-02** (the Castle's session rhythm, #163: the portcullis, the torches and
-the Scribe; section below). Before that 2026-10-01 evening: verb poses (#163) and the path box
+Last verified: **2026-10-03** (the Sept, #186: git and gh work at a seven-sided hall below
+Hollowmere; paragraph below). Before that 2026-10-02 (the Castle's session rhythm, #163: the
+portcullis, the torches and the Scribe; section below). Before that 2026-10-01 evening: verb poses (#163) and the path box
 (#180). Before that the afternoon: the Wall motif #172, the crane #173, legend
 tooltips #174, shell calls placed by files #176, Raiders' aim #177. Write/snapshot work was done 2026-09-05; file watching 2026-09-15;
 the single executable and the app-window isolation fix 2026-09-25; session history (Phase 1 of the
@@ -42,6 +43,18 @@ it), **515 passed, 0 failed, 3 skipped** with #178 and again with #163 (which ti
 rather than adding one), the same three skips throughout. `ui-motion.mjs` (the walking checks,
 scratchpad below) 26 of 26 at every step, #163 included.
 
+**2026-10-03:** #186 shipped in 207cc03 (and closed): **the Sept**, a seven-sided hall in the
+lower west band (Hollowmere moved up), where a shell call starting with git or gh walks its unit
+(commit lights a candle, push hauls the bell rope and the bell swings, reads read the ledger), with
+the branch on a banner and a window lit per commit not pushed, read from `.git` as files by
+`server/gitstate.js` (git is never run; owner: nothing beyond Claude Code, LayerCake and Windows).
+Each place has its own spur off the road; Hollowmere's runs up the band's outer edge. The owner
+picked from a board (https://claude.ai/artifact/Cqw5M8vK281AVtgQ3Kn6ed) after placing it on his own picture
+(`SeptLocation.png`, kept out of the repository). Smoke **537 passed, 0 failed, 3 skipped**; page checks in this session's
+scratchpad: `ui-sept.mjs` (18 checks), `ui-roads.mjs`, `route-probe.mjs`, `gitstate-probe.mjs`,
+`gitstate-deadshare.mjs` (a .git read on an unroutable share: 3,005 ms once, then 1 ms while the
+stuck call is out, so the castle tick does not await it), `mutate-186.mjs` (17 of 17 caught, controls clean; the read-once mutant re-anchored and caught again; with `gitact-probe.mjs` and its control `gitact-control.mjs` for `gh status`).
+
 **2026-10-02, later:** #183 shipped in 42bf49e (and closed): Hollowmere a village on a mere west of
 the keep, the Citadel a beacon tower east of it, both reached only through the main gate along a
 road that forks in front of it, walks to and from them timed by length (800 a second, 1 to 3 s),
@@ -57,10 +70,8 @@ checks for it: `ui-roads.mjs` (17), `route-probe.mjs` (node, 23), `mutate-183.mj
 picks on a style board (https://claude.ai/artifact/NQERWTLirXrCsesHoN73gu): a portcullis that is up
 while a session runs, six torches on the front wall that flicker only while something acts, and a
 Scribe at the gate while Claude Code compacts; the 60 s rest kept as it is (section below). Smoke
-**525 passed, 0 failed, 3 skipped**. **Open with the owner:** he asked where git operations fall in
-the castle (answer: a plain shell call; a file named lights its room as Survey, one naming none
-moves no one, git's own file changes are not seen); offered a board for commits and pushes, no
-answer yet. #163 stays open for sound, replay, typed /skill and siege waves. This session's
+**525 passed, 0 failed, 3 skipped**. He then asked where git operations fall in the castle (then a
+plain shell call); his answer was a landmark of its own, the Sept (#186, above). #163 stays open for sound, replay, typed /skill and siege waves. This session's
 scratchpad (`%TEMP%\claude\c--dev-layercake\a28eb79f-...\scratchpad`) holds `ui-gate.mjs` (the
 page check, 27 checks, `SHOTS=1`, `TREE=`), `mutate-rhythm.mjs` (22 mutants, this engine with the
 judge map swapped), the board `gate-board.html` with `board-shots.mjs`, and read-only measurers
@@ -103,10 +114,14 @@ castle log for a project), `docs-alarm.mjs`, `sim-watch.mjs`, `page-errors.mjs`,
 capped live run and its MCP server). Write scripts with the Write tool, never inline in a shell:
 backslashes and backticks were eaten five times today.
 
-`dist\LayerCake.exe` is **current**: 42bf49e (#183), built in a tree copy, grepped for the fork's road
+`dist\LayerCake.exe` is **one behind**: it is 42bf49e (#183), and he started it himself at 18:53 on
+2026-10-02, so it was running when #186 shipped. The 207cc03 (#186) exe is built and checked in the
+06df0862 scratchpad's `exe-tree\dist` (grepped for "git at the Sept", "not pushed: unknown", the
+`gh status` rule and `gitReading`; launch-checked headful 16 of 16, his window untouched). **To do
+once he has closed his:** copy it and `sea\` into `dist`, compare hashes, run `fix-sea-config.mjs`,
+and start it through Explorer only if he asks. Before that, 42bf49e was built in a tree copy, grepped for the fork's road
 and the mere, launch-checked headful 16 of 16, and copied into `dist` with `sea\` (hashes equal) while
-no LayerCake was running: he had closed his own. **Not started for him**, since he closed it himself;
-start it with `explorer.exe` when he asks. `fix-sea-config.mjs` then printed one MISSING bundle name,
+no LayerCake was running: he had closed his own. It was not started for him, since he closed it himself. `fix-sea-config.mjs` then printed one MISSING bundle name,
 which is #185, not a fault. Before that 4665aae (#163's session rhythm), built in a tree copy (the
 06df0862 scratchpad's `exe-tree`, since removed), grepped for the gate's title text,
 launch-checked headful 16 of 16 with his window untouched, copied into `dist` with `sea\` once he
