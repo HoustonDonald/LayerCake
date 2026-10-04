@@ -1337,8 +1337,10 @@ What to know:
   "LayerCake", Explorer's Properties > Details shows that name with the version in `package.json`,
   and Explorer shows the cake icon.
   The icon is `desktop/layercake.ico`, drawn by `node scripts/make-icon.mjs`, which only needs
-  running again to change the drawing. The copyright line is still Node's, since most of the file
-  is Node.
+  running again to change the drawing. The copyright line is LayerCake's, taken from `LICENSE` at
+  build time, followed by a credit to Node.js, since most of the file is Node and its license asks
+  for its notice to travel with copies. A release carries the full notices beside the exe in
+  `THIRD_PARTY_NOTICES.txt`.
 - Its taskbar entry and toasts belong to Edge, not LayerCake, as with `npm run app`. The page serves
   the same cake as `/favicon.ico`, which Edge shows in the window's title bar.
 

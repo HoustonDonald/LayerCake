@@ -50,6 +50,13 @@ const versionParts = /^(\d+)\.(\d+)\.(\d+)$/.exec(version)?.slice(1).map(Number)
 if (!versionParts || versionParts.some((n) => n > 0xffff)) {
   throw new Error(`package.json version "${version}" does not fit a Windows version resource (major.minor.patch, each 0-65535)`);
 }
+// The exe's copyright line (Properties > Details), taken from LICENSE so the
+// two cannot drift. Node keeps a credit after it: most of the file is Node,
+// and its MIT license asks for its notice to travel with copies (the full
+// text ships beside the exe in the release's THIRD_PARTY_NOTICES.txt).
+const holder = /^Copyright \(c\) .+$/m.exec(fs.readFileSync(path.join(root, 'LICENSE'), 'utf8'))?.[0];
+if (!holder) throw new Error('LICENSE has no "Copyright (c) ..." line for the exe to carry');
+const COPYRIGHT = `${holder.trim()}. MIT License. Includes Node.js, Copyright Node.js contributors, MIT License.`;
 
 // The sentinel Node's own SEA docs pass to postject. It marks the fuse inside
 // node.exe that tells the runtime a blob has been injected.
@@ -141,9 +148,8 @@ function setIdentity(file) {
       OriginalFilename: `${NAME}.exe`,
       FileVersion: version,
       ProductVersion: version,
+      LegalCopyright: COPYRIGHT,
     });
-    // Node's LegalCopyright stays: most of this file is Node, and its MIT
-    // license asks for that notice to travel with copies.
     info.removeStringValue(table, 'CompanyName');
   }
   info.outputToResourceEntries(res.entries);
@@ -158,7 +164,7 @@ function setIdentity(file) {
 }
 
 /**
- * Reads the finished file back: the name, the icon and postject's blob.
+ * Reads the finished file back: the name, the copyright line, the icon and postject's blob.
  * postject rebuilds the whole resource tree to add the blob, so a postject
  * that dropped setIdentity's work, or a rewritten file that confused postject,
  * surfaces here. Otherwise it would ship silently, because the exe prints
@@ -170,7 +176,7 @@ function checkIdentity(file, iconCount, blobSize) {
   const res = ResEdit.NtExecutableResource.from(ResEdit.NtExecutable.from(fs.readFileSync(file), { ignoreCert: true }));
   const infos = ResEdit.Resource.VersionInfo.fromEntries(res.entries);
   const strings = infos.flatMap((info) => info.getAllLanguagesForStringValues().map((t) => info.getStringValues(t)));
-  if (!strings.length || strings.some((s) => s.FileDescription !== NAME || s.ProductName !== NAME || s.FileVersion !== version)) {
+  if (!strings.length || strings.some((s) => s.FileDescription !== NAME || s.ProductName !== NAME || s.FileVersion !== version || s.LegalCopyright !== COPYRIGHT)) {
     throw new Error(`${file}: version strings are not LayerCake's after injection: ${JSON.stringify(strings)}`);
   }
   const groups = ResEdit.Resource.IconGroupEntry.fromEntries(res.entries);
@@ -224,12 +230,17 @@ process.stdout.write(`${bundlePath} (${fs.statSync(bundlePath).size} bytes)\n`);
 step('3/6 SEA blob');
 const blobPath = path.join(workDir, 'sea-prep.blob');
 const configPath = path.join(workDir, 'sea-config.json');
+// `main` and `output` are relative, and the step runs in workDir: the blob
+// stores `main` exactly as given, as the script's name in a stack trace, and an
+// absolute one put the build folder into every exe. A build in a tree copy
+// under the user's profile shipped that user's name (#187). Nothing at run
+// time reads it.
 fs.writeFileSync(
   configPath,
   JSON.stringify(
     {
-      main: bundlePath,
-      output: blobPath,
+      main: path.basename(bundlePath),
+      output: path.basename(blobPath),
       disableExperimentalSEAWarning: true,
       useSnapshot: false,
       useCodeCache: false,
@@ -239,7 +250,7 @@ fs.writeFileSync(
     2
   )
 );
-execFileSync(process.execPath, ['--experimental-sea-config', configPath], { stdio: 'inherit' });
+execFileSync(process.execPath, ['--experimental-sea-config', configPath], { stdio: 'inherit', cwd: workDir });
 
 step('4/6 copy node.exe, then set its icon and version (resedit)');
 const stagedExe = path.join(workDir, 'LayerCake.exe');
