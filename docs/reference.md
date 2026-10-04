@@ -1177,8 +1177,8 @@ that the castle sees.
 - `/ingest/<launch>/<secret>/…` accepts the status line and hooks of a session LayerCake launched,
   on a listener of its own at a fixed port, 5177 (`LAYERCAKE_INGEST_PORT` moves it; #200), not on the
   page's port, which changes every run: the session's settings name the port once, and it must reach
-  the next run too. If something else holds that port, **Start Claude here** says so and stays off;
-  everything else works. While LayerCake is closed and a session it launched is still running,
+  the next run too. If something else holds that port, **Start Claude here** says so and stays off
+  until it frees (LayerCake keeps trying it); everything else works. While LayerCake is closed and a session it launched is still running,
   another person signed in to the computer could take that port and receive the session's reports.
   It is outside `/api` because its callers are Claude Code processes, not the page: instead of the
   page token it needs that launch's secret (compared in constant time), refuses any request

@@ -612,7 +612,7 @@ try {
   runC.child.kill();
   await new Promise((r) => runC.child.once('exit', r));
   const runD = await runWith('d');
-  const posted = cHook ? await fetch(cHook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: cLaunch.sessionId, hook_event_name: 'UserPromptSubmit', prompt: 'after the restart' }) }) : null;
+  const posted = cHook ? await fetch(cHook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: cLaunch.sessionId, hook_event_name: 'UserPromptSubmit', prompt: 'after the restart' }) }).catch(() => null) : null;
   const dLaunches = runD.base ? await (await fetch(`${runD.base}/api/launches`, { headers: runD.headers })).json().catch(() => ({})) : {};
   const heard = (dLaunches.launches || []).find((x) => x.id === cLaunch.launchId);
   runD.child.kill();
@@ -630,8 +630,27 @@ try {
   const eScan = await (await fetch(`${runE.base}/api/scan`, { method: 'POST', headers: runE.headers, body: JSON.stringify({ dir: proj }) })).json().catch(() => ({}));
   const eLaunch = await fetch(`${runE.base}/api/launch`, { method: 'POST', headers: runE.headers, body: JSON.stringify({ scanId: eScan.scanId }) });
   const eBody = await eLaunch.json().catch(() => ({}));
+  // Freed, it is taken within the retry (2 s): no restart needed.
+  await new Promise((r) => holder.close(r));
+  let eAgain = null;
+  for (let i = 0; i < 20 && eAgain?.status !== 200; i += 1) {
+    await new Promise((r) => setTimeout(r, 500));
+    eAgain = await fetch(`${runE.base}/api/launch`, { method: 'POST', headers: runE.headers, body: JSON.stringify({ scanId: eScan.scanId }) });
+  }
+  const eAgainBody = eAgain ? await eAgain.json().catch(() => ({})) : {};
+  const eSettings = eAgainBody.settingsPath ? JSON.parse(await fs.readFile(eAgainBody.settingsPath, 'utf8')) : {};
   runE.child.kill();
-  holder.close();
+  // A setting that is not a port is refused, never read as the default 5177.
+  const runF = await runWith('f', 'abc');
+  const fScan = await (await fetch(`${runF.base}/api/scan`, { method: 'POST', headers: runF.headers, body: JSON.stringify({ dir: proj }) })).json().catch(() => ({}));
+  const fLaunch = await fetch(`${runF.base}/api/launch`, { method: 'POST', headers: runF.headers, body: JSON.stringify({ scanId: fScan.scanId }) });
+  const fBody = await fLaunch.json().catch(() => ({}));
+  runF.child.kill();
+  check('a LAYERCAKE_INGEST_PORT that is not a port is refused, not read as 5177 (#200)',
+    fLaunch.status === 409 && /not a port: abc/.test(fBody.message || ''), JSON.stringify({ status: fLaunch.status, body: fBody.message }));
+  check('once the reporting port frees, Start Claude here comes back without a restart, on that port (#200)',
+    eAgain?.status === 200 && String(eSettings.hooks?.UserPromptSubmit?.[0]?.hooks?.[0]?.url || '').startsWith(`http://127.0.0.1:${heldPort}/ingest/`),
+    JSON.stringify({ status: eAgain?.status, body: eAgainBody.message || null }));
   check('with the reporting port held by something else, Start Claude here refuses and says why; the scan still works (#200)',
     Boolean(eScan.scanId) && eLaunch.status === 409 && eBody.code === 'ENOINGEST' && new RegExp(`port ${heldPort}`).test(eBody.message || ''),
     JSON.stringify({ scan: Boolean(eScan.scanId), status: eLaunch.status, body: eBody }));
@@ -652,6 +671,9 @@ try {
   check('preferences need the key like every /api route (#198)', (await fetch(`${BASE}/api/prefs`)).status === 403);
   const page = await fetch(`${BASE}/`);
   await page.text();
+  // #200: the page's port answers no report route; they are the reporting listener's alone.
+  const reportOnPage = await fetch(`${BASE}/ingest/0123456789abcdef/${'0'.repeat(48)}/hook`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  check('the page\'s port answers no report route (#200)', reportOnPage.status === 404, String(reportOnPage.status));
   check('the page clears its origin\'s cache before its files load, and /index.html is not served (#198, #199)',
     page.headers.get('clear-site-data') === '"cache"' && (await fetch(`${BASE}/index.html`)).status === 404,
     `${page.headers.get('clear-site-data')}`);

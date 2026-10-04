@@ -618,7 +618,7 @@ export function createApp({ staticFiles, key, ingest = { port: null, error: 'not
       // next run, and must never post to a port nobody now holds for it.
       if (!ingest.port) {
         return res.status(409).json({
-          message: `Start Claude here is unavailable: LayerCake could not listen for its sessions' reports on port ${INGEST_PORT} (${ingest.error}). Another program, or LayerCake running for another person signed in to this computer, may hold it. Set LAYERCAKE_INGEST_PORT to a free port and restart LayerCake.`,
+          message: `Start Claude here is unavailable: LayerCake could not listen for its sessions' reports on port ${INGEST_PORT ?? process.env.LAYERCAKE_INGEST_PORT} (${ingest.error}). Another program, or LayerCake running for another person signed in to this computer, may hold it. Set LAYERCAKE_INGEST_PORT to a free port and restart LayerCake.`,
           code: 'ENOINGEST',
         });
       }
@@ -682,27 +682,27 @@ export function createApp({ staticFiles, key, ingest = { port: null, error: 'not
 }
 
 /**
- * Listens on 127.0.0.1 and settles once the socket is bound or has failed.
- * Callers decide what a failure means: a terminal prints guidance, the single
- * executable has no terminal and shows a window instead.
- */
-/**
  * The reporting listener's port (#200): fixed, so a session launched by one run
  * still reports to the next, whose page is on a new port (#198). 5177, not the
  * dev server's 5178. LAYERCAKE_INGEST_PORT moves it; 0 lets Windows pick, for
- * test servers beside a running LayerCake.
+ * test servers beside a running LayerCake. A value that is not a port is
+ * refused (Start Claude here off, saying so), never quietly read as 5177: a
+ * test that meant to keep off the user's port must not land on it.
  */
-export const INGEST_PORT = (() => {
-  const raw = process.env.LAYERCAKE_INGEST_PORT;
-  const n = raw === undefined || raw === '' ? 5177 : Number(raw);
-  return Number.isInteger(n) && n >= 0 && n < 65536 ? n : 5177;
-})();
+const INGEST_SETTING = process.env.LAYERCAKE_INGEST_PORT;
+export const INGEST_PORT =
+  INGEST_SETTING === undefined || INGEST_SETTING === ''
+    ? 5177
+    : /^\d{1,5}$/.test(INGEST_SETTING) && Number(INGEST_SETTING) < 65536
+      ? Number(INGEST_SETTING)
+      : null;
 
 /**
  * Status line and hook posts from sessions LayerCake launched, on a listener of
  * their own (#200). Not /api: the callers are Claude Code processes, not our
  * page, so they carry a per-launch secret instead of the page key (ingest.js).
- * The Host guard first, as everywhere; nothing else is served here.
+ * The Host guard first, as everywhere; nothing else is served here. Made once
+ * per process: making it restores the launch records from disk.
  */
 export function createIngestApp() {
   const app = express();
@@ -718,19 +718,50 @@ export function createIngestApp() {
 }
 
 /**
- * Starts the reporting listener: { server, port } once it listens, or
- * { port: null, error } when it cannot (the port held by something else, most
- * likely), which disables Start Claude here and nothing else.
+ * Starts the reporting listener: { server, port, app } once it listens, or
+ * { port: null, error, app } when it cannot (the port held by something else,
+ * most likely), which disables Start Claude here and nothing else. `app` is
+ * kept so a retry binds the same one rather than restoring the launch records
+ * again.
  */
-export async function listenIngest(port = INGEST_PORT) {
+export async function listenIngest(port = INGEST_PORT, app = null) {
+  const ingestApp = app || createIngestApp();
+  if (port === null) {
+    return { server: null, port: null, app: ingestApp, error: `LAYERCAKE_INGEST_PORT is not a port: ${INGEST_SETTING}` };
+  }
   try {
-    const server = await listen(createIngestApp(), port);
-    return { server, port: server.address().port, error: null };
+    const server = await listen(ingestApp, port);
+    return { server, port: server.address().port, app: ingestApp, error: null };
   } catch (err) {
-    return { server: null, port: null, error: err.code || err.message };
+    return { server: null, port: null, app: ingestApp, error: err.code || err.message };
   }
 }
 
+/**
+ * Keeps trying to bind the reporting port while it is held, every 2 s, and
+ * fills in `state` (the object createApp reads on each launch) once it binds.
+ * An exe taking over from one whose page has closed but whose process is still
+ * draining (up to 30 s) finds the port still held; a second LayerCake beside a
+ * first gets it when the first exits. Each try binds the app already made, so
+ * it costs one failed bind. Unref'd, so it never keeps a process alive. A
+ * setting that is not a port is not retried.
+ */
+export function retryIngest(state, port = INGEST_PORT, everyMs = 2000) {
+  if (state.port || port === null) return;
+  const timer = setInterval(async () => {
+    const next = await listenIngest(port, state.app);
+    if (!next.port) return;
+    clearInterval(timer);
+    Object.assign(state, next);
+  }, everyMs);
+  timer.unref();
+}
+
+/**
+ * Listens on 127.0.0.1 and settles once the socket is bound or has failed.
+ * Callers decide what a failure means: a terminal prints guidance, the single
+ * executable has no terminal and shows a window instead.
+ */
 export function listen(app, port) {
   return new Promise((resolve, reject) => {
     const server = app.listen(port, HOST);

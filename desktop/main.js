@@ -199,14 +199,16 @@ async function watchForLock(appWindow) {
  * never. Staying up is the safe side of not knowing, since a window whose
  * server has vanished is worse than an idle process.
  */
-async function serveUntilWindowsClose(server, inflight, appWindow) {
+async function serveUntilWindowsClose(server, inflight, appWindow, ingest = null) {
   await appWindow.exited;
   if (handedOff(appWindow) && !appWindow.lockSeen) {
     while (!(await profileInUse())) await sleep(PROFILE_POLL_MS);
   }
   while (await profileInUse()) await sleep(PROFILE_POLL_MS);
   // Stop taking requests, then let the ones already running finish, so a save
-  // or restore started just before the window closed is not cut off.
+  // or restore started just before the window closed is not cut off. The
+  // reporting port first (#200): a LayerCake taking over can have it at once.
+  ingest?.server?.close();
   server.close();
   await inflight.idle(DRAIN_MS);
   process.exit(0);
@@ -280,10 +282,12 @@ async function main() {
   }
 
   const key = newRunKey();
-  const { createApp, listen, listenIngest, memoryStatic } = await import('../server/app.js');
+  const { createApp, listen, listenIngest, memoryStatic, retryIngest } = await import('../server/app.js');
   // Sessions it launches report on a fixed port of their own (#200); without
-  // it, only Start Claude here is unavailable, and it says why.
+  // it, only Start Claude here is unavailable, and it says why. Taking over
+  // from a LayerCake still draining, the port frees within seconds: retried.
   const ingest = await listenIngest();
+  retryIngest(ingest);
   const app = createApp({ staticFiles: memoryStatic(embeddedClient()), key, ingest });
   let server;
   try {
@@ -317,7 +321,7 @@ async function main() {
   appWindow = openAppWindow(appAddress(port, key));
   // No app-mode browser, so no process that tracks the window: stay up.
   if (!appWindow.child) return;
-  await serveUntilWindowsClose(server, inflight, appWindow);
+  await serveUntilWindowsClose(server, inflight, appWindow, ingest);
 }
 
 if (!isSea()) {

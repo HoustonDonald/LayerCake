@@ -80,7 +80,9 @@ serves an embedded copy through `desktop/main.js`. After touching `server/app.js
 which would lend it one), then check that a window opens, the UI loads, and closing the window ends
 `LayerCake.exe`. The exe prints nothing, so a failure there shows as an error window or as silence.
 
-Env knobs: `PORT` (unset: Windows picks a free port each run, #198), `CLAUDE_EXPLORER_DIR_TIMEOUT_MS` (default 3000),
+Env knobs: `PORT` (unset: Windows picks a free port each run, #198), `LAYERCAKE_INGEST_PORT` (the
+reporting listener's, default 5177; 0 for any free port; a value that is not a port is refused, #200),
+`CLAUDE_EXPLORER_DIR_TIMEOUT_MS` (default 3000),
 `LAYERCAKE_SNAPSHOT_DIR` (default `%LOCALAPPDATA%\LayerCake\snapshots`), `LAYERCAKE_APPDATA_DIR`
 (default `%LOCALAPPDATA%\LayerCake\data`) and `LAYERCAKE_CLAUDE_DATA_DIR` (default: Claude Code's
 configuration home, read for session data only; smoke points it at a synthetic folder so real
@@ -93,7 +95,6 @@ every caller; `.claude.json` stays put (measured). Smoke sets `CLAUDE_CONFIG_DIR
 config home, so its user level is never the real one; the #64 checks run a server of their own
 without it (`smoke-confighome.mjs`). More exist for smoke only:
 `LAYERCAKE_LAUNCH_DRY_RUN=1` (launch builds its argv and settings but starts nothing),
-`LAYERCAKE_INGEST_PORT` (the reporting listener's port, default 5177; 0 for any free port, #200),
 `LAYERCAKE_CLAUDE_CMD` (a JSON array replacing `claude` for AI summaries, pointed at
 `scripts/smoke-claude-stub.mjs`, so no usage is ever spent testing),
 `LAYERCAKE_REPORT_WINDOW_MS` (how long a launched session counts as running after its last report;
@@ -368,9 +369,11 @@ on a fixed port (`INGEST_PORT` in app.js: 5177, `LAYERCAKE_INGEST_PORT` moves it
 pick, which smoke, castle-sim and the exe checks use beside a running LayerCake), never on the
 page's port, which changes every run (#198): a launched session's settings name the port once, and
 must reach the next run. If that port is held by something else, `/api/launch` refuses with
-ENOINGEST and the rest works. While LayerCake is closed and a launched session still runs, another
+ENOINGEST and the rest works, and the server keeps trying the port every 2 s (`retryIngest`): an exe
+taking over finds it held by the old process while that drains, and a closing exe releases it first. While LayerCake is closed and a launched session still runs, another
 signed-in user could take that port and receive its reports: the 1.0 baseline, stated rather than
-closed. Callers are Claude Code processes, so there is no page key: a per-launch secret in the path
+closed, and made easier by Windows letting another account listen on 0.0.0.0 at the same port beforehand
+(the review measured it for one account; across accounts it is reasoned). Callers are Claude Code processes, so there is no page key: a per-launch secret in the path
 (constant-time compare), no `Origin` header allowed, and the Host guard. Launch records, secret
 included, are kept in app data so a session keeps reporting across a LayerCake restart; the settings file that Claude Code reads holds the same
 secret under the same user ACL. The secret is also on `curl.exe`'s command line at every
