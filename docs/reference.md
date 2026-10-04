@@ -1,11 +1,15 @@
-# LayerCake
+# LayerCake reference
 
-A local tool for seeing and managing the Claude Code configuration inheritance lineage: what is
-inherited, from where, and in what order. Browse every level, edit the files, and snapshot or
+The full reference: what LayerCake scans, how each view is built, what it writes and how, and every
+limit it knows about. For downloading it and getting started, see the [README](../README.md).
+
+LayerCake is a local tool for seeing and managing the Claude Code configuration inheritance lineage:
+what is inherited, from where, and in what order. Browse every level, edit the files, and snapshot or
 restore the whole environment. Useful mostly when moving between projects, when the answer to "which
 CLAUDE.md is actually winning here" is not obvious.
 
-Built and verified against **Claude Code 2.1.229 on Windows 11**. Windows is the first-class target.
+Built against Claude Code from **2.1.229** onward, **on Windows 11**; the newest version measured
+against it is 2.1.284 (a plain Windows 11 in Windows Sandbox: #11, #157). Windows is the first-class target.
 The smoke test also passes on Linux (Ubuntu under WSL2, Node 22). There, the checks of a
 Windows-only form (UNC paths, drive letters, the libuv watch storm, PowerShell process start times,
 `claude.cmd` shims, Windows project paths) print `SKIP` with their reason and a count, never a quiet
@@ -1138,9 +1142,12 @@ that the castle sees.
 ## Network posture
 
 - Binds `127.0.0.1` only, never `0.0.0.0`.
-- No outbound requests. Nothing is sent anywhere. LayerCake starts two kinds of process, both on
-  your click: `claude -p` for an AI summary, and Windows Terminal running `claude` for **Start
-  Claude here** (see [Sessions](#sessions)).
+- No outbound requests. Nothing is sent anywhere. LayerCake starts few processes, each with a fixed
+  command line: the browser for its window; `reg.exe` during a scan, to read Claude Code's policy
+  from the registry; and Windows PowerShell 5.1, to read the start times of running processes so a
+  reused process id cannot pass for a running session. Two more start only on your click:
+  `claude -p` for an AI summary, and Windows Terminal (or, without it, a console window) running
+  `claude` for **Start Claude here** (see [Sessions](#sessions)).
 - `/ingest/<launch>/<secret>/…` accepts the status line and hooks of a session LayerCake launched.
   It is outside `/api` because its callers are Claude Code processes, not the page: instead of the
   page token it needs that launch's secret (compared in constant time), refuses any request
