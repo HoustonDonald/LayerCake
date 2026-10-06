@@ -259,15 +259,39 @@ export default function SessionsView({ projectDir, scanId }) {
     }
   }, [scanId]);
 
+  // Continues the selected session in a launched terminal (#204). Nothing to
+  // wait for: the session is already listed, and stays selected.
+  const [resuming, setResuming] = useState(null); // { id, busy }, then { id, note } or { id, error }
+  const onResume = useCallback(async (id) => {
+    setResuming({ id, busy: true });
+    try {
+      const r = await launchClaude(scanId, id);
+      setResuming({
+        id,
+        note:
+          r.terminal === 'console'
+            ? 'Resuming in a console window, because Windows Terminal is not installed here.'
+            : `Resuming in Windows Terminal (tab "Claude: ${projectDir?.split(/[\\/]/).pop()}").`,
+      });
+      dockLeft();
+    } catch (e) {
+      setResuming({ id, error: e.message });
+    }
+  }, [scanId, projectDir]);
+
   // Responses arrive in any order. One for a session that is no longer
   // selected (a slow session clicked before a fast one, a summary that
   // finished after the user moved on) must not paint over the current one.
   const currentId = useRef(null);
   currentId.current = selected?.kind === 'session' ? selected.id : null;
 
+  // Read through a ref so a new scan does not re-run the effect below and blank the detail.
+  const scanRef = useRef(scanId);
+  scanRef.current = scanId;
+
   const loadDetail = useCallback((id) => {
     lastFetch.current = Date.now();
-    return getSession(id)
+    return getSession(id, scanRef.current)
       .then((d) => {
         if (currentId.current !== id) return;
         setDetail(d);
@@ -331,13 +355,14 @@ export default function SessionsView({ projectDir, scanId }) {
           </button>
         </div>
         <div className="s-launch">
-          <button className="btn btn-primary btn-small" onClick={onLaunch} disabled={!scanId || Boolean(launch)} title={projectDir ? `Open Claude Code in Windows Terminal in ${projectDir}` : 'Scan a directory first'}>
+          <button className="btn btn-primary btn-small" onClick={() => onLaunch()} disabled={!scanId || Boolean(launch)} title={projectDir ? `Start a new Claude Code session in Windows Terminal in ${projectDir}` : 'Scan a directory first'}>
             Start Claude here
           </button>
           <span className="muted">
-            Opens Claude Code in Windows Terminal beside this window (in a console window where Windows Terminal is not
-            installed), wired to report exact context, cost, limits and when it waits for you. Adds nothing to Claude&apos;s
-            context.
+            Starts a <strong>new</strong> Claude Code session in Windows Terminal beside this window (in a console window
+            where Windows Terminal is not installed), wired to report exact context, cost, limits and when it waits for you.
+            Adds nothing to Claude&apos;s context. To continue an earlier session instead, select it and use Resume in
+            Claude, or type /resume in that terminal.
           </span>
         </div>
         {launch && (
@@ -384,7 +409,8 @@ export default function SessionsView({ projectDir, scanId }) {
         {!selected && <div className="empty-state">Pick a session on the left.</div>}
         {selected?.kind === 'session' && !detail && !detailError && <div className="empty-state">Reading transcript…</div>}
         {selected?.kind === 'session' && detail && (
-          <SessionDetail detail={detail} onSummarize={onSummarize} summarizing={summarizing} summaryError={summaryError} />
+          <SessionDetail detail={detail} onSummarize={onSummarize} summarizing={summarizing} summaryError={summaryError}
+            onResume={() => onResume(detail.sessionId)} resuming={resuming?.id === detail.sessionId ? resuming : null} />
         )}
         {selected?.kind === 'expired' && rowFor('expired', selected.id) && <KeptCard card={rowFor('expired', selected.id)} />}
         {selected?.kind === 'promptOnly' && <PromptOnly id={selected.id} row={rowFor('promptOnly', selected.id)} />}

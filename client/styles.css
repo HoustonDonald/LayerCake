@@ -1568,6 +1568,19 @@ pre.code {
   color: var(--text-dim);
 }
 
+.s-resume {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.s-resume .err-item {
+  margin: 0;
+}
+
 .recaps {
   margin-top: 10px;
 }

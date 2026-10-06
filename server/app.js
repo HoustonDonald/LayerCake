@@ -52,7 +52,7 @@ import {
 import { MAX_FILE_BYTES, isSecret, describeError, writePolicy } from './safety.js';
 import { readPrefs, updatePrefs } from './appdata.js';
 import { hostGuard, keyProof, originGuard, portOf, requireToken } from './security.js';
-import { registerSessionRoutes } from './session-routes.js';
+import { registerSessionRoutes, resumableSession } from './session-routes.js';
 import { closeCastleStreamsFor, registerCastleRoutes } from './castle-routes.js';
 import { listLaunches, registerIngestRoutes } from './ingest.js';
 import { launchClaude } from './launch.js';
@@ -600,14 +600,17 @@ export function createApp({ staticFiles, key, ingest = { port: null, error: 'not
 
   // Session history and live sessions. Registered here, after the /api guards,
   // so every one of them is behind the Host, origin and token checks.
-  registerSessionRoutes(app);
+  registerSessionRoutes(app, { projectFor: (scanId) => scans.get(scanId)?.lineage.projectDir || null });
 
   // The Castle view (#159, #160), behind the same guards. Its project comes from
   // the scan store, never the request, as for /api/launch below.
   registerCastleRoutes(app, { projectFor: (scanId) => scans.get(scanId)?.lineage.projectDir || null });
 
-  // "Start Claude here". The directory comes from the scan store, never from the
-  // request body, the same way a write takes its target from the scan.
+  // "Start Claude here", and "Resume in Claude" with `resume` (#204). The
+  // directory comes from the scan store, never from the request body, the same
+  // way a write takes its target from the scan; a session to resume must be one
+  // discovery found, in the folder Claude Code keeps for that directory, and
+  // not running (resumableSession).
   app.post('/api/launch', async (req, res) => {
     const scan = scans.get(String(req.body?.scanId || ''));
     if (!scan) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan first.', code: 'ESCANGONE' });
@@ -622,7 +625,12 @@ export function createApp({ staticFiles, key, ingest = { port: null, error: 'not
           code: 'ENOINGEST',
         });
       }
-      return res.json(await launchClaude({ dir: scan.lineage.projectDir, port: ingest.port, screen }));
+      const want = req.body?.resume;
+      if (want !== undefined && want !== null && typeof want !== 'string') {
+        return res.status(400).json({ message: 'resume must be a session id', code: 'EBADREQUEST' });
+      }
+      const resume = want ? await resumableSession(want, scan.lineage.projectDir) : null;
+      return res.json(await launchClaude({ dir: scan.lineage.projectDir, port: ingest.port, screen, resume }));
     } catch (err) {
       return sendError(res, err);
     }

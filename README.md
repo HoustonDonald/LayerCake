@@ -67,9 +67,10 @@ Get-FileHash .\LayerCake.exe
   such as `~\.claude.json`, so keep that folder private, as you would the originals.
 - **Spends none of your Claude usage**, except the optional AI summary of a session, which runs only
   when you click for it (Claude Haiku, with a spending cap).
-- **Start Claude here** (on the Sessions tab) opens Claude Code in Windows Terminal with a status
-  line and hooks that report to LayerCake on `127.0.0.1`, so it can show when Claude is waiting for
-  you. Nothing is added to your own Claude Code settings. Sessions you start yourself are only read,
+- **Start Claude here** (on the Sessions tab) opens a new Claude Code session in Windows Terminal,
+  and **Resume in Claude** continues a selected one. Either way the session gets a status line and
+  hooks that report to LayerCake on `127.0.0.1`, so it can show when Claude is waiting for you.
+  Nothing is added to your own Claude Code settings. Sessions you start yourself are only read,
   from Claude Code's own session files.
 
 The detail is in the reference: [Network posture](docs/reference.md#network-posture) and

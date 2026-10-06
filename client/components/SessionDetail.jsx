@@ -339,7 +339,26 @@ function TurnView({ sessionId, n, lastAt }) {
   );
 }
 
-export default function SessionDetail({ detail, onSummarize, summarizing, summaryError }) {
+/**
+ * Resume in Claude (#204). Whether it is allowed comes from the server
+ * (`detail.resume`), which /api/launch checks again on the click.
+ */
+function Resume({ detail, onResume, resuming }) {
+  const verdict = detail.resume || { ok: false, message: 'Scan the project first.' };
+  return (
+    <div className="s-resume">
+      <button className="btn btn-small" onClick={onResume} disabled={!verdict.ok || Boolean(resuming?.busy)}
+        title={verdict.ok ? 'Continue this session in Windows Terminal, reporting to LayerCake like Start Claude here' : verdict.message}>
+        Resume in Claude
+      </button>
+      {resuming?.note && <span className="muted">{resuming.note}</span>}
+      {resuming?.error && <span className="err-item">{resuming.error}</span>}
+      {!resuming?.note && !resuming?.error && !verdict.ok && <span className="muted">{verdict.message}</span>}
+    </div>
+  );
+}
+
+export default function SessionDetail({ detail, onSummarize, summarizing, summaryError, onResume, resuming }) {
   const [turnN, setTurnN] = useState(null);
   const health = detail.health;
   const state = health?.states?.find((s) => s.state === health.state);
@@ -384,6 +403,7 @@ export default function SessionDetail({ detail, onSummarize, summarizing, summar
           </span>
         )}
       </div>
+      {onResume && <Resume detail={detail} onResume={onResume} resuming={resuming} />}
 
       {detail.awaySummaries.length > 0 && (
         <div className="recaps">

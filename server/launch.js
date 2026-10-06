@@ -6,6 +6,9 @@
  *   wt -w LayerCake [--pos x,y --size cols,rows] new-tab --title "Claude: <project>"
  *      --suppressApplicationTitle -d <project> claude --session-id <uuid> --settings <file>
  *
+ * or, to continue a session from the Sessions tab, --resume <its id> in place
+ * of --session-id <uuid> (#204).
+ *
  * The settings file adds, for that session only (Claude Code documents
  * --settings as a settings level that "lasts one session and doesn't write to
  * any file"), a status line that forwards its JSON to LayerCake and prints the
@@ -176,7 +179,16 @@ function startInConsole(plan) {
   });
 }
 
-export async function launchClaude({ dir, port, screen }) {
+/**
+ * `resume`, when given, is a session id resumableSession (session-routes.js)
+ * has already checked: discovered, in this directory's project folder, not
+ * running (#204). The launch then continues it with --resume instead of
+ * starting a new one with --session-id. Claude Code keeps the session's id on
+ * a resume unless --fork-session is passed, so the launch carries that id; if
+ * a version forked anyway, the new id arrives with its first report, as after
+ * a /clear (#22).
+ */
+export async function launchClaude({ dir, port, screen, resume = null }) {
   refuseTerminalSeparator(dir);
   // The program wt starts: claude.exe's absolute path when it is on PATH, else
   // node plus the npm shim's script (#6). Never a bare name, which the console
@@ -191,14 +203,14 @@ export async function launchClaude({ dir, port, screen }) {
   for (const part of claude) refuseTerminalSeparator(part, "Claude Code's program path");
   const id = crypto.randomBytes(8).toString('hex');
   const secret = crypto.randomBytes(24).toString('hex');
-  const sessionId = crypto.randomUUID();
+  const sessionId = resume || crypto.randomUUID();
   const base = `http://127.0.0.1:${port}/ingest/${id}/${secret}`;
   const settings = buildSettings(base);
   const record = { id, secret, dir, sessionId, createdAt: new Date().toISOString() };
   const settingsPath = await writeLaunch(record, settings);
   registerLaunch(record);
 
-  const program = [...claude, '--session-id', sessionId, '--settings', settingsPath];
+  const program = [...claude, resume ? '--resume' : '--session-id', sessionId, '--settings', settingsPath];
   const argv = [
     '-w',
     'LayerCake',

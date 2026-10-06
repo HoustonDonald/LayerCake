@@ -249,8 +249,10 @@ export function listSessions(dir) {
   return request(dir ? `/api/sessions?dir=${encodeURIComponent(dir)}` : '/api/sessions');
 }
 
-export function getSession(id) {
-  return request(`/api/session/${encodeURIComponent(id)}`);
+/** With a scan, the answer says whether the session can be resumed from that project (#204). */
+export function getSession(id, scanId) {
+  const q = scanId ? `?scanId=${encodeURIComponent(scanId)}` : '';
+  return request(`/api/session/${encodeURIComponent(id)}${q}`);
 }
 
 export function getTurn(id, n) {
@@ -274,10 +276,11 @@ export function getUsage() {
  * Starts Claude Code in Windows Terminal in the scanned directory, or in a
  * console window where it is not installed (the answer's `terminal` says
  * which). The screen size lets the server put the terminal on the right half.
+ * A new session, or with `resume` that session continued (#204).
  */
-export function launchClaude(scanId) {
+export function launchClaude(scanId, resume = null) {
   const screen = { width: window.screen.availWidth, height: window.screen.availHeight };
-  return post('/api/launch', { scanId, screen });
+  return post('/api/launch', resume ? { scanId, screen, resume } : { scanId, screen });
 }
 
 export function getLaunches() {

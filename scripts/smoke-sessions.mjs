@@ -611,6 +611,48 @@ export async function runLaunchChecks({ base, port, token, check, scanId, proj, 
     `scan ${hostileScan.status}, launch ${refused.status}`);
   check('a refused launch writes no launch record or settings file', (await launchFiles()) === filesBefore);
 
+  // #204: Resume in Claude. A session that is not running, in the folder
+  // Claude Code keeps for the scanned directory, resumes; one started in a
+  // subfolder (its own project folder), a running one, an undiscovered id and
+  // a non-string are refused, and none of those writes a launch record.
+  // Ids no other smoke file uses: the castle's fixture has dddddddd-..., and a
+  // shared id makes this launch one of that castle's sessions.
+  const resumeId = 'f0f0f0f0-f0f0-4f0f-8f0f-f0f0f0f0f0f0';
+  const subId = 'e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1';
+  const sub = path.join(proj, 'sub');
+  await minimalTranscript(path.join(claudeData, 'projects', projectSlug(proj)), resumeId, proj, 'A finished session to resume');
+  await fs.mkdir(path.join(claudeData, 'projects', projectSlug(sub)), { recursive: true });
+  await minimalTranscript(path.join(claudeData, 'projects', projectSlug(sub)), subId, sub, 'A session started in a subfolder');
+  const verdict = async (id, q = `?scanId=${encodeURIComponent(scanId)}`) => JSON.parse((await get(base, `/api/session/${id}${q}`, H)).body).resume;
+  const [vOk, vSub, vLive, vNoScan] = [await verdict(resumeId), await verdict(subId), await verdict(IDS.onDisk), await verdict(resumeId, '')];
+  check('a session\'s detail says whether it can be resumed from the scanned project, and why not (#204)',
+    vOk?.ok === true && vSub?.ok === false && vSub.code === 'ENOTHERE' && vLive?.ok === false && vLive.code === 'ERUNNING' &&
+      vNoScan?.ok === false && vNoScan.code === 'ESCANGONE',
+    JSON.stringify({ vOk, vSub, vLive, vNoScan }));
+  const resumeFilesBefore = await launchFiles();
+  const refusedResume = {
+    sub: await postRaw(base, '/api/launch', { scanId, resume: subId }, H),
+    live: await postRaw(base, '/api/launch', { scanId, resume: IDS.onDisk }, H),
+    unknown: await postRaw(base, '/api/launch', { scanId, resume: IDS.undiscovered }, H),
+    notId: await postRaw(base, '/api/launch', { scanId, resume: '..\\..\\x' }, H),
+    notString: await postRaw(base, '/api/launch', { scanId, resume: { id: resumeId } }, H),
+  };
+  const codeOf = (r) => { try { return JSON.parse(r.body).code; } catch { return null; } };
+  check('resume refuses a session from another folder, a running one, an undiscovered id and a non-id (#204)',
+    refusedResume.sub.status === 409 && codeOf(refusedResume.sub) === 'ENOTHERE' &&
+      refusedResume.live.status === 409 && codeOf(refusedResume.live) === 'ERUNNING' &&
+      refusedResume.unknown.status === 404 && refusedResume.notId.status === 400 && refusedResume.notString.status === 400,
+    JSON.stringify(Object.fromEntries(Object.entries(refusedResume).map(([k, r]) => [k, `${r.status} ${codeOf(r)}`]))));
+  check('a refused resume writes no launch record or settings file (#204)', (await launchFiles()) === resumeFilesBefore);
+  const resumed = await postRaw(base, '/api/launch', { scanId, resume: resumeId }, H);
+  const r = resumed.status === 200 ? JSON.parse(resumed.body) : null;
+  const rArgv = r?.argv || [];
+  check('resume launches claude --resume <that id> in the scanned directory, with the launch\'s settings, and no new session id (#204)',
+    r?.sessionId === resumeId && rArgv[rArgv.indexOf('--resume') + 1] === resumeId && !rArgv.includes('--session-id') &&
+      rArgv[rArgv.indexOf('-d') + 1] === proj && rArgv[rArgv.indexOf('--settings') + 1] === r.settingsPath &&
+      JSON.stringify(r.console?.args?.slice(-4)) === JSON.stringify(['--resume', resumeId, '--settings', r.settingsPath]),
+    `status ${resumed.status} ${JSON.stringify(rArgv)}`);
+
   const launched = await postRaw(base, '/api/launch', { scanId, screen: { width: 2560, height: 1440 } }, H);
   const l = launched.status === 200 ? JSON.parse(launched.body) : null;
   check('launch (dry run) returns its argv', l?.dryRun === true && Array.isArray(l.argv), `status ${launched.status}`);

@@ -770,13 +770,33 @@ run is listed in "LayerCake's own Claude usage", kept apart from the sessions it
 
 ### Starting Claude from LayerCake
 
-**Start Claude here** (Sessions tab, after a scan) opens a Windows Terminal tab running Claude Code in
-the scanned directory, beside the LayerCake window:
+**Start Claude here** (Sessions tab, after a scan) opens a Windows Terminal tab running a **new**
+Claude Code session in the scanned directory, beside the LayerCake window. It never continues the
+session selected in the list (#203):
 
 ```
 wt -w LayerCake --pos <right half> new-tab --title "Claude: <project>" -d <project>
    claude --session-id <new id> --settings <per-session settings file>
 ```
+
+**Resume in Claude** (a selected session's detail) continues that session instead, with the same
+terminal, settings file and reporting: `claude --resume <its id>` in place of
+`--session-id <new id>` (#204). Claude Code keeps the session's id on a resume. It is offered only
+when:
+
+- the session's transcript is still on disk (a kept card or a prompt-history-only session has
+  nothing to resume);
+- the transcript is in the folder Claude Code keeps for the scanned directory, because
+  `claude --resume` looks a session up by the directory it starts in. A session started in a
+  subfolder of the project is listed under "This project" but refused, with a note to scan that
+  folder. The check is where LayerCake found the transcript, not the folder a transcript record
+  names;
+- the session is not running (by its pid file, or a launched session's live reports): a second
+  Claude Code on the same session would write into the same transcript.
+
+The detail says which of these stops it, and `/api/launch` checks all three again on the click.
+Typing `/resume` inside a terminal opened by Start Claude here does the same, and that session
+reports too.
 
 Where Windows Terminal is not installed (stock Windows 10, or removed from a managed machine), the
 same `claude` command opens in a console window of its own instead, with no tab name and no
@@ -1294,7 +1314,7 @@ server/
   summaries.js   free summary cards; the opt-in AI summary (claude -p)
   appdata.js     LayerCake's own data store, written through atomicWrite
   session-routes.js  /api/sessions, /api/session/*, /api/history, /api/usage
-  launch.js      Start Claude here: Windows Terminal + per-session --settings
+  launch.js      Start Claude here and Resume in Claude: Windows Terminal + per-session --settings
   ingest.js      status line and hook posts from launched sessions
   castle.js      the Castle: sessions, events from hooks and transcripts, the fold, the state
   castlemap.js   the Castle's floor plan, castle.json, the glob matcher, command rules

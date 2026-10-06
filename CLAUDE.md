@@ -150,7 +150,7 @@ server/health.js    session health state + reasons, rules shipped in the payload
 server/summaries.js free summary cards; the opt-in AI summary via stripped-down claude -p
 server/appdata.js   LayerCake's own data (cards, AI summaries, usage ledger), via atomicWrite
 server/session-routes.js /api/sessions, /api/session/:id[/turn/:n|/stream|/summarize], /api/history, /api/usage
-server/launch.js    "Start Claude here": wt.exe + claude --session-id --settings <file>; fixed argv; console window without wt
+server/launch.js    "Start Claude here" / "Resume in Claude": wt.exe + claude --session-id|--resume --settings <file>; fixed argv; console window without wt
 server/powershell.js Windows PowerShell 5.1's path and the quoting for starting it; no imports, nothing at load
 server/ingest.js    /ingest/<launch>/<secret>/{statusline,hook} from launched sessions; state per session
 server/castle.js    the Castle (#159, #160): picks sessions, merges hook and transcript events, the fold, the state
@@ -410,7 +410,9 @@ and Express 4 does not catch a rejected async handler, so a throw exits the serv
 handler also catches and still answers with an empty 204.
 
 **`launch.js` starts a process with a fixed argv.** The directory comes from the scan store, never
-the request; screen numbers are validated; the settings go in a file because Windows Terminal
+the request; a session to resume (#204) is an id discovery found, whose transcript sits in the
+folder Claude Code keeps for that directory (decided by where discovery found the file, never by a
+record's `cwd`) and which is not running (`resumableSession` in session-routes.js); screen numbers are validated; the settings go in a file because Windows Terminal
 splits its arguments on `;`, even inside a quoted argument. For the same reason a project path
 containing `;` is refused before anything is written (#20): the directory reaches `wt` as `-d` and
 inside `--title`, and a folder's name is chosen by whoever made it. Any new argument to `wt` that

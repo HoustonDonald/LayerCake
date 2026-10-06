@@ -18,7 +18,7 @@ import { dataRoot, readAiSummary, readCards, readLedger, writeCard } from './app
 import { computeHealth, HEALTH_STATES } from './health.js';
 import { wrappedFor } from './ingest.js';
 import { readHistory } from './history.js';
-import { rootState, samePathKey } from './paths.js';
+import { projectSlug, rootState, samePathKey } from './paths.js';
 import {
   discoverSessions,
   getReader,
@@ -142,6 +142,45 @@ async function liveFor(sessionId, wrapped) {
   return liveFrom((await liveSessions()).find((s) => s.sessionId === sessionId), wrapped, sessionId);
 }
 
+/**
+ * Why "Resume in Claude" may not continue this session from the scanned project
+ * (#204), or null when it may. `claude --resume <id>` looks the session up in
+ * the project folder named for its working directory (projectSlug), so the
+ * transcript must be in the folder named for the scanned directory, which is
+ * the one the launch starts in. That is decided from where discovery FOUND the
+ * file, never from the cwd a transcript record claims; the cwd is only quoted
+ * in the message. A running session is refused: two Claude Code processes
+ * would append to one transcript.
+ */
+function resumeRefusal(reader, projectDir, live) {
+  if (!projectDir) return { code: 'ESCANGONE', message: 'Scan the project first.' };
+  const folder = path.basename(path.dirname(reader.file));
+  const slug = projectSlug(projectDir);
+  // The slug is ASCII letters, digits and dashes; NTFS folds case.
+  const same = process.platform === 'win32' ? folder.toLowerCase() === slug.toLowerCase() : folder === slug;
+  if (!same) {
+    return {
+      code: 'ENOTHERE',
+      message: `Claude Code resumes a session only from the folder it started in, and this one started in ${reader.model.cwd || 'another folder'}. Scan that folder to resume it from LayerCake.`,
+    };
+  }
+  if (live) return { code: 'ERUNNING', message: 'This session is running. Switch to its terminal instead: a second Claude Code on the same session would write into the same transcript.' };
+  return null;
+}
+
+/** The session id to resume in projectDir, or an HTTP-shaped error (#204). */
+export async function resumableSession(sessionId, projectDir) {
+  const reader = await getReader(sessionId);
+  const refusal = resumeRefusal(reader, projectDir, await liveFor(reader.sessionId, wrappedView(reader)));
+  if (refusal) {
+    const err = new Error(`Not resumed: ${refusal.message}`);
+    err.status = 409;
+    err.code = refusal.code;
+    throw err;
+  }
+  return reader.sessionId;
+}
+
 /** A launched session's reported state, with the transcript as evidence for tools that ended unreported (#23). */
 function wrappedView(reader) {
   return wrappedFor(reader.sessionId, { toolDone: (id) => reader.toolDone(id) });
@@ -159,7 +198,7 @@ async function persistCard(card, stored, now) {
   return true;
 }
 
-export function registerSessionRoutes(app) {
+export function registerSessionRoutes(app, { projectFor = () => null } = {}) {
   /**
    * Every session LayerCake can show, in three kinds:
    *   sessions    transcript on disk (full detail available)
@@ -267,6 +306,11 @@ export function registerSessionRoutes(app) {
       const wrapped = wrappedView(reader);
       const live = await liveFor(req.params.id, wrapped);
       const retention = await retentionDays();
+      // Whether "Resume in Claude" can continue it from the scanned project
+      // (#204): the same rule /api/launch enforces, served rather than copied
+      // into the page. Re-checked at launch, since running can change.
+      const scanId = String(req.query.scanId || '');
+      const resume = scanId ? resumeRefusal(reader, projectFor(scanId), live) : { code: 'ESCANGONE', message: 'Scan the project first.' };
       res.json({
         ...sessionDetail(reader.model),
         card: sessionCard(reader.model, { size: reader.size, mtimeMs: reader.mtimeMs }, retention),
@@ -276,6 +320,7 @@ export function registerSessionRoutes(app) {
         activity: await subagentActivity(reader),
         aiSummary: await readAiSummary(req.params.id).catch(() => null),
         estimate: estimateSummary(reader.model),
+        resume: resume ? { ok: false, ...resume } : { ok: true },
       });
     } catch (err) {
       sendError(res, err);
