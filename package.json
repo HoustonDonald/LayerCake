@@ -1,6 +1,6 @@
 {
   "name": "layercake",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Local explorer and manager for the Claude Code configuration inheritance lineage",

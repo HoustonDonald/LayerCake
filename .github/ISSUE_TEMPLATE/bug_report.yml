@@ -26,7 +26,7 @@ body:
     attributes:
       label: LayerCake version
       description: "On LayerCake.exe: right-click, Properties, Details tab, Product version. From source: the commit (git rev-parse --short HEAD)."
-      placeholder: "1.0.0"
+      placeholder: "1.1.0"
     validations:
       required: true
   - type: input
