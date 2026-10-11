@@ -1188,12 +1188,28 @@ that the castle sees.
 ## Network posture
 
 - Binds `127.0.0.1` only, never `0.0.0.0`.
-- No outbound requests. Nothing is sent anywhere. LayerCake starts few processes, each with a fixed
-  command line: the browser for its window; `reg.exe` during a scan, to read Claude Code's policy
-  from the registry; and Windows PowerShell 5.1, to read the start times of running processes so a
-  reused process id cannot pass for a running session. Two more start only on your click:
-  `claude -p` for an AI summary, and Windows Terminal (or, without it, a console window) running
-  `claude` for **Start Claude here** (see [Sessions](#sessions)).
+- LayerCake's own code makes no outbound network requests. It has no telemetry and no update check.
+  That is a statement about LayerCake, not about everything that runs because of it. Data can still
+  reach a network in three ways, and you decide each one:
+  - **Summarize with AI** runs `claude -p` on your click, and only then. Claude Code sends the
+    session's prompts and visible replies to Anthropic, as it does for any session, and the run
+    counts against your own Claude usage (see [Sessions](#sessions)). LayerCake opens no connection
+    of its own for this.
+  - **Start Claude here** and **Resume in Claude** start an ordinary Claude Code session, which
+    talks to Anthropic as it always does. The only thing LayerCake adds is a status line and hooks
+    that post to `127.0.0.1` (the status line's command is `curl.exe`).
+  - **A project on a network share** (a UNC path or a mapped drive) is read over the network. The
+    scan and the watcher make filesystem calls to that server, so that server sees them.
+
+  The app window is Edge or Chrome and loads its page from `127.0.0.1`. The browser's own network
+  behavior is the browser's, not LayerCake's (the `--disable-extensions --disable-sync` bullet below
+  says what is switched off in its profile).
+- LayerCake starts few processes, each with a fixed command line: the browser for its window;
+  `reg.exe` during a scan, to read Claude Code's policy from the registry; and Windows PowerShell
+  5.1, to read the start times of running processes so a reused process id cannot pass for a
+  running session. Two more start only on your click: `claude -p` for an AI summary, and Windows
+  Terminal (or, without it, a console window) running `claude` for **Start Claude here** (see
+  [Sessions](#sessions)).
 - `/ingest/<launch>/<secret>/…` accepts the status line and hooks of a session LayerCake launched,
   on a listener of its own at a fixed port, 5177 (`LAYERCAKE_INGEST_PORT` moves it; #200), not on the
   page's port, which changes every run: the session's settings name the port once, and it must reach

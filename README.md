@@ -56,7 +56,10 @@ Get-FileHash .\LayerCake.exe
 
 ## What it does on your machine
 
-- **Stays local, and yours.** It serves its page on `127.0.0.1` only and makes no network requests.
+- **Stays local, and yours.** It serves its page on `127.0.0.1` only. LayerCake itself makes no
+  network requests and sends no telemetry. Two things you can ask for do reach Anthropic, through
+  Claude Code and not through LayerCake: a Claude Code session you start from it, and the optional
+  AI summary (below). A project on a network share is read over the network, like any other file there.
   Other people signed in to the same computer cannot use your LayerCake: each run has a new
   address and a new key, which only your own window is given.
 - **Reads** your Claude Code configuration files. It never opens credential files
@@ -66,7 +69,8 @@ Get-FileHash .\LayerCake.exe
   days in `%LOCALAPPDATA%\LayerCake\snapshots`. They can include files that hold sign-in tokens,
   such as `~\.claude.json`, so keep that folder private, as you would the originals.
 - **Spends none of your Claude usage**, except the optional AI summary of a session, which runs only
-  when you click for it (Claude Haiku, with a spending cap).
+  when you click for it (Claude Haiku, with a spending cap). It sends that session's prompts and
+  replies to Anthropic, which already has them from the session itself.
 - **Start Claude here** (on the Sessions tab) opens a new Claude Code session in Windows Terminal,
   and **Resume in Claude** continues a selected one. Either way the session gets a status line and
   hooks that report to LayerCake on `127.0.0.1`, so it can show when Claude is waiting for you.
