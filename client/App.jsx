@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-import { createFile, deleteFile, getManifest, getPrefs, getSession, listSessions, listTerminals, readFile, savePrefs, scan } from './api.js';
+import { createFile, deleteFile, getManifest, getPrefs, getSession, getTerminalStates, listSessions, listTerminals, readFile, savePrefs, scan } from './api.js';
 import useWatch from './useWatch.js';
-import { inProject, pathKey, terminalIdentity, terminalTitle } from './sessionFormat.js';
+import { pathKey } from './sessionFormat.js';
 
 /**
  * A snapshot id (its UTC creation time, 2026-09-28T00-32-29-981Z) as local
@@ -31,6 +31,7 @@ import FlattenView from './components/FlattenView.jsx';
 import FileEditor from './components/FileEditor.jsx';
 import SnapshotPanel from './components/SnapshotPanel.jsx';
 import ToolSettings, { ToolSelector } from './components/ToolSettings.jsx';
+import SessionTabs from './components/SessionTabs.jsx';
 import SessionsView from './components/SessionsView.jsx';
 import CastleView from './components/CastleView.jsx';
 import WatchBanner from './components/WatchBanner.jsx';
@@ -81,8 +82,8 @@ export default function App() {
     try { return sessionStorage.getItem(ACTIVE_TERMINAL); } catch { return null; }
   });
   const [mode, setMode] = useState(lastTerminal ? 'sessions' : 'explorer');
-  const [terminalRequest, setTerminalRequest] = useState(null);
   const [terminals, setTerminals] = useState(null);
+  const [terminalRules, setTerminalRules] = useState(null);
   const terminalRevision = useRef(0);
   const [settingsTool, setSettingsTool] = useState('claude');
   const [codexNavigation, setCodexNavigation] = useState({});
@@ -104,9 +105,15 @@ export default function App() {
 
   const updateTerminal = useCallback((terminal) => {
     terminalRevision.current += 1;
+    // Merged, not replaced: a terminal's own stream does not carry `activity`,
+    // which only the list's poll works out (#207).
     setTerminals((previous) => previous?.some((item) => item.id === terminal.id)
-      ? previous.map((item) => item.id === terminal.id ? terminal : item)
+      ? previous.map((item) => item.id === terminal.id ? { ...item, ...terminal } : item)
       : [terminal, ...(previous || [])]);
+  }, []);
+
+  useEffect(() => {
+    getTerminalStates().then(setTerminalRules).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -254,7 +261,6 @@ export default function App() {
 
   const selectTerminal = useCallback((id) => {
     setLastTerminal(id);
-    setTerminalRequest(null);
     try {
       if (id) sessionStorage.setItem(ACTIVE_TERMINAL, id);
       else sessionStorage.removeItem(ACTIVE_TERMINAL);
@@ -264,9 +270,13 @@ export default function App() {
   const openTerminal = (id) => {
     if (!leaveEditorOk()) return;
     setEditing(false);
-    setTerminalRequest({ id });
+    selectTerminal(id);
     setMode('sessions');
   };
+
+  // The History tab: the Sessions view with no terminal in front of it.
+  const openHistory = () => openTerminal(null);
+
 
   const switchSettingsTool = (tool) => {
     if (tool !== settingsTool && leaveEditorOk()) {
@@ -389,9 +399,9 @@ export default function App() {
   }, [clearWatch, runScan, lineage, dir]);
 
   const openTerminals = terminals?.filter((terminal) => terminal.running) || [];
-  const activeTerminal = openTerminals.find((terminal) => terminal.id === lastTerminal)
-    || openTerminals.find((terminal) => lineage && inProject(terminal.cwd, lineage.projectDir))
-    || openTerminals[0];
+  // The terminal in front in the Sessions view: the tab last chosen, while it
+  // runs. With none, Sessions shows history.
+  const activeTerminal = openTerminals.find((terminal) => terminal.id === lastTerminal) || null;
   const navigationKey = mode === 'user' ? 'user' : `project:${pathKey(lineage?.projectDir)}`;
   const rememberCodexNavigation = (update) => setCodexNavigation((previous) => ({
     ...previous, [navigationKey]: update(previous[navigationKey]),
@@ -467,15 +477,12 @@ export default function App() {
         )}
       </header>
 
-      {activeTerminal && <div className="active-session-bar">
-        <button className="active-session-link" title={activeTerminal.cwd} onClick={() => openTerminal(activeTerminal.id)}>
-          <span className="active-session-label">Active session</span>
-          <strong>{terminalTitle(activeTerminal)}</strong>
-          <span>{terminalIdentity(activeTerminal)}</span>
-          <code>{activeTerminal.cwd}</code>
-          <span className="active-session-action">Open terminal</span>
-        </button>
-      </div>}
+      {openTerminals.length > 0 && (
+        <SessionTabs terminals={openTerminals} rules={terminalRules}
+          selectedId={mode === 'sessions' ? activeTerminal?.id || null : null}
+          historySelected={mode === 'sessions' && !activeTerminal}
+          onSelect={openTerminal} onHistory={openHistory} />
+      )}
 
       {scanError && <div className="error-banner">{scanError}</div>}
       {flash && (
@@ -511,8 +518,8 @@ export default function App() {
       {mode === 'sessions' ? (
         <div className="panes single">
           <SessionsView key={lineage?.projectDir || 'none'} projectDir={lineage?.projectDir || null}
-            scanId={lineage?.scanId || null} initialTerminal={terminalRequest?.id || lastTerminal}
-            terminalRequest={terminalRequest} onTerminalSelect={selectTerminal} terminals={terminals} onTerminalUpdate={updateTerminal} />
+            scanId={lineage?.scanId || null} terminal={activeTerminal}
+            onOpenTerminal={openTerminal} onShowHistory={() => selectTerminal(null)} terminals={terminals} onTerminalUpdate={updateTerminal} />
         </div>
       ) : mode === 'castle' && lineage ? (
         // Keyed on the project, not the scan (#159): a rescan (the watch bar,

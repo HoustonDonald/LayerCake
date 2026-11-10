@@ -105,6 +105,16 @@ export default function TerminalPane({ terminal, onUpdate, historyLabel, onOpenH
     } catch (err) { setError(err.message); }
   }
 
+  // The hand-off (#205): the embedded process ends and the same chat is
+  // resumed in Windows Terminal. Said in the prompt, because a step in
+  // progress does not survive it.
+  async function moveOut() {
+    if (!window.confirm(`Move ${terminalTitle(terminal)} to Windows Terminal?\n\nIts embedded terminal ends and the same chat reopens in Windows Terminal. A step in progress, or a prompt it is waiting on, is lost; the chat is kept.`)) return;
+    setClosing(true);
+    try { await terminalAction(id, 'handoff'); }
+    catch (err) { setClosing(false); setError(err.message); }
+  }
+
   async function close() {
     if (!window.confirm(`Close ${terminalTitle(terminal)}?`)) return;
     setClosing(true);
@@ -125,6 +135,7 @@ export default function TerminalPane({ terminal, onUpdate, historyLabel, onOpenH
         <div className="terminal-actions">
           {onOpenHistory && <button className="btn btn-small" onClick={onOpenHistory}>{historyLabel}</button>}
           <button className="btn btn-small" onClick={() => { setTitle(terminal.title || ''); setEditing(true); }}>Rename</button>
+          {terminal.running && <button className="btn btn-small" disabled={closing} onClick={moveOut}>Move to Windows Terminal</button>}
           {terminal.running && <button className="btn btn-small" disabled={closing} onClick={close}>Close terminal</button>}
         </div>
       </header>

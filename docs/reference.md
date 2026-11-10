@@ -736,14 +736,42 @@ chat running outside LayerCake before resuming it here.
 Each terminal shows its tool, working directory, branch when available, and short ID. A **Rename**
 label is stored for a saved chat once LayerCake knows its ID. For a new Codex chat, the opt-in
 activity hook supplies that ID. Terminal output and scrollback are kept in memory with a size limit.
-The **Active session** shortcut below the main header returns to the last selected open terminal
-from any view. When that terminal exits, the shortcut offers another open terminal, preferring
-one in the scanned project. In **Sessions**, **Active sessions** appear above history. When an open
-terminal matches a history entry in the list, the active row represents both. Use **View transcript**
-or **Chat details** in the terminal header to reach the linked history when available. **Exited terminals**
-keep their available scrollback below history. Reporting sessions use the same terminal name and
-short ID in the Castle.
-Selecting another session or refreshing the browser leaves the process running. Closing the app
+
+Every open terminal has a **tab** below the main header, in every view. A tab carries the session's
+own colour along its top edge, its name, and one line saying what it is doing, then its tool and
+folder. Click a tab to bring its terminal to the front of **Sessions**, at the full width of the
+window; the **History** tab brings back the saved sessions, with the scope, filter and selection
+left as they were. A new terminal opens in front as its own tab.
+
+The dot on a tab is the session's state. Hover a tab for the detail and for the rule that produced
+it; the rules are served with the states (`/api/terminal-states`).
+
+| State | Dot | When |
+|---|---|---|
+| **Waiting for you** | amber, and the tab is tinted | Claude Code reported a permission request, or that it is waiting for input, with nothing since. |
+| **Working** | green | A turn is open by the session's reports (a prompt or a tool call, with no end of turn since), or Claude Code reports it busy, or its transcript was written in the last 15 seconds. |
+| **Idle** | grey | Running, with no turn open. |
+| **Not reporting** | a ring | A Codex terminal started without **Share Codex activity**, or one that has not reported yet. Only the terminal itself shows what it is doing. |
+
+Codex reports no prompt of its own, so for a Codex tab "waiting" is an inference and reads
+**Likely waiting**: a tool call that started and has not finished while the terminal has printed
+nothing for 5 seconds (most likely an approval prompt), or 60 seconds since its turn ended. The
+5-second rule rests on Codex's interface repainting while a command runs; it has not been measured
+against a real Codex session.
+
+**Move to Windows Terminal** in a terminal's header takes the session out of LayerCake. It is a
+hand-off, not a transfer: a running console program cannot change
+windows, so LayerCake ends the embedded process and starts the tool's own resume of the same chat
+in Windows Terminal, in the terminal's folder. The chat is kept; a step in progress, a prompt it
+was waiting on and any background command are lost. A session with nothing said yet, a Codex chat
+whose ID LayerCake does not know, and a folder with `;` in its name cannot be moved, and are left
+running with the reason shown. If the embedded process has not exited within 5 seconds, nothing is
+started and the session is left alone.
+
+Use **View transcript** or **Chat details** in the terminal header to reach the linked history when
+available. **Exited terminals** keep their available scrollback below history. Reporting sessions
+use the same terminal name and short ID in the Castle.
+Selecting another tab or refreshing the browser leaves the process running. Closing the app
 ends its embedded processes. Restarting the app brings back saved history for **Resume**.
 
 **Open in Windows Terminal** is available for external launches. The portable executable embeds

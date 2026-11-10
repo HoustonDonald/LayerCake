@@ -163,7 +163,12 @@ function dockLeft() {
   }
 }
 
-export default function SessionsView({ projectDir, scanId, initialTerminal, terminalRequest, onTerminalSelect, terminals, onTerminalUpdate }) {
+/**
+ * `terminal` is the open terminal whose tab is chosen, or null: with one, it
+ * takes the whole view and the history below stays mounted but hidden, so its
+ * scope, filter and selection are there when the History tab comes back (#207).
+ */
+export default function SessionsView({ projectDir, scanId, terminal, onOpenTerminal, onShowHistory, terminals, onTerminalUpdate }) {
   const [scopeOverride, setScope] = useState(null);
   const [filter, setFilter] = useState('all');
   const [opening, setOpening] = useState(false);
@@ -176,7 +181,7 @@ export default function SessionsView({ projectDir, scanId, initialTerminal, term
   const [codexLoading, setCodexLoading] = useState(false);
   const [list, setList] = useState(null);
   const [listError, setListError] = useState(null);
-  const [selected, setSelected] = useState(initialTerminal ? { kind: 'terminal', id: initialTerminal } : null);
+  const [selected, setSelected] = useState(null);
   const [detail, setDetail] = useState(null);
   const [detailError, setDetailError] = useState(null);
   const [streamError, setStreamError] = useState(null);
@@ -186,22 +191,11 @@ export default function SessionsView({ projectDir, scanId, initialTerminal, term
   const lastFetch = useRef(0);
   const pending = useRef(null);
 
-  const activeTerminal = selected?.kind === 'terminal' ? terminals?.find((t) => t.id === selected.id) : null;
-  const scopeTerminal = activeTerminal || terminals?.find((t) => t.id === initialTerminal);
-  const scope = scopeOverride ?? (projectDir && (!scopeTerminal || inProject(scopeTerminal.cwd, projectDir)) ? 'project' : 'all');
+  // An exited terminal chosen in the list below: its scrollback, in the detail pane.
+  const exitedTerminal = selected?.kind === 'terminal' ? terminals?.find((t) => t.id === selected.id) : null;
+  const scope = scopeOverride ?? (projectDir ? 'project' : 'all');
   const dir = scope === 'project' ? projectDir : null;
-  const visibleTerminals = (terminals || []).filter((t) => (!dir || inProject(t.cwd, dir)) && (filter === 'all' || t.tool === filter));
-  const openTerminals = visibleTerminals.filter((t) => t.running);
-  const selection = useRef(selected);
-  selection.current = selected;
-
-  useEffect(() => {
-    if (!terminalRequest) return;
-    setScope(null);
-    setFilter('all');
-    setSelected({ kind: 'terminal', id: terminalRequest.id });
-    onTerminalSelect(terminalRequest.id);
-  }, [terminalRequest, onTerminalSelect]);
+  const exitedTerminals = (terminals || []).filter((t) => !t.running && (!dir || inProject(t.cwd, dir)) && (filter === 'all' || t.tool === filter));
 
   const codexSequence = useRef(0);
   const codexScan = dir ? scanId : null;
@@ -250,34 +244,22 @@ export default function SessionsView({ projectDir, scanId, initialTerminal, term
     return () => clearInterval(t);
   }, [loadList]);
 
-  const firstOpen = openTerminals[0]?.id;
-  // Give an open terminal priority over the history list on entry.
   useEffect(() => {
-    if (!terminals || selected || terminalRequest) return;
-    if (firstOpen) {
-      onTerminalSelect(firstOpen);
-      setSelected({ kind: 'terminal', id: firstOpen });
-      return;
-    }
-    if (!list || filter === 'codex') return;
+    if (selected || !list || filter === 'codex') return;
     const first = list.sessions.find((s) => s.live) || list.sessions[0];
     if (first) setSelected({ kind: 'session', id: first.sessionId });
-  }, [list, selected, filter, terminals, firstOpen, terminalRequest, onTerminalSelect]);
+  }, [list, selected, filter]);
 
   const onLaunch = useCallback(async (tool, resume = null) => {
-    const before = selection.current;
     setOpening(true);
     setLaunchError(null);
     setLaunchNote(null);
     try {
       const result = await startTerminal({ scanId, tool, resume, report, external });
       if (result.id) {
+        // A new embedded terminal comes to the front as its own tab.
         onTerminalUpdate(result);
-        if (selection.current === before) {
-          setFilter((current) => current === tool ? current : 'all');
-          onTerminalSelect(result.id);
-          setSelected({ kind: 'terminal', id: result.id });
-        }
+        onOpenTerminal(result.id);
       } else {
         setLaunchNote(`${toolLabel(tool)} opened in ${result.terminal === 'console' ? 'a console window' : 'Windows Terminal'}.`);
         dockLeft();
@@ -287,7 +269,7 @@ export default function SessionsView({ projectDir, scanId, initialTerminal, term
     } finally {
       setOpening(false);
     }
-  }, [scanId, report, external, onTerminalUpdate, onTerminalSelect]);
+  }, [scanId, report, external, onTerminalUpdate, onOpenTerminal]);
 
   // Responses arrive in any order. One for a session that is no longer
   // selected (a slow session clicked before a fast one, a summary that
@@ -351,27 +333,37 @@ export default function SessionsView({ projectDir, scanId, initialTerminal, term
   }, [detail, loadDetail]);
 
   const onSelect = (kind, id) => {
-    if (kind === 'terminal') {
-      const terminal = terminals?.find((t) => t.id === id);
-      if (terminal && dir && !inProject(terminal.cwd, dir)) setScope('all');
-      onTerminalSelect(id);
-    }
+    // A running terminal lives in its tab; only an exited one opens here.
+    if (kind === 'terminal' && terminals?.find((t) => t.id === id)?.running) return onOpenTerminal(id);
     setSelected({ kind, id });
   };
   const rowFor = (kind, id) => (kind === 'expired' ? list?.expired : list?.promptOnly)?.find((s) => s.sessionId === id);
   const codexSession = selected?.kind === 'codex' ? codex?.sessions.find((s) => s.sessionId === selected.id) : null;
   const openFor = (tool, id) => terminals?.find((t) => t.running && t.tool === tool && t.sessionId === id);
-  const withoutOpen = (items, tool) => items?.filter((s) => !openTerminals.some((t) => t.tool === tool && t.sessionId === s.sessionId));
   const codexTerminal = codexSession && openFor('codex', codexSession.sessionId);
   const claudeTerminal = selected && ['session', 'expired', 'promptOnly'].includes(selected.kind) && openFor('claude', selected.id);
-  const linkedId = activeTerminal?.sessionId;
-  const historyKinds = activeTerminal?.tool === 'codex' ? [['codex', codex?.sessions]]
-    : [['session', list?.sessions], ['expired', list?.expired], ['promptOnly', list?.promptOnly]];
-  const linkedKind = linkedId && historyKinds.find(([, items]) => items?.some((s) => s.sessionId === linkedId))?.[0];
-  const selectedTerminalId = (activeTerminal || claudeTerminal || codexTerminal)?.id;
+  // The saved chat behind a terminal, for its "View transcript" button.
+  const historyOf = (t) => {
+    const kinds = t.tool === 'codex' ? [['codex', codex?.sessions]]
+      : [['session', list?.sessions], ['expired', list?.expired], ['promptOnly', list?.promptOnly]];
+    const kind = t.sessionId && kinds.find(([, items]) => items?.some((s) => s.sessionId === t.sessionId))?.[0];
+    return kind ? { kind, id: t.sessionId } : null;
+  };
+  const pane = (t) => {
+    const linked = historyOf(t);
+    return (
+      <Suspense fallback={<div className="empty-state">Opening terminal…</div>}>
+        <TerminalPane key={t.id} terminal={t} onUpdate={onTerminalUpdate}
+          historyLabel={linked?.kind === 'session' ? 'View transcript' : 'Chat details'}
+          onOpenHistory={linked ? () => { setSelected(linked); onShowHistory(); } : null} />
+      </Suspense>
+    );
+  };
 
   return (
-    <div className="sessions">
+    <>
+    {terminal && <div className="s-terminal">{pane(terminal)}</div>}
+    <div className="sessions" hidden={Boolean(terminal)}>
       <div className="s-list">
         <div className="s-scope">
           <button className={scope === 'project' ? 'active' : ''} disabled={!projectDir} onClick={() => { setScope('project'); setList(null); setSelected(null); }} title={projectDir || 'Scan a directory first'}>
@@ -398,7 +390,6 @@ export default function SessionsView({ projectDir, scanId, initialTerminal, term
         </div>
         {launchNote && <div className="launch-note">{launchNote}</div>}
         {launchError && <div className="err-item">{launchError}</div>}
-        <TerminalGroup title="Active sessions" items={openTerminals} selectedId={selectedTerminalId} onSelect={onSelect} />
         {filter !== 'claude' && <div className="s-group">
           <div className="group-label terminal-actions">Codex history
             <button className="btn btn-small" disabled={codexLoading} onClick={() => loadCodex()}>Refresh</button>
@@ -406,7 +397,7 @@ export default function SessionsView({ projectDir, scanId, initialTerminal, term
           {codexError && <div className="s-group-note">{codexError}</div>}
           {codexLoading && <div className="s-group-note">Reading Codex history…</div>}
           {codex && !codex.sessions.length && <div className="s-group-note">No saved Codex chats on this page.</div>}
-          {withoutOpen(codex?.sessions, 'codex')?.map((s) => (
+          {codex?.sessions.map((s) => (
             <button key={s.sessionId} className={`s-row${codexSession?.sessionId === s.sessionId ? ' selected' : ''}`}
               onClick={() => onSelect('codex', s.sessionId)}>
               <div className="s-row-title">{s.title || s.preview || terminalTitle(s)}</div>
@@ -420,17 +411,17 @@ export default function SessionsView({ projectDir, scanId, initialTerminal, term
         {filter !== 'codex' && !list && !listError && <div className="empty-state">Reading Claude Code sessions…</div>}
         {filter !== 'codex' && list && (
           <>
-            <Group title="Claude Code history" kind="session" items={withoutOpen(list.sessions, 'claude')} selected={selected} onSelect={onSelect}
+            <Group title="Claude Code history" kind="session" items={list.sessions} selected={selected} onSelect={onSelect}
               note={`Full transcripts. Claude Code deletes them after ${list.retentionDays} days without activity.`} />
-            <Group title="Kept after deletion" kind="expired" items={withoutOpen(list.expired, 'claude')} selected={selected} onSelect={onSelect} />
-            <Group title="Prompt history only" kind="promptOnly" items={withoutOpen(list.promptOnly, 'claude')} selected={selected} onSelect={onSelect}
+            <Group title="Kept after deletion" kind="expired" items={list.expired} selected={selected} onSelect={onSelect} />
+            <Group title="Prompt history only" kind="promptOnly" items={list.promptOnly} selected={selected} onSelect={onSelect}
               note="Seen only in Claude Code's prompt history: prompts, no replies." />
             {!list.sessions.length && !list.expired.length && !list.promptOnly.length && (
               <div className="empty-state">No Claude Code sessions for {dir || 'any project'}.</div>
             )}
           </>
         )}
-        <TerminalGroup title="Exited terminals" items={visibleTerminals.filter((t) => !t.running)} selectedId={selectedTerminalId} onSelect={onSelect} />
+        <TerminalGroup title="Exited terminals" items={exitedTerminals} selectedId={exitedTerminal?.id} onSelect={onSelect} />
         {usage && (
           <div className="usage-note" title={`Kept in ${usage.dataRoot}`}>
             LayerCake&apos;s own Claude usage: {usage.totals.runs} AI summar{usage.totals.runs === 1 ? 'y' : 'ies'}
@@ -446,12 +437,8 @@ export default function SessionsView({ projectDir, scanId, initialTerminal, term
       </div>
 
       <div className="s-detail">
-        {selected?.kind === 'terminal' && (activeTerminal
-          ? <Suspense fallback={<div className="empty-state">Opening terminal…</div>}>
-              <TerminalPane key={activeTerminal.id} terminal={activeTerminal} onUpdate={onTerminalUpdate}
-                historyLabel={linkedKind === 'session' ? 'View transcript' : 'Chat details'}
-                onOpenHistory={linkedKind ? () => onSelect(linkedKind, linkedId) : null} />
-            </Suspense>
+        {selected?.kind === 'terminal' && (exitedTerminal
+          ? pane(exitedTerminal)
           : <div className="empty-state">{terminals ? 'This terminal has closed. Choose a saved session to resume.' : 'Looking for the terminal…'}</div>)}
         {codexSession && <section className="terminal-head">
           <div>
@@ -479,5 +466,6 @@ export default function SessionsView({ projectDir, scanId, initialTerminal, term
         {selected?.kind === 'promptOnly' && <PromptOnly id={selected.id} row={rowFor('promptOnly', selected.id)} />}
       </div>
     </div>
+    </>
   );
 }

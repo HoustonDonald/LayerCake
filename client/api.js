@@ -85,6 +85,11 @@ export function listCodexSessions(scanId, cursor) {
   return query('/api/codex/sessions', { scanId, cursor });
 }
 
+/** The rules behind a terminal tab's state (#207), served so the page shows them rather than restating them. */
+export function getTerminalStates() {
+  return request('/api/terminal-states');
+}
+
 export function listTerminals() {
   return request('/api/terminals');
 }

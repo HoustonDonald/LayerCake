@@ -15,6 +15,8 @@ const terminals = new Map();
 const reserved = new Set();
 let ptyModule;
 let shuttingDown = false;
+// A small number per terminal, in start order, that the page turns into its tab colour (#207).
+let nextColor = 0;
 
 function problem(message, status, code) {
   return Object.assign(new Error(message), { status, code });
@@ -32,8 +34,8 @@ async function loadPty() {
 }
 
 function view(t) {
-  const { id, tool, cwd, title, sessionId, startedAt, exitCode, launchId, reportsActivity, activitySeen, branch, lastOutputAt, keep } = t;
-  return { id, tool, cwd, title, sessionId, startedAt, exitCode, launchId, reportsActivity, activitySeen, branch, lastOutputAt, keep, running: !t.finished };
+  const { id, tool, cwd, title, sessionId, startedAt, exitCode, launchId, reportsActivity, activitySeen, branch, lastOutputAt, keep, color } = t;
+  return { id, tool, cwd, title, sessionId, startedAt, exitCode, launchId, reportsActivity, activitySeen, branch, lastOutputAt, keep, color, running: !t.finished };
 }
 
 export function listTerminals() {
@@ -97,6 +99,7 @@ export async function startTerminal({ tool, cwd, resume, prepare, title }) {
       // "Keep on close" (#205): the user's mark that this session should move
       // to Windows Terminal when LayerCake closes. Memory only, like the terminal.
       keep: false,
+      color: nextColor++ % 8,
     };
     t.exited = new Promise((resolve) => { t.markExited = resolve; });
     terminals.set(t.id, t);

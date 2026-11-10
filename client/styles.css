@@ -172,48 +172,152 @@ button {
   color: var(--text);
 }
 
-.active-session-bar {
+/* ---------- session tabs (#207) ---------- */
+
+/* One tab per open embedded terminal, under the header in every view. The
+   colour along the top says which session; the dot says what it is doing. */
+.session-tabs {
   flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 4px 14px 0;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
-  padding: 4px 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
-.active-session-link {
+.session-tab {
   display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 2px 12px;
-  max-width: 100%;
-  padding: 4px 8px;
-  background: var(--bg);
+  align-items: stretch;
+  flex: 0 1 260px;
+  min-width: 150px;
+  background: var(--bg-raised);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  text-align: left;
-  font-size: 12px;
+  border-bottom: none;
+  border-top: 3px solid var(--tab, var(--border-strong));
+  border-radius: 5px 5px 0 0;
   color: var(--text-dim);
+  font-size: 12px;
 }
 
-.active-session-link strong {
-  color: var(--text);
-  overflow-wrap: anywhere;
-}
-
-.active-session-link code {
+.session-tab.history {
+  flex: 0 0 auto;
   min-width: 0;
+  padding: 4px 14px;
+  align-items: center;
+  font-weight: 600;
+}
+
+.session-tab.selected {
+  background: var(--bg);
+  color: var(--text);
+  /* Covers the strip's bottom border, so the tab joins the view below it. */
+  margin-bottom: -1px;
+  padding-bottom: 1px;
+}
+
+.session-tab-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 8px;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: 0;
+}
+
+.session-tab-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.session-tab-name strong,
+.session-tab-sub {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.active-session-link:hover {
-  border-color: var(--accent);
+.session-tab-name strong {
+  color: var(--text);
 }
 
-.active-session-action,
-.active-session-label {
-  color: var(--accent);
+.session-tab-sub {
+  font-size: 11px;
+}
+
+.tab-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.tab-dot.st-waiting {
+  background: #d98a00;
+}
+
+.tab-dot.st-working {
+  background: var(--ok);
+}
+
+.tab-dot.st-idle {
+  background: var(--border-strong);
+}
+
+/* Not reporting: a ring, so it does not read as idle. */
+.tab-dot.st-unknown {
+  background: transparent;
+  border: 2px solid var(--border-strong);
+}
+
+/* A session waiting for you is the one thing a tab must not let you miss. */
+.session-tab.st-waiting {
+  background: #fff4d6;
+}
+
+.session-tab.st-waiting .session-tab-state {
+  color: var(--warn);
   font-weight: 600;
+}
+
+.tab-keep {
+  flex: none;
+  align-self: center;
+  margin-right: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.tab-keep.on {
+  border-color: var(--ok);
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.s-terminal {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+}
+
+.sessions[hidden] {
+  display: none;
 }
 
 .readonly-badge {
