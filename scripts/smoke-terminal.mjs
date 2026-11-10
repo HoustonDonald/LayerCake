@@ -48,7 +48,13 @@ async function call(route, data, expected = 200) {
     headers['Content-Type'] = 'application/json';
     options.body = JSON.stringify(data);
   }
-  const response = await fetch(base + route, options);
+  // A read is asked once more when its connection was reset: after a pause
+  // longer than the server's keep-alive, fetch can pick up a socket the server
+  // has just closed. A write is never repeated.
+  const response = await fetch(base + route, options).catch((err) => {
+    if (data !== undefined || err.cause?.code !== 'ECONNRESET') throw err;
+    return fetch(base + route, { headers, signal: AbortSignal.timeout(20000) });
+  });
   const body = await response.text();
   assert.equal(response.status, expected, `${route} ${body}`);
   return body ? JSON.parse(body) : null;
@@ -89,6 +95,37 @@ function closeWindows() {
   try { execFileSync(WINDOWS_POWERSHELL, ['-NoProfile', '-EncodedCommand', encodeCommand(command)], { windowsHide: true, stdio: 'ignore', timeout: 8000 }); } catch { /* the caller's wait decides */ }
 }
 
+/**
+ * The app windows on the test's own browser profile: title, size, and whether
+ * maximised. `maximize` maximises them first. Read through user32, since the
+ * executable's own windows have no debugging port.
+ */
+async function appWindows({ maximize = false } = {}) {
+  const script = [
+    'Add-Type @"',
+    'using System; using System.Runtime.InteropServices;',
+    'public class LcWin { [StructLayout(LayoutKind.Sequential)] public struct R { public int L, T, Rt, B; }',
+    '  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out R r);',
+    '  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);',
+    '  [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h); }',
+    '"@',
+    `Get-CimInstance Win32_Process -Filter "Name='msedge.exe' OR Name='chrome.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains(${psQuote(profile)}) -and $_.CommandLine.Contains('--app=') } | ForEach-Object {`,
+    '  $p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue',
+    '  if ($p -and $p.MainWindowHandle -ne 0) {',
+    `    ${maximize ? '[void][LcWin]::ShowWindow($p.MainWindowHandle, 3)' : ''}`,
+    '    $r = New-Object LcWin+R; [void][LcWin]::GetWindowRect($p.MainWindowHandle, [ref]$r)',
+    '    "{0}|{1}|{2}|{3}" -f ($r.Rt - $r.L), ($r.B - $r.T), [LcWin]::IsZoomed($p.MainWindowHandle), $p.MainWindowTitle',
+    '  }',
+    '}',
+  ].join('\n');
+  let out = '';
+  try { out = execFileSync(WINDOWS_POWERSHELL, ['-NoProfile', '-EncodedCommand', encodeCommand(script)], { windowsHide: true, encoding: 'utf8', timeout: 15000, stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return []; }
+  return out.split(/\r?\n/).filter((line) => /^\d+\|/.test(line)).map((line) => {
+    const [width, height, zoomed, ...title] = line.split('|');
+    return { width: Number(width), height: Number(height), zoomed: zoomed === 'True', title: title.join('|') };
+  });
+}
+
 async function fixturePort() {
   const socket = net.createServer();
   await new Promise((resolve) => socket.listen(0, '127.0.0.1', resolve));
@@ -120,14 +157,22 @@ try {
     // From source the hand-off is a dry run; the executable's own close makes the real launch (below).
     ...(exe ? {} : { LAYERCAKE_LAUNCH_DRY_RUN: '1' }),
   });
-  child = spawn(exe ? path.join(root, 'dist', 'LayerCake.exe') : process.execPath,
-    exe ? [] : [path.join(root, 'server', 'index.js')], { cwd: tmp, env, windowsHide: true, stdio: 'ignore' });
-  const run = await until(async () => {
-    if (child.exitCode !== null) throw new Error(`LayerCake exited ${child.exitCode} during startup.`);
-    try { return JSON.parse(await fs.readFile(path.join(data, 'server.json'), 'utf8')); } catch { return null; }
-  }, 'LayerCake startup');
-  base = `http://127.0.0.1:${run.port}`;
-  token = run.key;
+  // Starts LayerCake and waits for its own run record: the pid in it tells this
+  // run's record from one an earlier run in the same data folder left behind.
+  const startApp = async () => {
+    child = spawn(exe ? path.join(root, 'dist', 'LayerCake.exe') : process.execPath,
+      exe ? [] : [path.join(root, 'server', 'index.js')], { cwd: tmp, env, windowsHide: true, stdio: 'ignore' });
+    const run = await until(async () => {
+      if (child.exitCode !== null) throw new Error(`LayerCake exited ${child.exitCode} during startup.`);
+      try {
+        const record = JSON.parse(await fs.readFile(path.join(data, 'server.json'), 'utf8'));
+        return record.pid === child.pid ? record : null;
+      } catch { return null; }
+    }, 'LayerCake startup');
+    base = `http://127.0.0.1:${run.port}`;
+    token = run.key;
+  };
+  await startApp();
   assert.equal((await fetch(base + '/api/terminals')).status, 403);
   assert.equal((await fetch(base + '/')).status, 200);
 
@@ -268,18 +313,70 @@ try {
     // This test's own streams go first, as a real window's do when it closes:
     // an open one is a request still running, which the executable waits for.
     for (const controller of streams) controller.abort();
+    const exited = (what) => until(() => child.exitCode !== null, what);
+    const mainWindow = await until(async () => (await appWindows())[0], 'the main window');
     closeWindows();
     // The window is gone and sessions are running: a decision is opened and a chooser window with it.
     await until(async () => (await call('/api/close')).pending, 'the executable to ask which sessions to keep');
+    const chooser = await until(async () => (await appWindows()).find((w) => /closing/i.test(w.title)), 'the chooser window to show its own title');
+    assert.ok(chooser.width < mainWindow.width && chooser.width <= 900 && chooser.height <= 800, `the chooser is a small window (${chooser.width} by ${chooser.height}; main ${mainWindow.width} by ${mainWindow.height})`);
     assert.ok(embedded.every((r) => alive(r.pid)), 'nothing is ended while the question is open');
-    await call('/api/close', { keep: [kept.id] }, 204);
-    await until(() => child.exitCode !== null, 'the executable to exit after the answer');
+    // A read first: it gives the answer below a connection the server has not just closed.
+    await call('/api/close');
+    await call('/api/close', { keep: [kept.id], dontAsk: true }, 204);
+    await exited('the executable to exit after the answer');
     const resumed = await until(() => runWith('--resume', kept.sessionId), 'the kept session to start again outside LayerCake');
     assert.ok(!resumed.argv.includes('--settings'), 'a session kept at close is started without reporting settings');
     assert.equal(await runWith('--resume', ended.sessionId), undefined, 'a session that was not ticked is not started again');
     await until(() => embedded.every((r) => !alive(r.pid)), 'both embedded processes to end');
     assert.ok(alive(resumed.pid), 'the kept session is running after LayerCake has exited');
     try { process.kill(resumed.pid); } catch { /* it ended by itself */ }
+    closeWindows();
+    assert.equal(JSON.parse(await fs.readFile(path.join(data, 'prefs.json'), 'utf8')).askOnClose, false, '"Don\'t ask again" in the answer is stored');
+
+    // Two sessions with saved chats in a fresh run, the first marked Keep.
+    const pair = async () => {
+      const { scanId: scan } = await call('/api/scan', { dir: project });
+      const marked = await call('/api/terminals', { scanId: scan, tool: 'claude', report: true });
+      const plain = await call('/api/terminals', { scanId: scan, tool: 'claude', report: true });
+      for (const t of [marked, plain]) await minimalTranscript(claudeProjects, t.sessionId, project, 'Fixture prompt');
+      await call(`/api/terminals/${marked.id}/keep`, { keep: true });
+      await until(async () => (await runWith('--session-id', marked.sessionId)) && (await runWith('--session-id', plain.sessionId)), 'both embedded sessions to start');
+      return { marked, plain };
+    };
+    const keptOnly = async ({ marked, plain }, how) => {
+      const again = await until(() => runWith('--resume', marked.sessionId), `the marked session to start again (${how})`);
+      assert.equal(await runWith('--resume', plain.sessionId), undefined, `the unmarked session is not started again (${how})`);
+      try { process.kill(again.pid); } catch { /* it ended by itself */ }
+    };
+
+    // Nothing running: closing asks nothing and ends. A question nobody answers would keep it up.
+    await startApp();
+    const secondMain = await until(async () => (await appWindows())[0], 'the next run\'s main window');
+    assert.ok(secondMain.width > chooser.width + 100, `the chooser's size is not remembered for the main window (${secondMain.width} wide after a ${chooser.width} wide chooser)`);
+    closeWindows();
+    await exited('the executable to exit with no session running');
+
+    // "Don't ask again" is on: no question, the marks decide.
+    await startApp();
+    const unasked = await pair();
+    closeWindows();
+    await exited('the executable to exit without asking');
+    await keptOnly(unasked, 'not asked');
+
+    // Asking again, from a maximised window, and the chooser closed without an answer: the marks decide.
+    await startApp();
+    await call('/api/prefs', { askOnClose: true });
+    const unanswered = await pair();
+    await until(async () => (await appWindows({ maximize: true }))[0], 'the main window to maximise');
+    await until(async () => (await appWindows())[0]?.zoomed, 'the main window to be maximised');
+    closeWindows();
+    await until(async () => (await call('/api/close')).pending, 'the executable to ask again');
+    const small = await until(async () => (await appWindows()).find((w) => /closing/i.test(w.title)), 'the chooser window');
+    assert.ok(!small.zoomed && small.width <= 900, `the chooser opens small after a maximised main window (${small.width} wide, maximised ${small.zoomed})`);
+    closeWindows();
+    await exited('the executable to exit after the chooser was closed');
+    await keptOnly(unanswered, 'chooser closed');
     console.log('Keep-on-close checks passed (portable executable).');
   }
 } finally {

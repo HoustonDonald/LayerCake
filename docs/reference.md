@@ -798,8 +798,8 @@ state and what keeping it costs in that state; the sessions marked **Keep** arri
 
 A session that cannot be kept is listed with the reason and cannot be ticked. If a ticked session
 fails to move, it ends with the others and a window says which and why. A session that has had no
-prompt has no saved chat, so it cannot be kept: Claude Code writes a session's transcript with its
-first prompt (measured on 2.1.322: a local command such as `/status` writes none).
+prompt has no saved chat, so it cannot be kept (observed on Claude Code 2.1.322: a new session had
+no transcript file before its first prompt).
 
 This applies to `LayerCake.exe`. Started from source (`npm start`, `npm run app`), the server does
 not stop when a window closes, so nothing is asked and nothing ends until the server is stopped,

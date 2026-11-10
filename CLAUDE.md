@@ -719,7 +719,8 @@ partially. A truncated file restored is silent data loss.
   save, snapshot or multi-file restore was then cut off. The wait is capped at 30 s (`DRAIN_MS`).
 - **Keeping a session is tested with fixture CLIs, and once by hand with a real one.** A real idle
   Claude Code session (2.1.322) resumed in an embedded terminal was handed off in 0.2 s, came up in
-  Windows Terminal, and wrote nothing to its transcript in 26 s. A session cut off mid-step, a real
+  Windows Terminal, and its transcript stayed the same size for 26 s (Claude Code does update the
+  file's modified time on a resume, so a resumed tab reads Working for its first 15 s, #209). A session cut off mid-step, a real
   Codex session, and the 5 s quiet-terminal rule for Codex's approval prompt are not measured. A
   session with no prompt yet has no transcript and cannot be kept.
 - **The session view lags during a long reply.** Claude Code writes a main-thread transcript record
