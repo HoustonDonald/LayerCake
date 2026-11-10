@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { followCastle, getCastleRoom, reloadCastleMap } from '../api.js';
-import { duration } from '../sessionFormat.js';
+import { duration, shortSessionId, terminalIdentity, terminalTitle, toolLabel } from '../sessionFormat.js';
 import { FigureIcon } from './castleArt.jsx';
 import { describeUnit } from './castleDescribe.js';
 import CastleStage, { SESSION_COLOURS } from './CastleStage.jsx';
@@ -19,7 +19,7 @@ import CastleStage, { SESSION_COLOURS } from './CastleStage.jsx';
 /** No frame for this long (a ping comes every 30 s) means the stream is dead, whatever the socket says. */
 const SILENT_MS = 70_000;
 
-function useCastle(scanId) {
+function useCastle(scanId, tool) {
   const [map, setMap] = useState(null);
   const [state, setState] = useState(null);
   const [log, setLog] = useState([]);
@@ -51,6 +51,7 @@ function useCastle(scanId) {
     };
     let first = true;
     const stop = followCastle(scanId, {
+      tool,
       onMap: (m) => {
         if (first) {
           first = false;
@@ -85,7 +86,7 @@ function useCastle(scanId) {
       clearInterval(watchdog);
       stop();
     };
-  }, [scanId, hidden, attempt]);
+  }, [scanId, tool, hidden, attempt]);
 
   const reconnect = useCallback(() => setAttempt((a) => a + 1), []);
   return { map, state, log, conn, hidden, generation, reconnect };
@@ -123,7 +124,7 @@ function ago(ms) {
 }
 
 function sessionLabel(s) {
-  const short = s.sessionId.slice(0, 8);
+  const short = shortSessionId(s);
   const title = s.title ? `${s.title} (${short})` : short;
   let source;
   if (s.source === 'hooks') source = 'live from its hooks';
@@ -204,7 +205,7 @@ function HereNow({ state, map, place }) {
   );
 }
 
-function Drawer({ scanId, map, state, selected, onClose }) {
+function Drawer({ scanId, tool, map, state, selected, onClose }) {
   const [detail, setDetail] = useState(null);
   const [error, setError] = useState(null);
   // Refetch when what the drawer lists changes: a room's last touch, or Hollowmere's or the Citadel's count.
@@ -212,13 +213,13 @@ function Drawer({ scanId, map, state, selected, onClose }) {
   useEffect(() => {
     let alive = true;
     setError(null);
-    getCastleRoom(scanId, selected)
+    getCastleRoom(scanId, selected, tool)
       .then((d) => alive && setDetail(d))
       .catch((err) => alive && setError(err.message));
     return () => {
       alive = false;
     };
-  }, [scanId, selected, stamp]);
+  }, [scanId, tool, selected, stamp]);
 
   if (selected === 'village' || selected === 'outside') {
     const village = selected === 'village';
@@ -415,8 +416,23 @@ function EventLog({ log, state, map }) {
   );
 }
 
-export default function CastleView({ scanId, projectDir }) {
-  const { map, state, log, conn, hidden, generation, reconnect } = useCastle(scanId);
+export default function CastleView({ scanId, projectDir, onOpenTerminal, terminals }) {
+  const [tool, setTool] = useState('all');
+  return <CastleContent key={tool} scanId={scanId} projectDir={projectDir} tool={tool} onTool={setTool} onOpenTerminal={onOpenTerminal} terminals={terminals} />;
+}
+
+function CastleContent({ scanId, projectDir, tool, onTool, onOpenTerminal, terminals }) {
+  const { map, state: reportedState, log, conn, hidden, generation, reconnect } = useCastle(scanId, tool);
+  const state = useMemo(() => {
+    if (!reportedState?.sessions || !terminals) return reportedState;
+    const byId = new Map(terminals.map((terminal) => [terminal.id, terminal]));
+    const sessions = reportedState.sessions.map((session) => {
+      const terminal = byId.get(session.terminalId);
+      if (!terminal?.running) return { ...session, terminalId: null };
+      return { ...session, title: terminalTitle(terminal), titleBy: terminal.title ? 'you' : null, identity: terminalIdentity(terminal) };
+    });
+    return { ...reportedState, sessions };
+  }, [reportedState, terminals]);
   const rootRef = useRef(null);
   const fullscreen = useFullscreen(rootRef);
   const [selected, setSelected] = useState(null);
@@ -438,7 +454,7 @@ export default function CastleView({ scanId, projectDir }) {
   const reload = async () => {
     setReloadMsg(null);
     try {
-      const r = await reloadCastleMap(scanId);
+      const r = await reloadCastleMap(scanId, tool);
       setReloadMsg(r.error ? r.error : `Map reloaded (${r.source}).`);
     } catch (err) {
       setReloadMsg(err.message);
@@ -471,6 +487,11 @@ export default function CastleView({ scanId, projectDir }) {
           )}
         </div>
         <div className="castle-actions">
+          <label>Tool <select value={tool} onChange={(e) => onTool(e.target.value)}>
+            <option value="all">All tools</option>
+            <option value="claude">Claude Code</option>
+            <option value="codex">Codex</option>
+          </select></label>
           <button className={`btn btn-small${showLog ? ' active' : ''}`} onClick={() => setShowLog((v) => !v)}>
             Event log
           </button>
@@ -486,14 +507,17 @@ export default function CastleView({ scanId, projectDir }) {
             return (
               <span key={s.sessionId} className={`castle-session${s.live ? '' : ' gone'}`} title={s.sessionId}>
                 <span className="log-dot" style={{ background: SESSION_COLOURS[s.index % SESSION_COLOURS.length] }} />
-                {l.title} · {l.status} · {l.source}
+                {s.terminalId && onOpenTerminal
+                  ? <button className="btn btn-small" onClick={() => onOpenTerminal(s.terminalId)}>{s.title || l.title}</button>
+                  : l.title}
+                {' · '}{s.identity || toolLabel(s.tool)} · {l.status} · {l.source}
                 {s.waiting && <b className="session-waiting"> · waiting for you</b>}
               </span>
             );
           })}
           {state && !sessions.length && (
             <span className="dim">
-              No session in {projectDir} yet. Start one in a terminal, or with Start Claude here on the Sessions tab (that one also reports when it waits for you).
+              No session activity in {projectDir} yet. Start a session from the Sessions tab. For Codex, enable Castle activity and review its hooks.
             </span>
           )}
         </div>
@@ -509,7 +533,7 @@ export default function CastleView({ scanId, projectDir }) {
                 Reload map
               </button>
               <button className="btn btn-small" onClick={copyPrompt} title="A prompt to paste into a Claude session in this project, so Claude drafts castle.json from the project's real layout.">
-                Copy prompt for Claude
+                Copy map prompt
               </button>
               {copy?.ok && <span className="dim">Copied. Paste it into a session here.</span>}
               {reloadMsg && <span className="dim">{reloadMsg}</span>}
@@ -525,7 +549,7 @@ export default function CastleView({ scanId, projectDir }) {
       <div className="castle-body">
         <div className="castle-stage">
           {map ? (
-            <CastleStage map={map} state={state} generation={generation} selected={selected} onSelect={setSelected} />
+            <CastleStage map={map} state={state} generation={generation} selected={selected} onSelect={setSelected} onOpenTerminal={onOpenTerminal} />
           ) : (
             <div className="castle-empty">{conn.status === 'down' ? '' : 'Opening the castle…'}</div>
           )}
@@ -550,7 +574,7 @@ export default function CastleView({ scanId, projectDir }) {
           {hidden && <div className="castle-reconnecting">Paused while hidden</div>}
           <Legend map={map} />
         </div>
-        {selected && map && <Drawer scanId={scanId} map={map} state={state} selected={selected} onClose={() => setSelected(null)} />}
+        {selected && map && <Drawer scanId={scanId} tool={tool} map={map} state={state} selected={selected} onClose={() => setSelected(null)} />}
       </div>
       {showLog && <EventLog log={log} state={state} map={map} />}
     </div>

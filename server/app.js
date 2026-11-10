@@ -28,7 +28,7 @@ import express from 'express';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { resolveConfigHome, resolveLineage } from './scan.js';
+import { resolveConfigHome, resolveLineage, resolveUserSettings } from './scan.js';
 import { flatten } from './flatten.js';
 import { readForDisplay } from './readfile.js';
 import {
@@ -50,12 +50,14 @@ import {
   readSnapshotFile,
 } from './snapshot.js';
 import { MAX_FILE_BYTES, isSecret, describeError, writePolicy } from './safety.js';
-import { readPrefs, updatePrefs } from './appdata.js';
+import { readPrefs, readTerminalLabel, updatePrefs } from './appdata.js';
 import { hostGuard, keyProof, originGuard, portOf, requireToken } from './security.js';
 import { registerSessionRoutes, resumableSession } from './session-routes.js';
 import { closeCastleStreamsFor, registerCastleRoutes } from './castle-routes.js';
 import { listLaunches, registerIngestRoutes } from './ingest.js';
-import { launchClaude } from './launch.js';
+import { launchClaude, launchExternal, prepareClaude } from './launch.js';
+import { codexConfig, codexResume, codexThreads, prepareCodex } from './codex.js';
+import { closeTerminals, registerTerminalRoutes, startTerminal } from './terminal.js';
 import {
   CLAUDE_DIR_FILE_TARGETS,
   CLAUDE_DIR_TREES,
@@ -75,6 +77,7 @@ import {
 import { registryPolicyKeys } from './policy.js';
 
 export const HOST = '127.0.0.1';
+export { closeTerminals };
 
 /** A non-empty string, and nothing that merely stringifies to one. */
 const isText = (v) => typeof v === 'string' && v.length > 0;
@@ -601,6 +604,71 @@ export function createApp({ staticFiles, key, ingest = { port: null, error: 'not
   // Session history and live sessions. Registered here, after the /api guards,
   // so every one of them is behind the Host, origin and token checks.
   registerSessionRoutes(app, { projectFor: (scanId) => scans.get(scanId)?.lineage.projectDir || null });
+
+  const getScan = (id) => {
+    const scan = typeof id === 'string' ? scans.get(id) : null;
+    if (!scan?.lineage.projectDir) {
+      throw Object.assign(new Error('Scan the working directory first.'), { status: 404, code: 'ESCANGONE' });
+    }
+    return scan.lineage;
+  };
+  app.get('/api/codex/config', async (req, res) => {
+    try {
+      const lineage = req.query.scanId ? getScan(req.query.scanId) : null;
+      res.json(await codexConfig(lineage?.projectDir || null, lineage?.gitRoot?.checkoutDir || lineage?.gitRoot?.dir || null));
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+  app.get('/api/codex/sessions', async (req, res) => {
+    try {
+      const dir = req.query.scanId ? getScan(req.query.scanId).projectDir : null;
+      const cursor = typeof req.query.cursor === 'string' ? req.query.cursor.slice(0, 2048) : null;
+      res.json(await codexThreads(dir, cursor));
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+  app.get('/api/claude/user-config', async (req, res) => {
+    try {
+      const levels = await resolveUserSettings();
+      if (!req.query.file) return res.json(levels);
+      const file = levels.flatMap((level) => level.entries).find((entry) =>
+        entry.type === 'file' && entry.category !== 'home-config' && entry.absPath === req.query.file);
+      if (!file || isSecret(file.absPath)) return res.status(404).json({ message: 'Choose a file from User Settings.' });
+      res.json(await readForDisplay(file.absPath));
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  registerTerminalRoutes(app, async (body) => {
+    const { scanId, tool, resume, report, external, screen } = body || {};
+    if ((tool !== 'claude' && tool !== 'codex') || (resume != null && (typeof resume !== 'string' || !resume))) {
+      throw Object.assign(new Error('Choose Claude Code or Codex and a valid saved session.'), { status: 400, code: 'EBADREQUEST' });
+    }
+    const dir = getScan(scanId).projectDir;
+    if (external && tool === 'claude') {
+      const sessionId = resume ? await resumableSession(resume, dir) : null;
+      return launchClaude({ dir, port: ingest.port, resume: sessionId, screen });
+    }
+    if (external) {
+      const saved = resume ? await codexResume(resume, dir) : null;
+      return launchExternal({ ...await prepareCodex({ dir, resume: saved?.sessionId }), dir, screen, tool });
+    }
+    const title = resume ? await readTerminalLabel(tool, resume).catch(() => null) : null;
+    return startTerminal({
+      tool, cwd: dir, resume: resume?.toLowerCase(), title,
+      prepare: async () => {
+        if (tool === 'claude') {
+          const id = resume ? await resumableSession(resume, dir) : null;
+          return prepareClaude({ dir, port: ingest.port, resume: id });
+        }
+        const saved = resume ? await codexResume(resume, dir) : null;
+        return prepareCodex({ dir, port: ingest.port, resume: saved?.sessionId, report: report === true });
+      },
+    });
+  });
 
   // The Castle view (#159, #160), behind the same guards. Its project comes from
   // the scan store, never the request, as for /api/launch below.

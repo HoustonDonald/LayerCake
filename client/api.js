@@ -68,6 +68,42 @@ export function getManifest() {
   return request('/api/manifest');
 }
 
+function query(url, params) {
+  const search = new URLSearchParams(Object.entries(params).filter(([, value]) => value));
+  return request(search.size ? `${url}?${search}` : url);
+}
+
+export function getCodexConfig(scanId) {
+  return query('/api/codex/config', { scanId });
+}
+
+export function getClaudeUserConfig(file) {
+  return query('/api/claude/user-config', { file });
+}
+
+export function listCodexSessions(scanId, cursor) {
+  return query('/api/codex/sessions', { scanId, cursor });
+}
+
+export function listTerminals() {
+  return request('/api/terminals');
+}
+
+export function startTerminal({ scanId, tool, resume, report, external }) {
+  const screen = external ? { width: window.screen.availWidth, height: window.screen.availHeight } : null;
+  return post('/api/terminals', { scanId, tool, resume, report, external, screen });
+}
+
+export function terminalAction(id, action, body = {}) {
+  return post(`/api/terminals/${encodeURIComponent(id)}/${action}`, body);
+}
+
+export function watchTerminal(id, handlers) {
+  return openEventStream(`/api/terminals/${encodeURIComponent(id)}/stream`, {
+    label: 'Terminal', endedMessage: 'Terminal connection closed.', ...handlers,
+  });
+}
+
 export function scan(dir) {
   return request('/api/scan', {
     method: 'POST',
@@ -272,21 +308,6 @@ export function getUsage() {
   return request('/api/usage');
 }
 
-/**
- * Starts Claude Code in Windows Terminal in the scanned directory, or in a
- * console window where it is not installed (the answer's `terminal` says
- * which). The screen size lets the server put the terminal on the right half.
- * A new session, or with `resume` that session continued (#204).
- */
-export function launchClaude(scanId, resume = null) {
-  const screen = { width: window.screen.availWidth, height: window.screen.availHeight };
-  return post('/api/launch', resume ? { scanId, screen, resume } : { scanId, screen });
-}
-
-export function getLaunches() {
-  return request('/api/launches');
-}
-
 /* ------------------------------------------------------------------ castle */
 
 /**
@@ -295,8 +316,8 @@ export function getLaunches() {
  * the latest events, and a "ping" every 30 s so a quiet castle can be told
  * from a dead stream.
  */
-export function followCastle(scanId, { onMap, onState, onLog, onPing, onError } = {}) {
-  return openEventStream(`/api/castle/stream?scanId=${encodeURIComponent(scanId)}`, {
+export function followCastle(scanId, { onMap, onState, onLog, onPing, onError, tool = 'all' } = {}) {
+  return openEventStream(`/api/castle/stream?scanId=${encodeURIComponent(scanId)}&tool=${encodeURIComponent(tool)}`, {
     label: 'Castle stream',
     endedMessage: 'The castle stream ended.',
     onError,
@@ -311,12 +332,12 @@ export function followCastle(scanId, { onMap, onState, onLog, onPing, onError } 
 }
 
 /** A room's recent files (paths only), for the detail drawer. */
-export function getCastleRoom(scanId, room) {
-  return request(`/api/castle/room?scanId=${encodeURIComponent(scanId)}&room=${encodeURIComponent(room)}`);
+export function getCastleRoom(scanId, room, tool) {
+  return query('/api/castle/room', { scanId, room, tool });
 }
 
-export function reloadCastleMap(scanId) {
-  return post('/api/castle/reload', { scanId });
+export function reloadCastleMap(scanId, tool) {
+  return post('/api/castle/reload', { scanId, tool });
 }
 
 /** Live state for one session: small updates, never content. */

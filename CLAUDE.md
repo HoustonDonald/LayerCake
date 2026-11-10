@@ -151,6 +151,8 @@ server/summaries.js free summary cards; the opt-in AI summary via stripped-down 
 server/appdata.js   LayerCake's own data (cards, AI summaries, usage ledger), via atomicWrite
 server/session-routes.js /api/sessions, /api/session/:id[/turn/:n|/stream|/summarize], /api/history, /api/usage
 server/launch.js    "Start Claude here" / "Resume in Claude": wt.exe + claude --session-id|--resume --settings <file>; fixed argv; console window without wt
+server/terminal.js  Windows ConPTY sessions, authenticated input and output, and terminal lifetime
+server/codex.js     read-only App Server stdio queries and fixed Codex CLI launch plans. On Windows, a bounded Get-AppxPackage query finds the registered ChatGPT Store package when Codex is absent from PATH.
 server/powershell.js Windows PowerShell 5.1's path and the quoting for starting it; no imports, nothing at load
 server/ingest.js    /ingest/<launch>/<secret>/{statusline,hook} from launched sessions; state per session
 server/castle.js    the Castle (#159, #160): picks sessions, merges hook and transcript events, the fold, the state
@@ -511,7 +513,8 @@ server carries our own Host however the user arrived. Anything that calls the se
 by one of those two names. The CLI imports modules and never calls the API; the `/api/` proxy in
 `vite.config.js` uses `127.0.0.1` through `changeOrigin`, without which the Host guard refuses it.
 
-**Localhost only.** `HOST` is hardcoded `127.0.0.1`. No outbound requests exist anywhere; keep it
+**Localhost only.** `HOST` is hardcoded `127.0.0.1`. Keep LayerCake's own HTTP on loopback. The
+installed CLIs and Codex App Server use their own network and account settings. Keep the bind
 that way, including in the client.
 
 **The app window runs with `--disable-extensions --disable-sync`** (`APP_FLAGS` in

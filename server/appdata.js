@@ -184,6 +184,30 @@ export function dataRoot() {
   return root();
 }
 
+/** Materialize the portable build's bundled terminal runtime in its own data folder. */
+export async function installTerminalRuntime(version, files) {
+  const folder = target('terminal-runtime', version);
+  for (const [name, bytes] of files) {
+    const file = target('terminal-runtime', version, name);
+    const existing = await fs.readFile(file).catch(() => null);
+    if (!existing?.equals(bytes)) await atomicWrite(file, bytes);
+  }
+  return folder;
+}
+
+export async function readTerminalLabel(tool, id) {
+  checkId(id);
+  if (tool !== 'claude' && tool !== 'codex') throw new Error('Unknown tool');
+  const label = (await readJson(target('terminal-labels', tool, `${id}.json`)))?.title;
+  return typeof label === 'string' && label.trim() && label.length <= 80 && !/[\x00-\x1f\x7f]/.test(label) ? label : null;
+}
+
+export function writeTerminalLabel(tool, id, title) {
+  checkId(id);
+  if (tool !== 'claude' && tool !== 'codex') throw new Error('Unknown tool');
+  return atomicWrite(target('terminal-labels', tool, `${id}.json`), JSON.stringify({ title }));
+}
+
 /**
  * The page key for one run of a server (#189, #198): 32 random bytes in hex,
  * new every time a server starts, so a key that ever leaked dies with its run.

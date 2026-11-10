@@ -1,8 +1,8 @@
 # LayerCake
 
-See which Claude Code configuration applies to a project folder, where each piece comes from, and
-which one wins. Edit those files safely, with a backup taken before every change, and roll back to
-any earlier state.
+See which Claude Code or Codex configuration applies to a project folder and where it comes from.
+Edit Claude Code configuration with a backup before every change. Start and switch between both
+tools' sessions in LayerCake's embedded terminal.
 
 ![The lineage view of a demo project: the levels from the user's folder down to the project, each with what it holds, and the project's CLAUDE.md open beside them](docs/images/lineage.png)
 
@@ -18,8 +18,9 @@ and shows you:
   Snapshots tab compares any snapshot with what is on disk now and restores it.
 - **Change alerts:** a note when a configuration file changes on disk while LayerCake is open.
 - **Sessions:** your Claude Code sessions in that project, with their prompts, context use and health.
-- **The Castle:** a live picture of Claude at work, where each part of your project is a room that
-  lights up as Claude reads, edits and tests it.
+- **Codex:** user and project settings, instructions, skills, hooks, and local chat history.
+- **The Castle:** a live picture of both tools at work, where each part of your checkout is a room
+  that lights up as sessions work in it.
 
 ![The Castle, animated: two Claude sessions at work in a demo project, their workers walking between rooms that light up as Claude reads, edits and tests the files in them, and one room raising an alarm](docs/images/castle.gif)
 
@@ -56,7 +57,7 @@ Get-FileHash .\LayerCake.exe
 
 ## What it does on your machine
 
-- **Stays local, and yours.** It serves its page on `127.0.0.1` only and makes no network requests.
+- **Stays local, and yours.** It serves its page on `127.0.0.1` only.
   Other people signed in to the same computer cannot use your LayerCake: each run has a new
   address and a new key, which only your own window is given.
 - **Reads** your Claude Code configuration files. It never opens credential files
@@ -67,11 +68,11 @@ Get-FileHash .\LayerCake.exe
   such as `~\.claude.json`, so keep that folder private, as you would the originals.
 - **Spends none of your Claude usage**, except the optional AI summary of a session, which runs only
   when you click for it (Claude Haiku, with a spending cap).
-- **Start Claude here** (on the Sessions tab) opens a new Claude Code session in Windows Terminal,
-  and **Resume in Claude** continues a selected one. Either way the session gets a status line and
-  hooks that report to LayerCake on `127.0.0.1`, so it can show when Claude is waiting for you.
-  Nothing is added to your own Claude Code settings. Sessions you start yourself are only read,
-  from Claude Code's own session files.
+- **New Claude Code** and **New Codex** open embedded terminals from the Sessions tab. Rename each
+  terminal to keep tasks apart, or use **Open in Windows Terminal** to launch externally.
+  Claude Code sessions report through launch-scoped hooks. For Codex, enable **Share Codex
+  activity with the Castle** before launching and review the reporting hooks when Codex prompts.
+  The CLIs use their own account, network, and approval settings.
 
 The detail is in the reference: [Network posture](docs/reference.md#network-posture) and
 [Write posture](docs/reference.md#write-posture).

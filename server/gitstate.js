@@ -72,7 +72,7 @@ async function gitDirs(projectDir) {
     const st = await exists(dotGit);
     if (st?.error) return { reason: 'unreadable' };
     if (st) {
-      if (st.isDirectory()) return { gitDir: dotGit, commonDir: dotGit };
+      if (st.isDirectory()) return { gitDir: dotGit, commonDir: dotGit, checkout: dir };
       const pointer = await readCached(dotGit);
       const gitdir = /^gitdir:\s*(.+?)\s*$/m.exec(pointer.content || '')?.[1];
       if (!gitdir) return { reason: 'unreadable' };
@@ -83,7 +83,7 @@ async function gitDirs(projectDir) {
       const common = await readCached(path.join(gitDir, 'commondir'));
       const commonDir = common.content ? path.resolve(gitDir, common.content.trim()) : gitDir;
       if (!staysOffNewShares(dir, commonDir)) return { reason: 'share' };
-      return { gitDir, commonDir };
+      return { gitDir, commonDir, checkout: dir };
     }
     const up = path.dirname(dir);
     if (up === dir) return { reason: 'none' };
@@ -181,5 +181,10 @@ export async function readGitState(projectDir) {
     // Anything this did not foresee is still a value: the castle carries on.
     return { repo: false, reason: 'unreadable' };
   }
+}
+
+/** Physical checkout root, including a linked worktree's own directory. */
+export async function checkoutRoot(dir) {
+  return (await gitDirs(dir)).checkout || null;
 }
 

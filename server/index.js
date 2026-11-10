@@ -11,7 +11,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { HOST, INGEST_PORT, createApp, diskStatic, listen, listenIngest, retryIngest } from './app.js';
+import { HOST, INGEST_PORT, closeTerminals, createApp, diskStatic, listen, listenIngest, retryIngest } from './app.js';
 import { newRunKey, writeRunRecord } from './appdata.js';
 import { homeDir, rootState, snapshotRoot } from './paths.js';
 
@@ -61,6 +61,8 @@ try {
   process.exit(1);
 }
 const PORT = server.address().port;
+process.once('SIGINT', () => { closeTerminals(); process.exit(0); });
+process.once('SIGTERM', () => { closeTerminals(); process.exit(0); });
 
 // How a launch finds this server and checks it is its user's (#198). A data
 // folder that cannot hold it costs only that: the address below still works.

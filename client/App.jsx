@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-import { createFile, deleteFile, getManifest, getPrefs, getSession, listSessions, readFile, savePrefs, scan } from './api.js';
+import { createFile, deleteFile, getManifest, getPrefs, getSession, listSessions, listTerminals, readFile, savePrefs, scan } from './api.js';
 import useWatch from './useWatch.js';
-import { pathKey } from './sessionFormat.js';
+import { inProject, pathKey, terminalIdentity, terminalTitle } from './sessionFormat.js';
 
 /**
  * A snapshot id (its UTC creation time, 2026-09-28T00-32-29-981Z) as local
@@ -30,6 +30,7 @@ import FileViewer from './components/FileViewer.jsx';
 import FlattenView from './components/FlattenView.jsx';
 import FileEditor from './components/FileEditor.jsx';
 import SnapshotPanel from './components/SnapshotPanel.jsx';
+import ToolSettings, { ToolSelector } from './components/ToolSettings.jsx';
 import SessionsView from './components/SessionsView.jsx';
 import CastleView from './components/CastleView.jsx';
 import WatchBanner from './components/WatchBanner.jsx';
@@ -68,6 +69,7 @@ async function loadOverlay(projectDir) {
 // /api/prefs): each run is a new browser origin (a new port), so the browser's
 // storage starts empty every time.
 const MAX_RECENT = 6;
+const ACTIVE_TERMINAL = 'layercake-active-terminal';
 
 export default function App() {
   const [dir, setDir] = useState('');
@@ -75,7 +77,16 @@ export default function App() {
   const [lineage, setLineage] = useState(null);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState(null);
-  const [mode, setMode] = useState('explorer');
+  const [lastTerminal, setLastTerminal] = useState(() => {
+    try { return sessionStorage.getItem(ACTIVE_TERMINAL); } catch { return null; }
+  });
+  const [mode, setMode] = useState(lastTerminal ? 'sessions' : 'explorer');
+  const [terminalRequest, setTerminalRequest] = useState(null);
+  const [terminals, setTerminals] = useState(null);
+  const terminalRevision = useRef(0);
+  const [settingsTool, setSettingsTool] = useState('claude');
+  const [codexNavigation, setCodexNavigation] = useState({});
+  const [claudeUserFile, setClaudeUserFile] = useState(null);
   const [selected, setSelected] = useState(null);
   const [file, setFile] = useState(null);
   const [fileLoading, setFileLoading] = useState(false);
@@ -90,6 +101,28 @@ export default function App() {
   // The outcome of a create or delete, kept on screen after the rescan that
   // follows it (which clears the selection), with the undo snapshot id.
   const [flash, setFlash] = useState(null);
+
+  const updateTerminal = useCallback((terminal) => {
+    terminalRevision.current += 1;
+    setTerminals((previous) => previous?.some((item) => item.id === terminal.id)
+      ? previous.map((item) => item.id === terminal.id ? terminal : item)
+      : [terminal, ...(previous || [])]);
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    let timer;
+    const poll = async () => {
+      const revision = terminalRevision.current;
+      try {
+        const items = await listTerminals();
+        if (alive && revision === terminalRevision.current) setTerminals(items);
+      } catch { /* Keep the last list while the server is unavailable. */ }
+      if (alive) timer = setTimeout(poll, 2500);
+    };
+    poll();
+    return () => { alive = false; clearTimeout(timer); };
+  }, []);
 
   // Live filesystem events for the current scan. Reports only: re-scanning is
   // the user's call, because it replaces the lineage under whatever is open.
@@ -213,7 +246,33 @@ export default function App() {
   }, [editing, editorDirty]);
 
   const switchMode = (next) => {
-    if (next !== mode && leaveEditorOk()) setMode(next);
+    if (next !== mode && leaveEditorOk()) {
+      setEditing(false);
+      setMode(next);
+    }
+  };
+
+  const selectTerminal = useCallback((id) => {
+    setLastTerminal(id);
+    setTerminalRequest(null);
+    try {
+      if (id) sessionStorage.setItem(ACTIVE_TERMINAL, id);
+      else sessionStorage.removeItem(ACTIVE_TERMINAL);
+    } catch { /* the current window can still switch */ }
+  }, []);
+
+  const openTerminal = (id) => {
+    if (!leaveEditorOk()) return;
+    setEditing(false);
+    setTerminalRequest({ id });
+    setMode('sessions');
+  };
+
+  const switchSettingsTool = (tool) => {
+    if (tool !== settingsTool && leaveEditorOk()) {
+      setEditing(false);
+      setSettingsTool(tool);
+    }
   };
 
   // Takes the scan id rather than reading lineage, so a file can be opened in
@@ -329,6 +388,15 @@ export default function App() {
     runScan(lineage?.projectDir || dir);
   }, [clearWatch, runScan, lineage, dir]);
 
+  const openTerminals = terminals?.filter((terminal) => terminal.running) || [];
+  const activeTerminal = openTerminals.find((terminal) => terminal.id === lastTerminal)
+    || openTerminals.find((terminal) => lineage && inProject(terminal.cwd, lineage.projectDir))
+    || openTerminals[0];
+  const navigationKey = mode === 'user' ? 'user' : `project:${pathKey(lineage?.projectDir)}`;
+  const rememberCodexNavigation = (update) => setCodexNavigation((previous) => ({
+    ...previous, [navigationKey]: update(previous[navigationKey]),
+  }));
+
   return (
     <div className="app">
       <header className="header">
@@ -361,6 +429,9 @@ export default function App() {
             onClick={() => switchMode('explorer')}
           >
             Explorer
+          </button>
+          <button className={mode === 'user' ? 'active' : ''} onClick={() => switchMode('user')}>
+            User Settings
           </button>
           <button
             className={mode === 'flat' ? 'active' : ''}
@@ -396,6 +467,16 @@ export default function App() {
         )}
       </header>
 
+      {activeTerminal && <div className="active-session-bar">
+        <button className="active-session-link" title={activeTerminal.cwd} onClick={() => openTerminal(activeTerminal.id)}>
+          <span className="active-session-label">Active session</span>
+          <strong>{terminalTitle(activeTerminal)}</strong>
+          <span>{terminalIdentity(activeTerminal)}</span>
+          <code>{activeTerminal.cwd}</code>
+          <span className="active-session-action">Open terminal</span>
+        </button>
+      </div>}
+
       {scanError && <div className="error-banner">{scanError}</div>}
       {flash && (
         <div className="flash-banner">
@@ -426,16 +507,20 @@ export default function App() {
         />
       )}
 
+      {['explorer', 'flat', 'user'].includes(mode) && <ToolSelector tool={settingsTool} onChange={switchSettingsTool} />}
       {mode === 'sessions' ? (
         <div className="panes single">
-          <SessionsView key={lineage?.projectDir || 'none'} projectDir={lineage?.projectDir || null} scanId={lineage?.scanId || null} />
+          <SessionsView key={lineage?.projectDir || 'none'} projectDir={lineage?.projectDir || null}
+            scanId={lineage?.scanId || null} initialTerminal={terminalRequest?.id || lastTerminal}
+            terminalRequest={terminalRequest} onTerminalSelect={selectTerminal} terminals={terminals} onTerminalUpdate={updateTerminal} />
         </div>
       ) : mode === 'castle' && lineage ? (
         // Keyed on the project, not the scan (#159): a rescan (the watch bar,
         // a create, a delete) gives a new scan id, and the castle reconnects
         // under it instead of starting over.
         <div className="panes single">
-          <CastleView key={pathKey(lineage.projectDir)} scanId={lineage.scanId} projectDir={lineage.projectDir} />
+          <CastleView key={pathKey(lineage.projectDir)} scanId={lineage.scanId} projectDir={lineage.projectDir}
+            onOpenTerminal={openTerminal} terminals={terminals} />
         </div>
       ) : mode === 'snapshots' && lineage ? (
         // Full width, as Sessions is (#143; owner decision 2026-09-28): the
@@ -445,6 +530,16 @@ export default function App() {
           <div className="pane-right">
             <SnapshotPanel scanId={lineage.scanId} onRestored={onRestored} />
           </div>
+        </div>
+      ) : mode === 'user' ? (
+        <div className="panes single"><ToolSettings key={settingsTool} tool={settingsTool} explorer={settingsTool === 'codex'}
+          navigation={codexNavigation[navigationKey]} onNavigate={rememberCodexNavigation}
+          claudeFile={claudeUserFile} onClaudeFile={setClaudeUserFile} /></div>
+      ) : settingsTool === 'codex' ? (
+        <div className="panes single">
+          {lineage ? <ToolSettings key={lineage.scanId} tool="codex" scanId={lineage.scanId} projectDir={lineage.projectDir} explorer={mode === 'explorer'}
+            navigation={codexNavigation[navigationKey]} onNavigate={rememberCodexNavigation} />
+            : <div className="empty-state">Enter a project directory and press Scan.</div>}
         </div>
       ) : (
       <div className="panes">

@@ -14,7 +14,7 @@
 
 import path from 'node:path';
 
-import { dataRoot, readAiSummary, readCards, readLedger, writeCard } from './appdata.js';
+import { dataRoot, readAiSummary, readCards, readLedger, readTerminalLabel, writeCard } from './appdata.js';
 import { computeHealth, HEALTH_STATES } from './health.js';
 import { wrappedFor } from './ingest.js';
 import { readHistory } from './history.js';
@@ -281,6 +281,10 @@ export function registerSessionRoutes(app, { projectFor = () => null } = {}) {
       }));
 
       const byRecent = (a, b) => String(b.lastAt || '').localeCompare(String(a.lastAt || ''));
+      await Promise.all([...sessions, ...expired].map(async (card) => {
+        const label = await readTerminalLabel('claude', card.sessionId).catch(() => null);
+        if (label) card.title = label;
+      }));
       // A refused data folder is reported here, not a 500 for the whole list (#88).
       const data = rootState(dataRoot);
       res.json({
@@ -311,9 +315,11 @@ export function registerSessionRoutes(app, { projectFor = () => null } = {}) {
       // into the page. Re-checked at launch, since running can change.
       const scanId = String(req.query.scanId || '');
       const resume = scanId ? resumeRefusal(reader, projectFor(scanId), live) : { code: 'ESCANGONE', message: 'Scan the project first.' };
+      const card = sessionCard(reader.model, { size: reader.size, mtimeMs: reader.mtimeMs }, retention);
+      card.title = await readTerminalLabel('claude', req.params.id).catch(() => null) || card.title;
       res.json({
         ...sessionDetail(reader.model),
-        card: sessionCard(reader.model, { size: reader.size, mtimeMs: reader.mtimeMs }, retention),
+        card,
         live,
         health: computeHealth(reader.model, live, { mtimeMs: reader.mtimeMs, wrapped }),
         wrapped,

@@ -255,18 +255,23 @@ async function scriptOfShim(shim, exists, hops = 1) {
 export const CLAUDE_NOT_FOUND = 'Claude Code was not found on PATH: neither claude.exe nor an npm claude.cmd whose script and node.exe could be found. If it was installed after LayerCake started, restart LayerCake so it sees the new PATH.';
 
 export async function resolveClaudeCommand(env = process.env) {
-  if (process.platform !== 'win32') return ['claude'];
+  return resolveAgentCommand('claude', env);
+}
+
+export async function resolveAgentCommand(tool, env = process.env) {
+  if (tool !== 'claude' && tool !== 'codex') return null;
+  if (process.platform !== 'win32') return [tool];
   const exists = (p) => withTimeout(fs.access(p), DIR_TIMEOUT_MS, p).then(() => true, () => false);
   const dirs = String(env.PATH ?? env.Path ?? '')
     .split(path.delimiter)
     .map((d) => d.trim().replace(/^"(.*)"$/, '$1'))
     .filter((d) => d && path.isAbsolute(d));
   for (const d of dirs) {
-    const exe = path.join(d, 'claude.exe');
+    const exe = path.join(d, `${tool}.exe`);
     if (await exists(exe)) return [exe];
   }
   for (const d of dirs) {
-    const shim = path.join(d, 'claude.cmd');
+    const shim = path.join(d, `${tool}.cmd`);
     if (!(await exists(shim))) continue;
     const script = await scriptOfShim(shim, exists);
     if (!script) continue;

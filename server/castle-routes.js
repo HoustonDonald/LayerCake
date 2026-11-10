@@ -19,6 +19,7 @@ const PING_MS = 30_000;
 const BANDS = new Set(['village', 'outside']);
 
 const streams = new Set();
+const toolFilter = (value) => value === 'codex' || value === 'claude' ? value : 'all';
 
 /** Ends the castle streams opened under a scan the server no longer keeps. */
 export function closeCastleStreamsFor(scanId) {
@@ -67,7 +68,7 @@ export function registerCastleRoutes(app, { projectFor }) {
     res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
     res.flushHeaders();
     try {
-      const stop = await subscribeCastle(projectDir, send);
+      const stop = await subscribeCastle(projectDir, send, toolFilter(req.query.tool));
       // Gone while the castle started, or its scan evicted meanwhile.
       if (closed || !projectFor(scanId)) {
         stop();
@@ -90,7 +91,7 @@ export function registerCastleRoutes(app, { projectFor }) {
     if (!projectDir) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan the directory.', code: 'ESCANGONE' });
     const id = String(req.query.room || '');
     if (!BANDS.has(id) && !ROOM_ID_RE.test(id)) return res.status(400).json({ message: 'Not a room.', code: 'EBADREQUEST' });
-    const castle = openCastle(projectDir);
+    const castle = openCastle(projectDir, toolFilter(req.query.tool));
     if (!castle?.folded) return res.status(409).json({ message: 'The castle for this project is not open.', code: 'ENOTOPEN' });
     const detail = castle.roomDetail(id);
     if (!detail) return res.status(400).json({ message: 'Not a room.', code: 'EBADREQUEST' });
@@ -102,7 +103,7 @@ export function registerCastleRoutes(app, { projectFor }) {
     const projectDir = projectFor(String(req.body?.scanId || ''));
     if (!projectDir) return res.status(404).json({ message: 'Unknown or expired scan. Re-scan the directory.', code: 'ESCANGONE' });
     try {
-      const result = await reloadCastleMap(projectDir);
+      const result = await reloadCastleMap(projectDir, toolFilter(req.body?.tool));
       if (!result) return res.status(409).json({ message: 'The castle for this project is not open.', code: 'ENOTOPEN' });
       return res.json(result);
     } catch (err) {

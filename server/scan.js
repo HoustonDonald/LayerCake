@@ -902,7 +902,7 @@ async function findGitRoot(chain) {
     const commonDir = common.content ? path.resolve(gitDir, common.content.trim()) : null;
     if (commonDir && !staysOffNewShares(dir, commonDir)) return refused;
     if (commonDir && path.basename(commonDir).toLowerCase() === '.git') {
-      return { dir: path.dirname(commonDir), via: 'worktree' };
+      return { dir: path.dirname(commonDir), checkoutDir: dir, via: 'worktree' };
     }
     return { dir, via: 'git file' };
   }
@@ -944,6 +944,11 @@ function markAgentsMd(walkLevels) {
 /**
  * Full lineage for a project directory, ordered weakest precedence first.
  */
+export async function resolveUserSettings() {
+  await resolveConfigHome();
+  return [await scanManaged(), await scanUser(), await scanPlugins()];
+}
+
 export async function resolveLineage(projectDir) {
   // First: everything below that reaches the configuration home asks
   // claudeHome(), which a settings file can move (#64).
