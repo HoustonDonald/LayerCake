@@ -57,7 +57,10 @@ import { closeCastleStreamsFor, registerCastleRoutes } from './castle-routes.js'
 import { listLaunches, registerIngestRoutes } from './ingest.js';
 import { launchClaude, launchExternal, prepareClaude } from './launch.js';
 import { codexConfig, codexResume, codexThreads, prepareCodex } from './codex.js';
-import { closeTerminals, registerTerminalRoutes, startTerminal } from './terminal.js';
+import { closeTerminals, endTerminal, findTerminal, registerTerminalRoutes, startTerminal } from './terminal.js';
+
+/** How long a hand-off waits for the embedded process to exit before giving up (#205). */
+const HANDOFF_EXIT_MS = 5000;
 import {
   CLAUDE_DIR_FILE_TARGETS,
   CLAUDE_DIR_TREES,
@@ -639,6 +642,60 @@ export function createApp({ staticFiles, key, ingest = { port: null, error: 'not
       res.json(await readForDisplay(file.absPath));
     } catch (err) {
       sendError(res, err);
+    }
+  });
+
+  /**
+   * Why an embedded terminal's chat cannot be continued in Windows Terminal,
+   * or null (#205). Asked before the terminal is ended, so that nothing is
+   * ended for a hand-off that could not happen.
+   */
+  const keepRefusal = async (t) => {
+    if (!t.sessionId) return 'LayerCake does not know this chat\'s ID yet, so it cannot reopen it.';
+    if (t.cwd.includes(';')) return 'Its folder name contains ";", which Windows Terminal treats as a command separator.';
+    if (t.tool !== 'claude') return null;
+    try {
+      await resumableSession(t.sessionId, t.cwd, { ownTerminal: true });
+      return null;
+    } catch (err) {
+      // No transcript yet: Claude Code writes one with the first prompt.
+      if (err.status === 404) return 'Nothing has been said in this session yet, so there is no chat to continue.';
+      return err.message;
+    }
+  };
+
+  /**
+   * Moves an embedded session to Windows Terminal (#205). A running console
+   * program cannot change consoles, so this ends the embedded process and
+   * starts the tool's own resume of the same chat, in the terminal's own
+   * folder. The resume guards run again after the end, unchanged: they are
+   * what stops two processes writing one transcript.
+   */
+  const handOff = async (id) => {
+    const t = findTerminal(id);
+    if (!t?.running) throw Object.assign(new Error('This terminal has closed.'), { status: 409, code: 'ETERMINALCLOSED' });
+    const refusal = await keepRefusal(t);
+    if (refusal) throw Object.assign(new Error(`Not moved: ${refusal}`), { status: 409, code: 'ECANNOTKEEP' });
+    if (!(await endTerminal(id, HANDOFF_EXIT_MS))) {
+      throw Object.assign(new Error('Not moved: the embedded session did not end in time, so it was left alone.'), { status: 504, code: 'ENOEXIT' });
+    }
+    try {
+      if (t.tool === 'claude') {
+        const sessionId = await resumableSession(t.sessionId, t.cwd);
+        return await launchClaude({ dir: t.cwd, port: ingest.port, resume: sessionId });
+      }
+      const saved = await codexResume(t.sessionId, t.cwd);
+      return await launchExternal({ ...await prepareCodex({ dir: t.cwd, resume: saved.sessionId }), dir: t.cwd, tool: 'codex' });
+    } catch (err) {
+      throw Object.assign(new Error(`The embedded session was ended, but it could not be reopened in Windows Terminal: ${err.message} Resume it from the history list.`),
+        { status: err.status || 500, code: 'EHANDOFF' });
+    }
+  };
+  app.post('/api/terminals/:id/handoff', async (req, res) => {
+    try {
+      res.json(await handOff(req.params.id));
+    } catch (err) {
+      res.status(err.status || 500).json({ message: err.message, code: err.code || null });
     }
   });
 

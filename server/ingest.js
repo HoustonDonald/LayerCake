@@ -235,6 +235,32 @@ export function registerLaunch(record, { restored = false } = {}) {
   return launches.get(record.id);
 }
 
+/**
+ * Marks every session of a launch ended, because the embedded terminal that
+ * ran it has exited (#205). The process LayerCake started is gone, which is
+ * evidence, not memory; without this a session killed with a wait or a tool
+ * open, or inside the report window, would keep reading as running, and the
+ * resume guard would refuse the hand-off that follows the kill. A later
+ * report (the user resumed it elsewhere) revives it as after any end.
+ */
+export function endLaunchSessions(id, reason) {
+  const l = launches.get(id);
+  if (!l) return;
+  const at = new Date().toISOString();
+  let changed = false;
+  for (const s of l.sessions.values()) {
+    if (s.ended) continue;
+    s.ended = true;
+    s.endReason = reason;
+    s.endedAt = at;
+    s.waiting = null;
+    s.running.clear();
+    changed = true;
+  }
+  // Codex launches are memory only: there is no record to rewrite.
+  if (changed && l.provider !== 'codex') persist(l);
+}
+
 export function unregisterCodexLaunch(id) {
   if (launches.get(id)?.provider === 'codex') launches.delete(id);
 }

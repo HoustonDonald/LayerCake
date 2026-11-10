@@ -6,7 +6,9 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { projectSlug } from '../server/paths.js';
 import { encodeCommand, psQuote, WINDOWS_POWERSHELL } from '../server/powershell.js';
+import { minimalTranscript } from './smoke-sessions.mjs';
 
 if (process.platform !== 'win32') {
   console.log('Terminal smoke requires Windows ConPTY.');
@@ -102,6 +104,7 @@ try {
     LAYERCAKE_BROWSER_PROFILE_DIR: profile, LAYERCAKE_MANAGED_DIR: path.join(tmp, 'managed'),
     LAYERCAKE_POLICY_KEYS: JSON.stringify({ hklm: 'HKCU\\Software\\LayerCakeSmokeTerminal-HKLM', hkcu: 'HKCU\\Software\\LayerCakeSmokeTerminal-HKCU' }),
     LAYERCAKE_INGEST_PORT: String(await fixturePort()), LAYERCAKE_FIXTURE_PROJECT: project,
+    LAYERCAKE_LAUNCH_DRY_RUN: '1',
   });
   child = spawn(exe ? path.join(root, 'dist', 'LayerCake.exe') : process.execPath,
     exe ? [] : [path.join(root, 'server', 'index.js')], { cwd: tmp, env, windowsHide: true, stdio: 'ignore' });
@@ -160,12 +163,38 @@ try {
     Object.values(state.rooms).some((r) => r.scaffolding));
   await typed(codex, cLease, 'fixture-test\r');
   await castle.wait('state', (state) => Object.values(state.rooms).some((r) => r.cause?.kind === 'proven' || !r.scaffolding && r.lastChange !== null));
+  // Hand-off to Windows Terminal (#205). The launch is a dry run: what is
+  // checked is that the embedded process ends and the SAME chat is what would
+  // be started, in the terminal's own folder. The fixture reported a prompt
+  // moments ago and sent no SessionEnd, so by its reports the session is still
+  // running: the resume guard passes only because the terminal's exit ended it.
+  const claudeProjects = path.join(home, '.claude', 'projects', projectSlug(project));
+  await fs.mkdir(claudeProjects, { recursive: true });
+  await minimalTranscript(claudeProjects, first.sessionId, project, 'Fixture prompt');
+  const moved = await call(`/api/terminals/${first.id}/handoff`, {});
+  assert.equal(moved.dryRun, true);
+  assert.equal(moved.argv[moved.argv.indexOf('--resume') + 1], first.sessionId, 'the hand-off resumes the same Claude session');
+  assert.equal(moved.argv[moved.argv.indexOf('-d') + 1], project, 'in the terminal\'s own folder');
+  await again.wait('state', (state) => state.running === false);
+  assert.equal((await call('/api/terminals')).find((t) => t.id === first.id).running, false, 'the embedded process ended');
+  // Nothing said yet in this one: no chat to continue, so it is refused and left running.
+  const kept = await call(`/api/terminals/${thirdCheckout.id}/handoff`, {}, 409);
+  assert.equal(kept.code, 'ECANNOTKEEP');
+  await typed(thirdCheckout, dLease, 'still-here\r');
+  await until(() => output(d).includes('[still-here]'), 'a refused hand-off leaves its terminal running');
+  const movedCodex = await call(`/api/terminals/${codex.id}/handoff`, {});
+  assert.deepEqual(movedCodex.argv.slice(movedCodex.argv.indexOf('resume'), movedCodex.argv.indexOf('resume') + 2), ['resume', saved.sessionId]);
+  await c.wait('state', (state) => state.running === false);
+  const codexAgain = await start('codex', scanId, saved.sessionId);
+  const e = await stream(`/api/terminals/${codexAgain.id}/stream`);
+  await e.wait('ready');
+
   await typed(second, bLease, '\x03');
   await until(() => output(b).includes('FIXTURE INTERRUPTED'), 'Ctrl+C');
   await typed(second, bLease, 'fixture-exit\r');
   await b.wait('state', (state) => state.running === false && state.exitCode === 0);
-  await call(`/api/terminals/${codex.id}/close`, {}, 204);
-  await c.wait('state', (state) => state.running === false);
+  await call(`/api/terminals/${codexAgain.id}/close`, {}, 204);
+  await e.wait('state', (state) => state.running === false);
   console.log(`Terminal, configuration, and mixed Castle checks passed (${exe ? 'portable executable' : 'source server'}).`);
 } finally {
   for (const controller of streams) controller.abort();

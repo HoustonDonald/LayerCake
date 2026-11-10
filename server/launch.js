@@ -29,7 +29,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 
 import { writeLaunch } from './appdata.js';
-import { STATUS_REFRESH_S, registerLaunch } from './ingest.js';
+import { STATUS_REFRESH_S, endLaunchSessions, registerLaunch } from './ingest.js';
 import { WINDOWS_POWERSHELL, encodeCommand, psQuote, psWildcardEscape, winArgQuote } from './powershell.js';
 import { CLAUDE_NOT_FOUND, resolveClaudeCommand } from './summaries.js';
 
@@ -213,7 +213,9 @@ export async function prepareClaude({ dir, port, resume = null, external = false
   registerLaunch(record);
 
   const program = [...claude, ...args, '--settings', settingsPath];
-  return { launchId: id, sessionId, settingsPath, program, reportsActivity: true };
+  // `ended` is for an embedded terminal: its process exiting ends the launch's
+  // sessions as far as the reports go (#205).
+  return { launchId: id, sessionId, settingsPath, program, reportsActivity: true, ended: () => endLaunchSessions(id, 'terminal closed') };
 }
 
 export async function launchClaude({ dir, port, screen, resume = null }) {

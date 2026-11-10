@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { readTerminalLabel } from './appdata.js';
-import { registerLaunch, unregisterCodexLaunch } from './ingest.js';
+import { endLaunchSessions, registerLaunch, unregisterCodexLaunch } from './ingest.js';
 import { homeDir, isInsideDir, samePathKey } from './paths.js';
 import { WINDOWS_POWERSHELL, encodeCommand } from './powershell.js';
 import { readForDisplay } from './readfile.js';
@@ -304,5 +304,6 @@ export async function prepareCodex({ port, dir, resume, report }) {
   }
   registerLaunch({ id: launchId, secret, dir, provider: 'codex', sessionId: resume, createdAt: new Date().toISOString() });
   return { program, sessionId: resume, launchId, reportsActivity: true, dispose: () => unregisterCodexLaunch(launchId),
+    ended: () => endLaunchSessions(launchId, 'terminal closed'),
     env: { LAYERCAKE_CODEX_REPORT: `http://127.0.0.1:${port}/ingest/${launchId}/${secret}/hook` } };
 }

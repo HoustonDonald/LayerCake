@@ -169,9 +169,14 @@ function resumeRefusal(reader, projectDir, live) {
 }
 
 /** The session id to resume in projectDir, or an HTTP-shaped error (#204). */
-export async function resumableSession(sessionId, projectDir) {
+export async function resumableSession(sessionId, projectDir, { ownTerminal = false } = {}) {
   const reader = await getReader(sessionId);
-  const refusal = resumeRefusal(reader, projectDir, await liveFor(reader.sessionId, wrappedView(reader)));
+  // `ownTerminal` is the question asked BEFORE a hand-off ends an embedded
+  // terminal (#205): could this session be resumed here once its process is
+  // gone? It is running, in the terminal about to be ended, so that one answer
+  // is left out. The call after the end asks the whole question again.
+  const live = ownTerminal ? null : await liveFor(reader.sessionId, wrappedView(reader));
+  const refusal = resumeRefusal(reader, projectDir, live);
   if (refusal) {
     const err = new Error(`Not resumed: ${refusal.message}`);
     err.status = 409;

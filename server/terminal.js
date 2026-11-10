@@ -92,8 +92,9 @@ export async function startTerminal({ tool, cwd, resume, prepare, title }) {
       launchId: plan.launchId || null, reportsActivity: Boolean(plan.reportsActivity),
       pty, output: '', listeners: new Set(), finished: false, exitCode: null, closing: false, labelQueue: Promise.resolve(),
       controller: null, attached: false, branch: null,
-      activitySeen: false, dispose: plan.dispose,
+      activitySeen: false, dispose: plan.dispose, ended: plan.ended, exited: null, markExited: null,
     };
+    t.exited = new Promise((resolve) => { t.markExited = resolve; });
     terminals.set(t.id, t);
     readGitState(cwd).then((git) => {
       t.branch = git.branch || git.detached || null;
@@ -110,6 +111,10 @@ export async function startTerminal({ tool, cwd, resume, prepare, title }) {
       t.finished = true;
       t.exitCode = exitCode ?? null;
       t.pty = null;
+      // The process is gone: say so to whatever tracks its sessions, before
+      // anyone waiting on the exit asks whether they are still running (#205).
+      try { t.ended?.(); } catch { /* the exit is still reported below */ }
+      t.markExited();
       send(t, 'state', view(t));
       forgetFinished();
     });
@@ -146,6 +151,29 @@ function stop(t) {
     t.closing = false;
     throw problem('The terminal could not be closed.', 500, 'EPTYKILL');
   }
+}
+
+/** A running or recently finished terminal, as the list shows it, or null. */
+export function findTerminal(id) {
+  const t = terminals.get(id);
+  return t ? view(t) : null;
+}
+
+/**
+ * Ends a terminal's process and waits for the exit. False when it had not
+ * exited within `ms`: the caller must then treat the session as still running.
+ */
+export async function endTerminal(id, ms) {
+  const t = terminals.get(id);
+  if (!t) return true;
+  stop(t);
+  let timer;
+  const exited = await Promise.race([
+    t.exited.then(() => true),
+    new Promise((resolve) => { timer = setTimeout(() => resolve(false), ms); }),
+  ]);
+  clearTimeout(timer);
+  return exited;
 }
 
 export function closeTerminals() {
