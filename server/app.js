@@ -57,7 +57,7 @@ import { closeCastleStreamsFor, registerCastleRoutes } from './castle-routes.js'
 import { codexActivity, listLaunches, registerIngestRoutes } from './ingest.js';
 import { launchClaude, launchExternal, prepareClaude } from './launch.js';
 import { codexConfig, codexResume, codexThreads, prepareCodex } from './codex.js';
-import { closeTerminals, endTerminal, findTerminal, registerTerminalRoutes, startTerminal } from './terminal.js';
+import { closeTerminals, endTerminal, findTerminal, listTerminals, registerTerminalRoutes, startTerminal } from './terminal.js';
 
 /** How long a hand-off waits for the embedded process to exit before giving up (#205). */
 const HANDOFF_EXIT_MS = 5000;
@@ -221,7 +221,7 @@ export function createApp({ staticFiles, key, ingest = { port: null, error: 'not
    * The page's preferences (#198): last and recent folders, mutes, the notify
    * choice. Kept in LayerCake's data folder because each run is a new origin
    * and the browser's storage starts empty; checked field by field in
-   * appdata.js. The server never acts on them: a mute filters nothing (#13).
+   * appdata.js. A mute filters nothing the server sends (#13); askOnClose alone is read by the server, when the executable closes (#205).
    */
   app.get('/api/prefs', async (req, res) => {
     try {
@@ -671,7 +671,7 @@ export function createApp({ staticFiles, key, ingest = { port: null, error: 'not
    * folder. The resume guards run again after the end, unchanged: they are
    * what stops two processes writing one transcript.
    */
-  const handOff = async (id) => {
+  const handOff = async (id, { report = true } = {}) => {
     const t = findTerminal(id);
     if (!t?.running) throw Object.assign(new Error('This terminal has closed.'), { status: 409, code: 'ETERMINALCLOSED' });
     const refusal = await keepRefusal(t);
@@ -682,7 +682,10 @@ export function createApp({ staticFiles, key, ingest = { port: null, error: 'not
     try {
       if (t.tool === 'claude') {
         const sessionId = await resumableSession(t.sessionId, t.cwd);
-        return await launchClaude({ dir: t.cwd, port: ingest.port, resume: sessionId });
+        // A session kept as LayerCake closes is started without its reporting
+        // settings (owner decision 2026-11-10): with them, every event would
+        // print a hook error in its terminal until LayerCake runs again.
+        return await launchClaude({ dir: t.cwd, port: report ? ingest.port : null, resume: sessionId });
       }
       const saved = await codexResume(t.sessionId, t.cwd);
       return await launchExternal({ ...await prepareCodex({ dir: t.cwd, resume: saved.sessionId }), dir: t.cwd, tool: 'codex' });
@@ -696,6 +699,71 @@ export function createApp({ staticFiles, key, ingest = { port: null, error: 'not
       res.json(await handOff(req.params.id));
     } catch (err) {
       res.status(err.status || 500).json({ message: err.message, code: err.code || null });
+    }
+  });
+
+  /**
+   * Closing with sessions running (#205). The single executable outlives its
+   * window, so after the last window closes it can still ask which embedded
+   * sessions to keep: it opens a small window on the chooser, which reads
+   * GET /api/close and answers with POST /api/close. `closing` is what the
+   * executable drives; from source (`npm start`) the server does not stop
+   * when a window closes, so nothing here is used.
+   *
+   * One decision at a time. A chooser closed without an answer is no decision,
+   * and the caller then falls back to the keep marks.
+   */
+  let decide = null;
+  const closeSessions = async () => Promise.all(listTerminals().filter((t) => t.running).map(async (t) => ({
+    id: t.id, tool: t.tool, title: t.title, sessionId: t.sessionId, cwd: t.cwd, branch: t.branch, color: t.color, keep: Boolean(t.keep),
+    refusal: await keepRefusal(t).catch((err) => err.message),
+  })));
+  app.locals.closing = {
+    running: () => listTerminals().filter((t) => t.running),
+    /** False once the user ticked "Don't ask again": the marks alone then decide. */
+    asks: async () => (await readPrefs().catch(() => ({}))).askOnClose !== false,
+    /** Starts a decision; resolves with { keep: [ids] }, { cancel: true }, or never (see `end`). */
+    begin: () => new Promise((resolve) => { decide = resolve; }),
+    end: () => { decide = null; },
+    /**
+     * Moves each of these sessions to Windows Terminal, one at a time, without
+     * reporting. Never throws: a session that cannot be moved is left to end
+     * with the rest, and the outcome says which.
+     */
+    handOff: async (ids) => {
+      const out = [];
+      for (const id of ids) {
+        try {
+          out.push({ id, ok: true, result: await handOff(id, { report: false }) });
+        } catch (err) {
+          out.push({ id, ok: false, message: err.message });
+        }
+      }
+      return out;
+    },
+  };
+  app.get('/api/close', async (_req, res) => {
+    try {
+      const states = await terminalStates(listTerminals(), { codexActivity }).catch(() => ({}));
+      res.json({ pending: Boolean(decide), sessions: (await closeSessions()).map((s) => ({ ...s, activity: states[s.id] || null })) });
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+  app.post('/api/close', async (req, res) => {
+    try {
+      const { keep, cancel, dontAsk } = req.body || {};
+      if (!cancel && !(Array.isArray(keep) && keep.length <= 64 && keep.every((id) => typeof id === 'string' && id.length <= 64))) {
+        return res.status(400).json({ message: 'Say which sessions to keep.', code: 'EBADKEEP' });
+      }
+      if (!decide) return res.status(409).json({ message: 'LayerCake is not closing.', code: 'ENOTCLOSING' });
+      if (dontAsk === true && !cancel) await updatePrefs({ askOnClose: false });
+      const answer = decide;
+      decide = null;
+      answer(cancel ? { cancel: true } : { keep });
+      res.status(204).end();
+    } catch (err) {
+      sendError(res, err);
     }
   });
 

@@ -1,6 +1,6 @@
 import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 
-import { followSession, getHistory, getSession, getUsage, listCodexSessions, listSessions, startTerminal, summarizeSession } from '../api.js';
+import { followSession, getHistory, getPrefs, getSession, getUsage, listCodexSessions, listSessions, savePrefs, startTerminal, summarizeSession } from '../api.js';
 import { clock, daysUntil, inProject, pathKey, terminalIdentity, terminalTitle, tokens, toolLabel, usd, when } from '../sessionFormat.js';
 import SessionDetail from './SessionDetail.jsx';
 const TerminalPane = lazy(() => import('./TerminalPane.jsx'));
@@ -175,7 +175,17 @@ export default function SessionsView({ projectDir, scanId, terminal, onOpenTermi
   const [launchError, setLaunchError] = useState(null);
   const [launchNote, setLaunchNote] = useState(null);
   const [external, setExternal] = useState(false);
-  const [report, setReport] = useState(false);
+  // On by default (owner decision 2026-11-10): without it a Codex tab can only say "Not reporting".
+  const [report, setReport] = useState(true);
+  // Whether closing LayerCake asks which sessions to keep (#205). Unset means it asks.
+  const [askOnClose, setAskOnClose] = useState(true);
+  useEffect(() => {
+    getPrefs().then((prefs) => setAskOnClose(prefs.askOnClose !== false)).catch(() => {});
+  }, []);
+  const changeAskOnClose = (ask) => {
+    setAskOnClose(ask);
+    savePrefs({ askOnClose: ask }).catch(() => setAskOnClose(!ask));
+  };
   const [codex, setCodex] = useState(null);
   const [codexError, setCodexError] = useState(null);
   const [codexLoading, setCodexLoading] = useState(false);
@@ -385,7 +395,9 @@ export default function SessionsView({ projectDir, scanId, terminal, onOpenTermi
             <button className="btn btn-small" onClick={() => onLaunch('codex')} disabled={!scanId || opening || codexLoading}>New Codex</button>
           </div>
           <label><input type="checkbox" disabled={!scanId || opening} checked={external} onChange={(e) => setExternal(e.target.checked)} /> Open in Windows Terminal</label>
-          <label><input type="checkbox" disabled={!scanId || opening || external} checked={report && !external} onChange={(e) => setReport(e.target.checked)} /> Share Codex activity with the Castle</label>
+          <label><input type="checkbox" disabled={!scanId || opening || external} checked={report && !external} onChange={(e) => setReport(e.target.checked)} /> Share Codex activity with LayerCake (its tab&apos;s state, and the Castle)</label>
+          <label title="When LayerCake closes with sessions running here, a small window asks which to keep. Unticked, the sessions marked Keep on their tabs are kept and the rest end.">
+            <input type="checkbox" id="ask-on-close" checked={askOnClose} onChange={(e) => changeAskOnClose(e.target.checked)} /> Ask which sessions to keep when LayerCake closes</label>
           {!scanId && <span className="muted">Scan a working directory to start or resume a session.</span>}
         </div>
         {launchNote && <div className="launch-note">{launchNote}</div>}

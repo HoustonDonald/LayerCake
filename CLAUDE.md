@@ -428,6 +428,25 @@ program gets no console), not `conhost.exe` (lost a program path with a space), 
 `Process.Start` (refused under Constrained Language Mode). Claude's own edits in a launched session
 bypass LayerCake's snapshot-first rule, since they are Claude Code's writes, not LayerCake's.
 
+**An embedded session is moved by ending it and resuming it, never carried** (#205, #207). A
+running console program cannot change consoles, so "Move to Windows Terminal" and "keep on close"
+both end the embedded process and start the tool's own resume of the same chat through
+`launchExternal`, in the terminal's own folder (`handOff` in app.js). Keep these in order: ask
+first whether the chat could be resumed (`keepRefusal`) and end nothing when it could not; wait for
+the exit (`endTerminal`, 5 s) and leave the session alone when it is not seen; then run the resume
+guards again, unchanged, since they are what stops two processes writing one transcript. A
+terminal's exit ends its launch's sessions in ingest (`endLaunchSessions`): the process was
+LayerCake's own child, so that is evidence, and without it the guard refuses a session that reported
+moments ago. A session kept as LayerCake closes is started without reporting settings (owner
+decision 2026-11-10), because its hooks would fail on every event until LayerCake runs again. The
+closing exe asks which sessions to keep in a window of its own (`sessionsToKeep` in desktop/main.js,
+`/api/close`), before `server.close()`: the server must still answer then. `askOnClose` is the one
+preference the server reads; unanswered, or turned off, the tabs' Keep marks decide. A tab's state
+(`terminalStates` in session-routes.js) ships with its rules (`TERMINAL_STATES`) like health.js;
+Codex reports no prompt, so its "waiting" is an inference and must stay marked `inferred`. Smoke
+(`smoke-terminal.mjs`, and `--exe` for the close) asserts the outcome: which chat a process was
+started for, and that the unticked one is gone.
+
 **The processes LayerCake starts are few and fixed.** `launch.js` (wt.exe, or where it is missing
 Windows PowerShell 5.1 from its absolute System32 path running one encoded `Start-Process`, hidden,
 a 60 s timeout, #157), `summaries.js`
@@ -698,6 +717,11 @@ partially. A truncated file restored is silent data loss.
 - **The exe's shutdown waits for handlers, not connections** (`desktop/inflight.js`). `server.close()`
   alone returned while a snapshot was still running, because the browser's sockets die with it; a
   save, snapshot or multi-file restore was then cut off. The wait is capped at 30 s (`DRAIN_MS`).
+- **Keeping a session is tested with fixture CLIs, and once by hand with a real one.** A real idle
+  Claude Code session (2.1.322) resumed in an embedded terminal was handed off in 0.2 s, came up in
+  Windows Terminal, and wrote nothing to its transcript in 26 s. A session cut off mid-step, a real
+  Codex session, and the 5 s quiet-terminal rule for Codex's approval prompt are not measured. A
+  session with no prompt yet has no transcript and cannot be kept.
 - **The session view lags during a long reply.** Claude Code writes a main-thread transcript record
   when each API response completes, not while it streams (subagent files do stream). Context and
   the prompt rail catch up when the reply finishes.

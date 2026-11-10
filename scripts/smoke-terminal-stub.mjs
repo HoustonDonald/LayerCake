@@ -30,6 +30,8 @@ if (args.includes('app-server')) {
     console.log(JSON.stringify({ id, result: results[method] }));
   }
 } else {
+  // Each run leaves its arguments behind, so a test can see which chat a process was started for.
+  if (process.env.LAYERCAKE_FIXTURE_RUNS) await fs.writeFile(path.join(process.env.LAYERCAKE_FIXTURE_RUNS, `${process.pid}.json`), JSON.stringify({ pid: process.pid, tool, argv: args }));
   const option = (name) => args.includes(name) ? args[args.indexOf(name) + 1] : null;
   const id = option('--resume') || option('--session-id') || option('resume') || fixtureId;
   const settings = option('--settings') && JSON.parse(await fs.readFile(option('--settings'), 'utf8'));

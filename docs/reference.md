@@ -771,8 +771,39 @@ started and the session is left alone.
 Use **View transcript** or **Chat details** in the terminal header to reach the linked history when
 available. **Exited terminals** keep their available scrollback below history. Reporting sessions
 use the same terminal name and short ID in the Castle.
-Selecting another tab or refreshing the browser leaves the process running. Closing the app
-ends its embedded processes. Restarting the app brings back saved history for **Resume**.
+Selecting another tab or refreshing the browser leaves the process running. Restarting the app
+brings back saved history for **Resume**.
+
+### Closing LayerCake with sessions running
+
+An embedded session's process belongs to LayerCake, so it ends when LayerCake does, unless it is
+kept. **Keep** on a tab marks a session to be kept; the tab then reads **Kept**. The mark lives in
+memory with the terminal.
+
+When the last LayerCake window closes while embedded sessions are running, `LayerCake.exe`, which
+is still running behind it, opens a small window that lists them. Each row shows the session's
+state and what keeping it costs in that state; the sessions marked **Keep** arrive ticked.
+
+- **Keep N and close** moves the ticked sessions to Windows Terminal, one at a time, and ends the
+  rest. Each move is the hand-off described above, with one difference: a session kept at close is
+  started **without** its reporting settings, because with them every event would print a hook
+  error in its terminal until LayerCake runs again. LayerCake therefore shows it afterwards as it
+  shows any session it did not launch, with no "waiting for you".
+- **End all and close** ends every session. The chats stay in History.
+- **Back to LayerCake** turns that window back into LayerCake and ends nothing.
+- **Don't ask again** stores the choice (`askOnClose` in LayerCake's `prefs.json`). From then on,
+  closing keeps the marked sessions and ends the rest without asking. **Ask which sessions to
+  keep when LayerCake closes**, on the History tab, turns the question back on.
+- Closing the small window without answering keeps the marked sessions and ends the rest.
+
+A session that cannot be kept is listed with the reason and cannot be ticked. If a ticked session
+fails to move, it ends with the others and a window says which and why. A session that has had no
+prompt has no saved chat, so it cannot be kept: Claude Code writes a session's transcript with its
+first prompt (measured on 2.1.322: a local command such as `/status` writes none).
+
+This applies to `LayerCake.exe`. Started from source (`npm start`, `npm run app`), the server does
+not stop when a window closes, so nothing is asked and nothing ends until the server is stopped,
+which ends every embedded session.
 
 **Open in Windows Terminal** is available for external launches. The portable executable embeds
 the Windows ConPTY runtime and loads its native files from LayerCake's data directory. Terminal
@@ -952,8 +983,9 @@ The Castle can display Claude Code and Codex CLI workers together for the scanne
 Use **Tool** to limit the view to either one. Click an embedded session's Mason or its task name
 to open its terminal. Linked worktrees have separate activity and test proof.
 
-For a Codex session started here, enable **Share Codex activity with the Castle** before launching
-and review the reporting hooks in Codex with `/hooks`. The hooks send lifecycle reports to
+A Codex session started here shares its activity by default: **Share Codex activity with
+LayerCake** on the History tab is ticked (owner decision 2026-11-10; untick it before launching to
+start one that reports nothing). Review the reporting hooks in Codex with `/hooks`. The hooks send lifecycle reports to
 LayerCake on loopback using a launch-specific credential. LayerCake reduces them to session and
 tool IDs, paths, activity types, and known outcomes. Codex displays approvals in the terminal.
 The Castle displays Codex activity when the CLI reports it and leaves unverified outcomes open.

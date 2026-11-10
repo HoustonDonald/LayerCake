@@ -9,6 +9,12 @@
  * call answers 403 with a message saying how to open LayerCake.
  */
 const KEY_STORE = 'layercake-key';
+/**
+ * True when this window was opened to ask which sessions to keep as LayerCake
+ * closes (#205): the executable adds `close=1` beside the key. Read here,
+ * before the address is stripped below.
+ */
+export const CLOSE_VIEW = /(?:^#|&)close=1(?:&|$)/.test(window.location.hash);
 const TOKEN = (() => {
   const fromAddress = /(?:^#|&)t=([0-9a-f]{64})(?:&|$)/.exec(window.location.hash)?.[1];
   if (fromAddress) {
@@ -88,6 +94,16 @@ export function listCodexSessions(scanId, cursor) {
 /** The rules behind a terminal tab's state (#207), served so the page shows them rather than restating them. */
 export function getTerminalStates() {
   return request('/api/terminal-states');
+}
+
+/** The running sessions and whether each can be kept, for the chooser shown as LayerCake closes (#205). */
+export function getClosing() {
+  return request('/api/close');
+}
+
+/** The chooser's answer: the terminals to keep, or `cancel` to go back to LayerCake. */
+export function answerClosing(body) {
+  return post('/api/close', body);
 }
 
 export function listTerminals() {

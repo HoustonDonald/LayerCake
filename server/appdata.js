@@ -249,7 +249,7 @@ export async function readRunRecord() {
  * The page's preferences (#198): the last and recent folders, muted files and
  * the notification choice. They lived in the browser's storage, which belongs
  * to the page's origin, and every run is a new origin now (a new port), so they
- * are kept here instead. The server stores them and never acts on them: a mute
+ * are kept here instead. The server stores them, and acts on one only (askOnClose, #205): a mute
  * still filters nothing it sends (#13). Each field is checked; anything else
  * is dropped.
  */
@@ -269,6 +269,9 @@ function cleanPrefs(input) {
     );
   }
   if (typeof p.notify === 'boolean') out.notify = p.notify;
+  // The one preference the server reads itself (#205): whether the closing
+  // executable asks which embedded sessions to keep. Unset means ask.
+  if (typeof p.askOnClose === 'boolean') out.askOnClose = p.askOnClose;
   return out;
 }
 

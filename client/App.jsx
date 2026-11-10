@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-import { createFile, deleteFile, getManifest, getPrefs, getSession, getTerminalStates, listSessions, listTerminals, readFile, savePrefs, scan } from './api.js';
+import { createFile, deleteFile, getManifest, getPrefs, getSession, getTerminalStates, listSessions, listTerminals, readFile, savePrefs, scan, terminalAction } from './api.js';
 import useWatch from './useWatch.js';
 import { pathKey } from './sessionFormat.js';
 
@@ -277,6 +277,10 @@ export default function App() {
   // The History tab: the Sessions view with no terminal in front of it.
   const openHistory = () => openTerminal(null);
 
+  // The Keep mark (#205): which sessions move to Windows Terminal as LayerCake closes.
+  const keepTerminal = (id, keep) => {
+    terminalAction(id, 'keep', { keep }).then(updateTerminal).catch(() => { /* the next poll shows what the server holds */ });
+  };
 
   const switchSettingsTool = (tool) => {
     if (tool !== settingsTool && leaveEditorOk()) {
@@ -481,7 +485,7 @@ export default function App() {
         <SessionTabs terminals={openTerminals} rules={terminalRules}
           selectedId={mode === 'sessions' ? activeTerminal?.id || null : null}
           historySelected={mode === 'sessions' && !activeTerminal}
-          onSelect={openTerminal} onHistory={openHistory} />
+          onSelect={openTerminal} onHistory={openHistory} onKeep={keepTerminal} />
       )}
 
       {scanError && <div className="error-banner">{scanError}</div>}

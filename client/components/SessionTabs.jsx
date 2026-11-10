@@ -52,8 +52,7 @@ export default function SessionTabs({ terminals, selectedId, historySelected, on
               </span>
               <span className="session-tab-sub"><span className="session-tab-state">{label}</span> · {toolLabel(t.tool)} · {folderName(t.cwd)}</span>
             </button>
-            {/* Shown only once closing LayerCake acts on the mark (#205): a control must not promise what nothing does yet. */}
-            {onKeep && <button className={`tab-keep${t.keep ? ' on' : ''}`} aria-pressed={Boolean(t.keep)} onClick={() => onKeep(t.id, !t.keep)}
+            {onKeep &&<button className={`tab-keep${t.keep ? ' on' : ''}`} aria-pressed={Boolean(t.keep)} onClick={() => onKeep(t.id, !t.keep)}
               title={t.keep
                 ? 'Kept on close: when LayerCake closes, this session reopens in Windows Terminal and carries on from its saved chat. Click to end it with LayerCake instead.'
                 : 'Keep on close: when LayerCake closes, reopen this session in Windows Terminal instead of ending it.'}>

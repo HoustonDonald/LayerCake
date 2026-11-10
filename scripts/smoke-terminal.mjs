@@ -24,6 +24,7 @@ const home = path.join(tmp, 'home');
 const bin = path.join(tmp, 'bin');
 const project = path.join(tmp, 'project');
 const other = path.join(project, 'other-checkout');
+const runs = path.join(tmp, 'runs');
 const streams = new Set();
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 let child;
@@ -77,6 +78,17 @@ async function stream(route) {
   return { events, wait: (name, check = () => true) => until(() => events.find((e) => e.name === name && check(e.payload))?.payload, name) };
 }
 
+/** What each fixture CLI process was started with: one record per process, written by the stub. A record still being written is skipped. */
+const runsOf = async () => (await Promise.all((await fs.readdir(runs).catch(() => [])).map(async (name) => { try { return JSON.parse(await fs.readFile(path.join(runs, name), 'utf8')); } catch { return null; } }))).filter(Boolean);
+const runWith = async (flag, id) => (await runsOf()).find((r) => r.argv.includes(flag) && r.argv[r.argv.indexOf(flag) + 1] === id);
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+/** Asks every app window on the test's own browser profile to close, as a click on its X does. */
+function closeWindows() {
+  const command = `Get-CimInstance Win32_Process -Filter "Name='msedge.exe' OR Name='chrome.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains(${psQuote(profile)}) -and $_.CommandLine.Contains('--app=') } | ForEach-Object { [void](Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue).CloseMainWindow() }`;
+  try { execFileSync(WINDOWS_POWERSHELL, ['-NoProfile', '-EncodedCommand', encodeCommand(command)], { windowsHide: true, stdio: 'ignore', timeout: 8000 }); } catch { /* the caller's wait decides */ }
+}
+
 async function fixturePort() {
   const socket = net.createServer();
   await new Promise((resolve) => socket.listen(0, '127.0.0.1', resolve));
@@ -86,7 +98,7 @@ async function fixturePort() {
 }
 
 try {
-  for (const dir of [bin, home, path.join(project, 'lib'), path.join(project, '.git'), path.join(other, '.git')]) {
+  for (const dir of [bin, home, runs, path.join(project, 'lib'), path.join(project, '.git'), path.join(other, '.git')]) {
     await fs.mkdir(dir, { recursive: true });
   }
   for (const tool of ['claude', 'codex']) {
@@ -104,7 +116,9 @@ try {
     LAYERCAKE_BROWSER_PROFILE_DIR: profile, LAYERCAKE_MANAGED_DIR: path.join(tmp, 'managed'),
     LAYERCAKE_POLICY_KEYS: JSON.stringify({ hklm: 'HKCU\\Software\\LayerCakeSmokeTerminal-HKLM', hkcu: 'HKCU\\Software\\LayerCakeSmokeTerminal-HKCU' }),
     LAYERCAKE_INGEST_PORT: String(await fixturePort()), LAYERCAKE_FIXTURE_PROJECT: project,
-    LAYERCAKE_LAUNCH_DRY_RUN: '1',
+    LAYERCAKE_FIXTURE_RUNS: runs,
+    // From source the hand-off is a dry run; the executable's own close makes the real launch (below).
+    ...(exe ? {} : { LAYERCAKE_LAUNCH_DRY_RUN: '1' }),
   });
   child = spawn(exe ? path.join(root, 'dist', 'LayerCake.exe') : process.execPath,
     exe ? [] : [path.join(root, 'server', 'index.js')], { cwd: tmp, env, windowsHide: true, stdio: 'ignore' });
@@ -194,10 +208,27 @@ try {
   const claudeProjects = path.join(home, '.claude', 'projects', projectSlug(project));
   await fs.mkdir(claudeProjects, { recursive: true });
   await minimalTranscript(claudeProjects, first.sessionId, project, 'Fixture prompt');
+  // What the chooser shown at close reads (#205): every running session, its
+  // Keep mark, and why it could not be kept. Answering is refused while
+  // LayerCake is not closing; only the executable opens a decision.
+  const closing = await call('/api/close');
+  assert.equal(closing.pending, false);
+  const row = (t) => closing.sessions.find((s) => s.id === t.id);
+  assert.deepEqual([row(first).keep, row(first).refusal], [true, null], 'a marked session with a saved chat can be kept');
+  assert.match(row(thirdCheckout).refusal, /Nothing has been said/, 'a session with no chat yet says why it cannot be kept');
+  assert.equal((await call('/api/close', { keep: [] }, 409)).code, 'ENOTCLOSING');
+  assert.equal((await call('/api/prefs', { askOnClose: false })).askOnClose, false, '"Don\'t ask again" is a stored preference');
+  assert.equal((await call('/api/prefs', { askOnClose: 'no' })).askOnClose, false, 'and only a boolean changes it');
+  assert.equal((await call('/api/prefs', { askOnClose: true })).askOnClose, true);
   const moved = await call(`/api/terminals/${first.id}/handoff`, {});
-  assert.equal(moved.dryRun, true);
-  assert.equal(moved.argv[moved.argv.indexOf('--resume') + 1], first.sessionId, 'the hand-off resumes the same Claude session');
-  assert.equal(moved.argv[moved.argv.indexOf('-d') + 1], project, 'in the terminal\'s own folder');
+  if (exe) {
+    // No dry run in the executable: the same chat really starts, in a console window.
+    assert.ok((await until(() => runWith('--resume', first.sessionId), 'the Claude session to start again')).argv.includes('--settings'), 'a hand-off while LayerCake stays open keeps its reporting');
+  } else {
+    assert.equal(moved.dryRun, true);
+    assert.equal(moved.argv[moved.argv.indexOf('--resume') + 1], first.sessionId, 'the hand-off resumes the same Claude session');
+    assert.equal(moved.argv[moved.argv.indexOf('-d') + 1], project, 'in the terminal\'s own folder');
+  }
   await again.wait('state', (state) => state.running === false);
   assert.equal((await call('/api/terminals')).find((t) => t.id === first.id).running, false, 'the embedded process ended');
   // Nothing said yet in this one: no chat to continue, so it is refused and left running.
@@ -206,7 +237,8 @@ try {
   await typed(thirdCheckout, dLease, 'still-here\r');
   await until(() => output(d).includes('[still-here]'), 'a refused hand-off leaves its terminal running');
   const movedCodex = await call(`/api/terminals/${codex.id}/handoff`, {});
-  assert.deepEqual(movedCodex.argv.slice(movedCodex.argv.indexOf('resume'), movedCodex.argv.indexOf('resume') + 2), ['resume', saved.sessionId]);
+  if (exe) await until(async () => (await runsOf()).find((r) => r.tool === 'codex' && r.argv[r.argv.indexOf('resume') + 1] === saved.sessionId && !r.argv.includes('-c')), 'the Codex chat to start again');
+  else assert.deepEqual(movedCodex.argv.slice(movedCodex.argv.indexOf('resume'), movedCodex.argv.indexOf('resume') + 2), ['resume', saved.sessionId]);
   await c.wait('state', (state) => state.running === false);
   const codexAgain = await start('codex', scanId, saved.sessionId);
   const e = await stream(`/api/terminals/${codexAgain.id}/stream`);
@@ -219,14 +251,50 @@ try {
   await call(`/api/terminals/${codexAgain.id}/close`, {}, 204);
   await e.wait('state', (state) => state.running === false);
   console.log(`Terminal, configuration, and mixed Castle checks passed (${exe ? 'portable executable' : 'source server'}).`);
+
+  // Closing with sessions running (#205), which only the executable does: it
+  // outlives its window, asks which sessions to keep, moves those to a
+  // terminal of their own and ends the rest. The launch is real here. The
+  // fixture PATH has no wt.exe, so a kept session opens in a console window,
+  // and each fixture process records its arguments, which is what is checked.
+  if (exe) {
+    const kept = await start('claude');
+    const ended = await start('claude');
+    for (const t of [kept, ended]) await minimalTranscript(claudeProjects, t.sessionId, project, 'Fixture prompt');
+    const embedded = await until(async () => {
+      const found = [await runWith('--session-id', kept.sessionId), await runWith('--session-id', ended.sessionId)];
+      return found.every(Boolean) ? found : null;
+    }, 'both embedded sessions to start');
+    // This test's own streams go first, as a real window's do when it closes:
+    // an open one is a request still running, which the executable waits for.
+    for (const controller of streams) controller.abort();
+    closeWindows();
+    // The window is gone and sessions are running: a decision is opened and a chooser window with it.
+    await until(async () => (await call('/api/close')).pending, 'the executable to ask which sessions to keep');
+    assert.ok(embedded.every((r) => alive(r.pid)), 'nothing is ended while the question is open');
+    await call('/api/close', { keep: [kept.id] }, 204);
+    await until(() => child.exitCode !== null, 'the executable to exit after the answer');
+    const resumed = await until(() => runWith('--resume', kept.sessionId), 'the kept session to start again outside LayerCake');
+    assert.ok(!resumed.argv.includes('--settings'), 'a session kept at close is started without reporting settings');
+    assert.equal(await runWith('--resume', ended.sessionId), undefined, 'a session that was not ticked is not started again');
+    await until(() => embedded.every((r) => !alive(r.pid)), 'both embedded processes to end');
+    assert.ok(alive(resumed.pid), 'the kept session is running after LayerCake has exited');
+    try { process.kill(resumed.pid); } catch { /* it ended by itself */ }
+    console.log('Keep-on-close checks passed (portable executable).');
+  }
 } finally {
   for (const controller of streams) controller.abort();
-  if (child && child.exitCode === null && exe) {
-    const command = `Get-CimInstance Win32_Process -Filter "ParentProcessId=${child.pid}" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains(${psQuote(profile)}) } | ForEach-Object { (Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue).CloseMainWindow() }`;
-    try { execFileSync(WINDOWS_POWERSHELL, ['-NoProfile', '-EncodedCommand', encodeCommand(command)], { windowsHide: true, stdio: 'ignore', timeout: 5000 }); } catch { /* cleanup below */ }
-    await Promise.race([new Promise((resolve) => child.once('exit', resolve)), delay(4000)]);
+  if (exe) {
+    closeWindows();
+    if (child && child.exitCode === null) await Promise.race([new Promise((resolve) => child.once('exit', resolve)), delay(4000)]);
+    // The chooser's window, if the run stopped while it was open.
+    closeWindows();
   }
   if (child && child.exitCode === null) child.kill();
+  // A kept fixture session, if a failed run left one behind in its console window.
+  for (const name of await fs.readdir(runs).catch(() => [])) {
+    try { process.kill(JSON.parse(await fs.readFile(path.join(runs, name), 'utf8')).pid); } catch { /* gone */ }
+  }
   if (path.dirname(tmp) === await fs.realpath(os.tmpdir()) && path.basename(tmp).startsWith('layercake-terminal-smoke-')) {
     await fs.rm(tmp, { recursive: true, force: true, maxRetries: 6, retryDelay: 200 }).catch(() => {});
   }

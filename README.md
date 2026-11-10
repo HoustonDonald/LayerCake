@@ -70,8 +70,11 @@ Get-FileHash .\LayerCake.exe
   when you click for it (Claude Haiku, with a spending cap).
 - **New Claude Code** and **New Codex** open embedded terminals from the Sessions tab. Rename each
   terminal to keep tasks apart, or use **Open in Windows Terminal** to launch externally.
-  Claude Code sessions report through launch-scoped hooks. For Codex, enable **Share Codex
-  activity with the Castle** before launching and review the reporting hooks when Codex prompts.
+  Each open session has a tab that says whether it is waiting for you, working or idle.
+  Claude Code sessions report through launch-scoped hooks. Codex sessions do the same unless you
+  untick **Share Codex activity with LayerCake**; review the reporting hooks when Codex prompts.
+- **Closing LayerCake ends the sessions running inside it, unless you keep them.** It asks which
+  to keep; a kept session reopens in Windows Terminal and carries on from its saved chat.
   The CLIs use their own account, network, and approval settings.
 
 The detail is in the reference: [Network posture](docs/reference.md#network-posture) and
