@@ -94,6 +94,9 @@ function blankSession(since = null) {
     lastSeenAt: null,
     events: [],
     waiting: null,
+    // null until a prompt, a tool call or a turn's end has been reported.
+    turnOpen: null,
+    turnAt: null,
     running: new Map(),
     toolFailures: 0,
     instructionsLoaded: [],
@@ -261,6 +264,18 @@ export function endLaunchSessions(id, reason) {
   if (changed && l.provider !== 'codex') persist(l);
 }
 
+/**
+ * What a Codex launch's hooks last said of one chat, for its terminal tab
+ * (#207), or null when that chat has not reported. Times only: no tool input.
+ */
+export function codexActivity(launchId, sessionId) {
+  const s = launches.get(launchId)?.sessions.get(`codex:${sessionId}`);
+  if (!s) return null;
+  let pendingSince = null;
+  for (const t of s.running.values()) if (!pendingSince || t.at < pendingSince) pendingSince = t.at;
+  return { ended: s.ended, turnOpen: s.turnOpen, turnAt: s.turnAt, pendingSince };
+}
+
 export function unregisterCodexLaunch(id) {
   if (launches.get(id)?.provider === 'codex') launches.delete(id);
 }
@@ -410,6 +425,13 @@ const MAX_RUNNING = 200;
 /** A Windows path is at most 32,767 characters; one in a hook post is clipped well below that (#196). */
 const MAX_PATH_CHARS = 1024;
 
+/** Records a turn opening or closing, keeping the time of the change, not of each event. */
+function noteTurn(s, open, at) {
+  if (s.turnOpen === open) return;
+  s.turnOpen = open;
+  s.turnAt = at;
+}
+
 function applyHook(s, h, at) {
   // Every field kept is bounded: a post carries the launch's secret, but its
   // body is still untrusted, and 40 posts of 4 MB paths once grew the heap by
@@ -420,6 +442,11 @@ function applyHook(s, h, at) {
   s.lastHookAt = at;
   if (event in s.hookCounts || Object.keys(s.hookCounts).length < MAX_EVENT_NAMES) s.hookCounts[event] = (s.hookCounts[event] || 0) + 1;
   if (RESUMING.has(event)) s.waiting = null;
+  // Whether a turn is open, for a terminal tab's working/idle (#207): a
+  // prompt or a tool call opens it, the turn's end closes it. An interrupt
+  // (Esc) fires no Stop, so the idle notice that follows closes it too.
+  if (event === 'UserPromptSubmit' || event === 'PreToolUse' || event === 'PostToolUse') noteTurn(s, true, at);
+  else if (event === 'Stop' || event === 'StopFailure' || event === 'SessionEnd' || (event === 'Notification' && str(h.notification_type) === 'idle_prompt')) noteTurn(s, false, at);
 
   const summary = tool ? toolSummary(tool, h.tool_input) : '';
   if (event === 'PreToolUse' && toolUseId) {
@@ -512,6 +539,8 @@ export function wrappedFor(sessionId, { toolDone = () => false, now = Date.now()
     statuslineAt: s.statuslineAt,
     lastHookAt: s.lastHookAt,
     waiting: waiting && { ...waiting, permission: PERMISSION_WAITS.has(waiting.kind) },
+    turnOpen: s.turnOpen,
+    turnAt: s.turnAt,
     running,
     toolFailures: s.toolFailures,
     instructionsLoaded: s.instructionsLoaded,
@@ -663,6 +692,15 @@ function applyCodexPost(l, body, at) {
   const tool = clip(body.tool_name, 100);
   const callId = clip(body.tool_use_id, 100);
   if ((event === 'PreToolUse' || event === 'PostToolUse') && !callId) return;
+  // For a terminal tab's state (#207). Codex reports no approval prompt, so a
+  // call that started and has not finished is all that is known of one.
+  if (event === 'UserPromptSubmit' || event === 'PreToolUse' || event === 'PostToolUse') noteTurn(s, true, at);
+  else if (event === 'Stop' || event === 'SessionEnd') noteTurn(s, false, at);
+  if (event === 'PreToolUse') {
+    s.running.set(callId, { name: tool, summary: '', at });
+    if (s.running.size > MAX_RUNNING) s.running.delete(s.running.keys().next().value);
+  } else if (event === 'PostToolUse') s.running.delete(callId);
+  else if (event === 'UserPromptSubmit' || event === 'Stop' || event === 'SessionEnd') s.running.clear();
   const input = body.tool_input && typeof body.tool_input === 'object' ? body.tool_input : {};
   const shell = tool === 'Bash' || tool === 'PowerShell' || tool === 'exec_command';
   const normalizedTool = shell ? 'Bash' : tool === 'apply_patch' ? 'Edit' : tool;

@@ -130,6 +130,9 @@ export function computeHealth(model, live, { now = Date.now(), mtimeMs = 0, wrap
 
   return {
     state,
+    // Working, idle or offline before the flags are weighed in: a terminal
+    // tab shows this beside a flag rather than under it (#207).
+    base,
     reasons,
     flags: [...flags],
     context: { tokens, window, windowSource, pct, source, rule: CONTEXT_RULE },

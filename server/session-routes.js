@@ -186,6 +186,78 @@ export async function resumableSession(sessionId, projectDir, { ownTerminal = fa
   return reader.sessionId;
 }
 
+/** How long a Codex terminal with a call open must print nothing before it reads as an approval prompt. */
+const CODEX_QUIET_MS = 5000;
+/** How long after a Codex turn ends it reads as waiting for a prompt, as Claude Code's own idle notice does (60 s). */
+const CODEX_IDLE_PROMPT_MS = 60_000;
+
+export const TERMINAL_STATES = [
+  { state: 'waiting', label: 'Waiting for you', rule: 'Claude Code: it reported a permission request or that it is waiting for input, with nothing since. Codex reports no prompt, so this is an inference there: a tool call that started and has not finished while its terminal has printed nothing for 5 s (most likely an approval prompt), or 60 s since its turn ended.' },
+  { state: 'working', label: 'Working', rule: 'A turn is open by its reports (a prompt or a tool call, and no end of turn since), or Claude Code reports it busy, or its transcript was written in the last 15 seconds.' },
+  { state: 'idle', label: 'Idle', rule: 'Running, with no turn open.' },
+  { state: 'unknown', label: 'Not reporting', rule: 'A Codex terminal started without "Share Codex activity", or one that has not reported yet: only the terminal itself shows what it is doing.' },
+];
+
+/**
+ * Each running embedded terminal's state for its tab (#207), by terminal id.
+ * The terminal's process is LayerCake's own child, so "running" is known and
+ * only what it is doing is asked. Claude Code terminals reuse the session
+ * view's evidence (computeHealth); Codex has hooks alone, and less of them.
+ */
+export async function terminalStates(terminals, { now = Date.now(), codexActivity = () => null } = {}) {
+  const out = {};
+  const running = terminals.filter((t) => t.running);
+  if (!running.length) return out;
+  const pidLive = running.some((t) => t.tool === 'claude') ? await liveSessions().catch(() => []) : [];
+  for (const t of running) {
+    try {
+      if (t.tool === 'codex') {
+        const a = t.sessionId && t.launchId ? codexActivity(t.launchId, t.sessionId) : null;
+        if (!a || a.turnOpen === null) {
+          out[t.id] = { state: 'unknown', detail: t.reportsActivity ? 'No report from Codex yet' : 'Activity not shared with LayerCake', since: null, inferred: false };
+          continue;
+        }
+        const quietMs = t.lastOutputAt ? now - Date.parse(t.lastOutputAt) : 0;
+        if (a.pendingSince && quietMs >= CODEX_QUIET_MS) {
+          out[t.id] = { state: 'waiting', detail: 'Most likely waiting for your approval: a tool call has not finished and the terminal is quiet', since: t.lastOutputAt, inferred: true };
+        } else if (a.turnOpen) {
+          out[t.id] = { state: 'working', detail: a.pendingSince ? 'A tool call is running' : 'A turn is open', since: a.turnAt, inferred: false };
+        } else if (now - Date.parse(a.turnAt) >= CODEX_IDLE_PROMPT_MS) {
+          out[t.id] = { state: 'waiting', detail: 'Its turn ended; waiting for your next prompt', since: a.turnAt, inferred: true };
+        } else {
+          out[t.id] = { state: 'idle', detail: 'Its turn ended', since: a.turnAt, inferred: false };
+        }
+        continue;
+      }
+      const reader = t.sessionId ? await getReader(t.sessionId).catch(() => null) : null;
+      const wrapped = t.sessionId ? (reader ? wrappedView(reader) : wrappedFor(t.sessionId)) : null;
+      if (wrapped?.waiting) {
+        out[t.id] = { state: 'waiting', detail: wrapped.waiting.message || 'Waiting for you', since: wrapped.waiting.at, inferred: false };
+        continue;
+      }
+      const tool = wrapped?.running.at(-1);
+      let working = Boolean(tool) || wrapped?.turnOpen === true;
+      let detail = tool ? (tool.summary || tool.name || 'A tool is running') : working ? 'A turn is open' : null;
+      let since = tool?.at || (wrapped?.turnAt ?? null);
+      let flags = [];
+      if (reader) {
+        const live = liveFrom(pidLive.find((s) => s.sessionId === t.sessionId), wrapped, t.sessionId) || { pid: null, sessionId: t.sessionId, status: null, source: 'terminal' };
+        const health = computeHealth(reader.model, live, { mtimeMs: reader.mtimeMs, wrapped, now });
+        flags = health.flags.filter((f) => f !== 'waiting');
+        if (!working && health.base === 'working') {
+          working = true;
+          detail = health.reasons.at(-1);
+          since = null;
+        }
+      }
+      out[t.id] = { state: working ? 'working' : 'idle', detail: detail || (reader ? 'Running, not busy' : 'Nothing said yet'), since, inferred: false, flags };
+    } catch {
+      out[t.id] = { state: 'unknown', detail: 'Its state could not be read', since: null, inferred: false };
+    }
+  }
+  return out;
+}
+
 /** A launched session's reported state, with the transcript as evidence for tools that ended unreported (#23). */
 function wrappedView(reader) {
   return wrappedFor(reader.sessionId, { toolDone: (id) => reader.toolDone(id) });

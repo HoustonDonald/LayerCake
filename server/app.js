@@ -52,9 +52,9 @@ import {
 import { MAX_FILE_BYTES, isSecret, describeError, writePolicy } from './safety.js';
 import { readPrefs, readTerminalLabel, updatePrefs } from './appdata.js';
 import { hostGuard, keyProof, originGuard, portOf, requireToken } from './security.js';
-import { registerSessionRoutes, resumableSession } from './session-routes.js';
+import { TERMINAL_STATES, registerSessionRoutes, resumableSession, terminalStates } from './session-routes.js';
 import { closeCastleStreamsFor, registerCastleRoutes } from './castle-routes.js';
-import { listLaunches, registerIngestRoutes } from './ingest.js';
+import { codexActivity, listLaunches, registerIngestRoutes } from './ingest.js';
 import { launchClaude, launchExternal, prepareClaude } from './launch.js';
 import { codexConfig, codexResume, codexThreads, prepareCodex } from './codex.js';
 import { closeTerminals, endTerminal, findTerminal, registerTerminalRoutes, startTerminal } from './terminal.js';
@@ -725,7 +725,7 @@ export function createApp({ staticFiles, key, ingest = { port: null, error: 'not
         return prepareCodex({ dir, port: ingest.port, resume: saved?.sessionId, report: report === true });
       },
     });
-  });
+  }, { states: (list) => terminalStates(list, { codexActivity }), stateRules: TERMINAL_STATES });
 
   // The Castle view (#159, #160), behind the same guards. Its project comes from
   // the scan store, never the request, as for /api/launch below.

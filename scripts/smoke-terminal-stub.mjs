@@ -61,6 +61,11 @@ if (args.includes('app-server')) {
       await hook('PreToolUse', data);
       await hook('PostToolUse', data);
     }
+    // For a tab's state (#207): a call that starts and does not finish, a
+    // permission prompt (Claude Code reports one; Codex does not), a turn's end.
+    if (line === 'fixture-pending') await hook('PreToolUse', { tool_name: 'Bash', tool_use_id: 'fixture-pending', tool_input: { command: 'npm run build' } });
+    if (line === 'fixture-permission') await hook('PermissionRequest', { tool_name: 'Bash', tool_input: { command: 'npm run build' } });
+    if (line === 'fixture-stop') await hook('Stop');
     // Delimiters distinguish our response from the terminal's local echo.
     console.log(`FIXTURE RECEIVED [${line}]`);
   }

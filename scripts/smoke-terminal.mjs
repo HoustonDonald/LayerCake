@@ -163,6 +163,29 @@ try {
     Object.values(state.rooms).some((r) => r.scaffolding));
   await typed(codex, cLease, 'fixture-test\r');
   await castle.wait('state', (state) => Object.values(state.rooms).some((r) => r.cause?.kind === 'proven' || !r.scaffolding && r.lastChange !== null));
+  // A tab's state (#207), read where the page reads it: the terminal list.
+  const activity = async (t) => (await call('/api/terminals')).find((x) => x.id === t.id).activity;
+  const becomes = (t, state) => until(async () => { const a = await activity(t); return a.state === state ? a : null; }, `${t.tool} terminal ${state}`);
+  assert.ok((await call('/api/terminal-states')).some((r) => r.state === 'waiting' && r.rule), 'the state rules are served with the states');
+  // Claude Code: a prompt was reported and no end of turn, so a turn is open.
+  assert.equal((await activity(first)).state, 'working');
+  const againLease = await again.wait('ready');
+  await typed(first, againLease, 'fixture-permission\r');
+  assert.equal((await becomes(first, 'waiting')).inferred, false, 'Claude Code reports its own permission prompt');
+  await typed(first, againLease, 'fixture-stop\r');
+  await becomes(first, 'idle');
+  // Codex reports no prompt. A turn's end is idle; a call that started and has
+  // not finished is working while the terminal prints, and reads as an
+  // approval prompt, marked as an inference, once it has been quiet for 5 s.
+  await typed(codex, cLease, 'fixture-stop\r');
+  await becomes(codex, 'idle');
+  await typed(codex, cLease, 'fixture-pending\r');
+  await becomes(codex, 'working');
+  assert.equal((await becomes(codex, 'waiting')).inferred, true, 'a quiet Codex terminal with a call open is an inferred wait');
+  assert.equal((await call(`/api/terminals/${first.id}/keep`, { keep: true })).keep, true);
+  assert.equal((await call('/api/terminals')).find((t) => t.id === first.id).keep, true, 'a keep-on-close mark is on the list');
+  await call(`/api/terminals/${first.id}/keep`, { keep: 'yes' }, 400);
+
   // Hand-off to Windows Terminal (#205). The launch is a dry run: what is
   // checked is that the embedded process ends and the SAME chat is what would
   // be started, in the terminal's own folder. The fixture reported a prompt

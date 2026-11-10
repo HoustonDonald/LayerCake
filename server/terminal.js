@@ -32,8 +32,8 @@ async function loadPty() {
 }
 
 function view(t) {
-  const { id, tool, cwd, title, sessionId, startedAt, exitCode, launchId, reportsActivity, activitySeen, branch } = t;
-  return { id, tool, cwd, title, sessionId, startedAt, exitCode, launchId, reportsActivity, activitySeen, branch, running: !t.finished };
+  const { id, tool, cwd, title, sessionId, startedAt, exitCode, launchId, reportsActivity, activitySeen, branch, lastOutputAt, keep } = t;
+  return { id, tool, cwd, title, sessionId, startedAt, exitCode, launchId, reportsActivity, activitySeen, branch, lastOutputAt, keep, running: !t.finished };
 }
 
 export function listTerminals() {
@@ -93,6 +93,10 @@ export async function startTerminal({ tool, cwd, resume, prepare, title }) {
       pty, output: '', listeners: new Set(), finished: false, exitCode: null, closing: false, labelQueue: Promise.resolve(),
       controller: null, attached: false, branch: null,
       activitySeen: false, dispose: plan.dispose, ended: plan.ended, exited: null, markExited: null,
+      lastOutputAt: null,
+      // "Keep on close" (#205): the user's mark that this session should move
+      // to Windows Terminal when LayerCake closes. Memory only, like the terminal.
+      keep: false,
     };
     t.exited = new Promise((resolve) => { t.markExited = resolve; });
     terminals.set(t.id, t);
@@ -102,6 +106,9 @@ export async function startTerminal({ tool, cwd, resume, prepare, title }) {
     }).catch(() => {});
     pty.onData((data) => {
       t.output = (t.output + data).slice(-MAX_OUTPUT);
+      // When it last printed: a tab reads a quiet Codex terminal with a call
+      // open as an approval prompt (#207). A time, never the text.
+      t.lastOutputAt = new Date().toISOString();
       send(t, 'output', { data });
     });
     pty.onExit(({ exitCode }) => {
@@ -183,7 +190,7 @@ export function closeTerminals() {
   }
 }
 
-export function registerTerminalRoutes(app, start) {
+export function registerTerminalRoutes(app, start, { states = async () => ({}), stateRules = [] } = {}) {
   const lookup = (req, res, next) => {
     const terminal = terminals.get(req.params.id);
     if (!terminal) return res.status(404).json({ message: 'This terminal has closed.', code: 'ENOTERMINAL' });
@@ -199,7 +206,21 @@ export function registerTerminalRoutes(app, start) {
     if (t.finished || t.closing) throw problem('This terminal has closed.', 409, 'ETERMINALCLOSED');
     if (!t.controller || t.controller.id !== controller) throw problem('Connect to this terminal before sending input.', 409, 'ECTRL');
   };
-  app.get('/api/terminals', (_req, res) => res.json(listTerminals()));
+  // The list carries each running terminal's state (#207); the rules that
+  // produce it are served beside it, so the page can show them.
+  // A state that cannot be worked out costs only that state, never the list.
+  app.get('/api/terminals', async (_req, res) => {
+    const list = listTerminals();
+    const found = await states(list).catch(() => ({}));
+    res.json(list.map((t) => ({ ...t, activity: found[t.id] || null })));
+  });
+  app.get('/api/terminal-states', (_req, res) => res.json(stateRules));
+  app.post('/api/terminals/:id/keep', lookup, route((req, res) => {
+    if (typeof req.body?.keep !== 'boolean') throw problem('Say whether to keep this session.', 400, 'EBADKEEP');
+    req.terminal.keep = req.body.keep;
+    send(req.terminal, 'state', view(req.terminal));
+    res.json(view(req.terminal));
+  }));
   app.post('/api/terminals', route(async (req, res) => res.json(await start(req.body))));
   app.get('/api/terminals/:id/stream', lookup, (req, res) => {
     const t = req.terminal;
