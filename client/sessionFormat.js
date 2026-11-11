@@ -54,3 +54,25 @@ export function usd(n) {
 export function pathKey(p) {
   return String(p || '').replace(/\//g, '\\').toLowerCase();
 }
+
+export function inProject(cwd, dir) {
+  const root = pathKey(dir).replace(/\\+$/, '');
+  const working = pathKey(cwd);
+  return working === root || working.startsWith(`${root}\\`);
+}
+
+export function toolLabel(tool) {
+  return tool === 'codex' ? 'Codex' : 'Claude Code';
+}
+
+export function shortSessionId(session) {
+  return (session.sessionId || session.id).replace(/^codex:/, '').slice(0, 8);
+}
+
+export function terminalTitle(terminal) {
+  return terminal.title || `${toolLabel(terminal.tool)} ${shortSessionId(terminal)}`;
+}
+
+export function terminalIdentity(terminal) {
+  return [toolLabel(terminal.tool), terminal.branch, shortSessionId(terminal)].filter(Boolean).join(' · ');
+}

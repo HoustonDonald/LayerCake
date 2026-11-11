@@ -29,7 +29,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 
 import { writeLaunch } from './appdata.js';
-import { STATUS_REFRESH_S, registerLaunch } from './ingest.js';
+import { STATUS_REFRESH_S, endLaunchSessions, registerLaunch } from './ingest.js';
 import { WINDOWS_POWERSHELL, encodeCommand, psQuote, psWildcardEscape, winArgQuote } from './powershell.js';
 import { CLAUDE_NOT_FOUND, resolveClaudeCommand } from './summaries.js';
 
@@ -188,8 +188,8 @@ function startInConsole(plan) {
  * a version forked anyway, the new id arrives with its first report, as after
  * a /clear (#22).
  */
-export async function launchClaude({ dir, port, screen, resume = null }) {
-  refuseTerminalSeparator(dir);
+export async function prepareClaude({ dir, port, resume = null, external = false }) {
+  if (external) refuseTerminalSeparator(dir);
   // The program wt starts: claude.exe's absolute path when it is on PATH, else
   // node plus the npm shim's script (#6). Never a bare name, which the console
   // fallback would look for in the project folder first (#191). Resolved and
@@ -200,24 +200,40 @@ export async function launchClaude({ dir, port, screen, resume = null }) {
     err.status = 400;
     throw err;
   }
-  for (const part of claude) refuseTerminalSeparator(part, "Claude Code's program path");
+  if (external) for (const part of claude) refuseTerminalSeparator(part, "Claude Code's program path");
   const id = crypto.randomBytes(8).toString('hex');
   const secret = crypto.randomBytes(24).toString('hex');
   const sessionId = resume || crypto.randomUUID();
+  const args = [resume ? '--resume' : '--session-id', sessionId];
+  if (!port) return { sessionId, program: [...claude, ...args] };
   const base = `http://127.0.0.1:${port}/ingest/${id}/${secret}`;
   const settings = buildSettings(base);
   const record = { id, secret, dir, sessionId, createdAt: new Date().toISOString() };
   const settingsPath = await writeLaunch(record, settings);
   registerLaunch(record);
 
-  const program = [...claude, resume ? '--resume' : '--session-id', sessionId, '--settings', settingsPath];
+  const program = [...claude, ...args, '--settings', settingsPath];
+  // `ended` is for an embedded terminal: its process exiting ends the launch's
+  // sessions as far as the reports go (#205).
+  return { launchId: id, sessionId, settingsPath, program, reportsActivity: true, ended: () => endLaunchSessions(id, 'terminal closed') };
+}
+
+export async function launchClaude({ dir, port, screen, resume = null }) {
+  const plan = await prepareClaude({ dir, port, resume, external: true });
+  return launchExternal({ ...plan, dir, screen, tool: 'claude' });
+}
+
+export async function launchExternal({ dir, screen, tool, program, launchId, sessionId, settingsPath }) {
+  refuseTerminalSeparator(dir);
+  for (const part of program) refuseTerminalSeparator(part, 'a launch argument');
+  const label = tool === 'claude' ? 'Claude' : 'Codex';
   const argv = [
     '-w',
     'LayerCake',
     ...placement(screen),
     'new-tab',
     '--title',
-    `Claude: ${path.basename(dir) || dir}`,
+    `${label}: ${path.basename(dir) || dir}`,
     '--suppressApplicationTitle',
     '-d',
     dir,
@@ -227,7 +243,7 @@ export async function launchClaude({ dir, port, screen, resume = null }) {
 
   // For the smoke test: everything but the process start, both ways.
   if (process.env.LAYERCAKE_LAUNCH_DRY_RUN === '1') {
-    return { launchId: id, sessionId, dryRun: true, argv, console: fallback, settingsPath };
+    return { launchId, sessionId, dryRun: true, argv, console: fallback, settingsPath };
   }
 
   const started = await new Promise((resolve, reject) => {
@@ -239,5 +255,5 @@ export async function launchClaude({ dir, port, screen, resume = null }) {
     });
   });
   if (!started) await startInConsole(fallback);
-  return { launchId: id, sessionId, terminal: started ? 'windows-terminal' : 'console' };
+  return { launchId, sessionId, terminal: started ? 'windows-terminal' : 'console' };
 }

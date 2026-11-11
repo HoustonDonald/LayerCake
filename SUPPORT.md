@@ -23,6 +23,8 @@ Check [If something goes wrong](README.md#if-something-goes-wrong) and the
 - A current Claude Code. LayerCake reads Claude Code's own files, and some of their formats are
   internal to Claude Code and change without notice, so a new Claude Code release can break part of
   LayerCake until it catches up. Bugs on these setups come first.
+- A current Codex CLI with App Server for configuration and session history. Codex Castle activity
+  uses the CLI's hook interface. Include `codex --version` in reports about those features.
 
 ## Contributing
 
@@ -30,6 +32,7 @@ Pull requests are welcome, with one step first: **open an issue describing the c
 it there before writing code.** That saves you writing something that would be declined, for
 instance because it adds a dependency, reaches the network, or widens what LayerCake can write.
 
-Before you send the pull request, run `npm run smoke` and say what you checked by hand in the
+Before you send the pull request, run `npm run smoke` and, for terminal changes on Windows,
+`npm run smoke:terminal`. Say what you checked by hand in the
 browser or the exe; [CLAUDE.md](CLAUDE.md) explains why that matters here. Contributions are
 accepted under the [MIT License](LICENSE).

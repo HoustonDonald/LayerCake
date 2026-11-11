@@ -244,7 +244,7 @@ function scribeShows(u, pose, mode, now, min) {
  * Frames come from the shared flip-book; with reduced motion a pose holds its
  * first frame.
  */
-function Unit({ u, x, y, colour, kinds, riders = [], colourOf, onClick, small = false, hover = true, pose = null, poseMin = 0, swing = 0, sparkle = false, reduce = false }) {
+function Unit({ u, x, y, colour, kinds, riders = [], colourOf, onClick, actionLabel, small = false, hover = true, pose = null, poseMin = 0, swing = 0, sparkle = false, reduce = false }) {
   const bird = u.kind === 'raven';
   const now = Date.now();
   const verb = poseVerb(pose, u, now, poseMin);
@@ -262,7 +262,9 @@ function Unit({ u, x, y, colour, kinds, riders = [], colourOf, onClick, small = 
   else if (u.kind === 'herald' && swing) art = <HeraldPose swing={swing} />;
   else if (u.kind === 'wizard' && sparkle) art = <WizardPose frame={frame} />;
   return (
-    <g className={`castle-unit unit-${u.kind}${u.resting ? ' resting' : ''}`} data-unit={x === undefined ? undefined : u.key} data-hover={hover ? u.key : undefined} data-pose={verb || undefined} transform={x === undefined ? undefined : `translate(${x} ${y})`} onClick={onClick}>
+    <g className={`castle-unit unit-${u.kind}${u.resting ? ' resting' : ''}`} data-unit={x === undefined ? undefined : u.key} data-hover={hover ? u.key : undefined} data-pose={verb || undefined} transform={x === undefined ? undefined : `translate(${x} ${y})`} onClick={onClick}
+      role={actionLabel ? 'button' : undefined} aria-label={actionLabel} tabIndex={actionLabel ? 0 : undefined}
+      onKeyDown={actionLabel ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}>
       {u.kind === 'herald' && <circle className="herald-ring" r={DOT + 9} />}
       <circle className="unit-disc" r={bird ? RAVEN_R : small ? DOT - 3 : DOT + 2} style={{ stroke: colour }} />
       <g className="unit-figure">{art ? <g transform={`translate(${-size / 2} ${-size / 2}) scale(${size / 24})`}>{art}</g> : <Figure kind={u.kind} size={size} />}</g>
@@ -449,7 +451,7 @@ const samePoint = (a, b) => Math.abs(a.x - b.x) < 0.01 && Math.abs(a.y - b.y) < 
  * call already there when the castle opened (or reconnected) plays only if it
  * is still running, since a pose nobody saw start would be invented too.
  */
-function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf, kinds, poseMin, swing, onSelect, onHover, onLeaving }) {
+function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf, kinds, poseMin, swing, onSelect, onOpenTerminal, onHover, onLeaving }) {
   // key -> { key, unit, place, point, lastKey, legs, anim, fade, leaving, exit }
   const motion = useRef(new Map());
   // key -> { key: the call's id, verb, from }
@@ -690,6 +692,8 @@ function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf
     <g className="castle-units" ref={layerRef} onMouseOver={(e) => onHover(hoverAt(e.target))} onMouseLeave={() => onHover(null)}>
       {shown.map(({ u, p, ghost }) => {
         const selectable = !ghost && (rooms.has(p.place) || p.place === 'village' || p.place === 'outside');
+        const session = !ghost && u.kind === 'mason' && state?.sessions?.find((s) => s.sessionId === u.sessionId);
+        const openTerminal = session?.terminalId && onOpenTerminal;
         return (
           <Unit
             key={u.key}
@@ -700,7 +704,8 @@ function UnitLayer({ L, rooms, perch, units, generation, state, reduce, colourOf
             kinds={kinds}
             riders={ghost ? [] : riders.get(u.key)}
             colourOf={colourOf}
-            onClick={selectable ? () => onSelect(p.place) : undefined}
+            onClick={openTerminal ? () => onOpenTerminal(session.terminalId) : selectable ? () => onSelect(p.place) : undefined}
+            actionLabel={openTerminal ? `Open terminal for ${session.title || (session.tool === 'codex' ? 'Codex' : 'Claude Code')}` : undefined}
             hover={!ghost}
             pose={ghost ? null : poses.current.get(u.key) || null}
             poseMin={poseMin}
@@ -885,7 +890,7 @@ function UnitCard({ card, state, map }) {
   );
 }
 
-export default function CastleStage({ map, state, generation, selected, onSelect }) {
+export default function CastleStage({ map, state, generation, selected, onSelect, onOpenTerminal }) {
   const [card, setCard] = useState(null);
   const L = layout(map?.floor);
   const halfLife = map?.windows?.heatHalfLifeMs || 45_000;
@@ -1062,7 +1067,7 @@ export default function CastleStage({ map, state, generation, selected, onSelect
       })}
 
       <RunLayer L={L} rooms={rooms} units={state?.units || []} reduce={reduce} onHover={setCard} />
-      <UnitLayer L={L} rooms={rooms} perch={map?.perch || null} units={(state?.units || []).filter((u) => !RUN_KINDS.has(u.kind))} generation={generation} state={state} reduce={reduce} colourOf={colourOf} kinds={map?.units} poseMin={map?.windows?.poseMinMs ?? 0} swing={reduce ? 0 : pulse ? 1 : -1} onSelect={select} onHover={setCard} onLeaving={onLeaving} />
+      <UnitLayer L={L} rooms={rooms} perch={map?.perch || null} units={(state?.units || []).filter((u) => !RUN_KINDS.has(u.kind))} generation={generation} state={state} reduce={reduce} colourOf={colourOf} kinds={map?.units} poseMin={map?.windows?.poseMinMs ?? 0} swing={reduce ? 0 : pulse ? 1 : -1} onSelect={select} onOpenTerminal={onOpenTerminal} onHover={setCard} onLeaving={onLeaving} />
     </svg>
     {card && <UnitCard card={card} state={state} map={map} />}
     </>

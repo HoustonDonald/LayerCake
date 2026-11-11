@@ -34,7 +34,8 @@ import { liveFrom } from './session-routes.js';
 import { discoverSessions, getReader, liveSessions, readSubagentMeta, subagentFiles } from './sessions.js';
 import { SHELL_TOOLS, SubagentReader } from './transcript.js';
 import { ROOM_TYPES, classifyCommand, draftPrompt, gitAct, loadMap, locate, locateFolder, testedBy } from './castlemap.js';
-import { readGitState } from './gitstate.js';
+import { checkoutRoot, readGitState } from './gitstate.js';
+import { listTerminals } from './terminal.js';
 
 /**
  * Every time window, scaled for the smoke test only (LAYERCAKE_CASTLE_TIME_SCALE,
@@ -173,6 +174,9 @@ function hookEvents(sessionId, records) {
     const base = { at, sessionId, source: 'hooks', agentId: r.agentId || null, agentType: r.agentType || null };
     const call = { tool: r.tool, toolUseId: r.toolUseId, summary: r.summary || '', targets: r.targets };
     switch (r.event) {
+      case 'SessionStart':
+        out.push({ ...base, kind: 'session-start', key: `session:${sessionId}:${at}` });
+        break;
       case 'PreToolUse':
         out.push({ ...base, ...call, kind: 'call-start', key: r.toolUseId ? `s:${r.toolUseId}` : `h:${sessionId}:${i}` });
         break;
@@ -266,7 +270,7 @@ function transcriptEvents(entry, hooksSince) {
   return out;
 }
 
-const KIND_ORDER = { 'agent-start': 0, turn: 1, 'call-start': 2, 'call-end': 3, stop: 4, 'agent-end': 5, 'compact-start': 6, 'compact-end': 6, 'session-end': 7 };
+const KIND_ORDER = { 'session-start': 0, 'agent-start': 0, turn: 1, 'call-start': 2, 'call-end': 3, stop: 4, 'agent-end': 5, 'compact-start': 6, 'compact-end': 6, 'session-end': 7 };
 
 /**
  * Hook events first, so where both sources report a call the hook's copy is
@@ -588,7 +592,9 @@ export function fold(events, map, locateCall) {
         units.delete(`X:${id}`);
       }
       if (e.kind === 'turn') entry.summary = 'Prompt';
-      else entry.summary = 'Claude stopped and is waiting for the next prompt';
+      else entry.summary = 'Waiting for the next prompt';
+    } else if (e.kind === 'session-start') {
+      entry.summary = 'Session started';
     } else if (e.kind === 'session-end') {
       s.endedAt = e.at;
       for (const [k, u] of units) if (u.sessionId === e.sessionId) units.delete(k);
@@ -673,8 +679,9 @@ export function roomState(r, now, provenLive) {
  * nothing changed (jsonl.js returns early).
  */
 class Castle {
-  constructor(projectDir) {
+  constructor(projectDir, tool) {
     this.projectDir = projectDir;
+    this.tool = tool;
     this.key = samePathKey(projectDir);
     this.subscribers = new Set();
     this.entries = new Map(); // sessionId -> { sessionId, reader, subs, seen, lags, included, index }
@@ -789,20 +796,36 @@ class Castle {
    */
   async select() {
     const now = Date.now();
-    const live = await liveSessions().catch(() => []);
+    const live = this.tool === 'codex' ? [] : await liveSessions().catch(() => []);
     this.pidLive = new Map(live.map((s) => [s.sessionId, s]));
     const want = [];
-    for (const s of live) if (s.cwd && isInsideDir(s.cwd, this.projectDir)) want.push(s.sessionId);
+    const checkouts = new Map();
+    const rootFor = (dir) => {
+      const key = samePathKey(dir);
+      if (!checkouts.has(key)) checkouts.set(key, checkoutRoot(dir).catch(() => null));
+      return checkouts.get(key);
+    };
+    const sameCheckout = async (dir) => {
+      if (!dir || !isInsideDir(dir, this.projectDir)) return false;
+      if (samePathKey(dir) === this.key) return true;
+      const [candidate, root] = await Promise.all([rootFor(dir), rootFor(this.projectDir)]);
+      return (!candidate && !root) || Boolean(candidate && root && samePathKey(candidate) === samePathKey(root));
+    };
+    for (const s of live) if (await sameCheckout(s.cwd)) want.push(s.sessionId);
+    const terminals = listTerminals().filter((t) => t.running && t.activitySeen);
     for (const l of listLaunches()) {
-      if (!l.dir || !isInsideDir(l.dir, this.projectDir)) continue;
+      if (this.tool !== 'all' && this.tool !== l.provider) continue;
+      if (!await sameCheckout(l.dir)) continue;
       for (const s of l.sessions) {
         if (s.ended) continue;
-        if (wrappedFor(s.id, { now })?.reporting) want.push(s.id);
+        if (l.provider === 'codex') {
+          if (terminals.some((t) => t.launchId === l.id && `codex:${t.sessionId}` === s.id)) want.push(s.id);
+        } else if (wrappedFor(s.id, { now })?.reporting) want.push(s.id);
       }
     }
     for (const id of this.entries.keys()) want.push(id);
-    if (!want.length) {
-      const recent = await this.mostRecent();
+    if (!want.length && this.tool !== 'codex') {
+      const recent = await this.mostRecent(sameCheckout);
       if (recent) want.push(recent);
     }
     for (const id of [...new Set(want)]) {
@@ -812,7 +835,7 @@ class Castle {
       this.entries.set(id, { sessionId: id, reader: null, subs: new Map(), seen: null, lags: [], index: this.nextIndex++ });
     }
     for (const entry of this.entries.values()) {
-      if (!entry.reader) entry.reader = await getReader(entry.sessionId).catch(() => null);
+      if (!entry.reader && !entry.sessionId.startsWith('codex:')) entry.reader = await getReader(entry.sessionId).catch(() => null);
     }
   }
 
@@ -823,14 +846,14 @@ class Castle {
     this.entries.delete(ended[0].sessionId);
   }
 
-  async mostRecent() {
+  async mostRecent(sameCheckout) {
     const slug = projectSlug(this.projectDir).toLowerCase();
     const found = [...(await discoverSessions().catch(() => new Map())).values()]
       .filter((f) => f.projectFolder.toLowerCase().startsWith(slug))
       .sort((a, b) => b.mtimeMs - a.mtimeMs);
     for (const f of found.slice(0, 5)) {
       const reader = await getReader(f.sessionId).catch(() => null);
-      if (reader?.model.cwd && isInsideDir(reader.model.cwd, this.projectDir)) return f.sessionId;
+      if (await sameCheckout(reader?.model.cwd)) return f.sessionId;
     }
     return null;
   }
@@ -899,9 +922,16 @@ class Castle {
 
   /** Running, by the same rule as the session view (liveFrom): a pid file, else the launch's reports. */
   isLive(sessionId, now) {
+    if (sessionId.startsWith('codex:')) return Boolean(this.terminalFor(sessionId)?.running && !castleFeed(sessionId)?.ended);
     const entry = this.entries.get(sessionId);
     const w = entry ? this.wrapped(entry, now) : wrappedFor(sessionId, { now });
     return Boolean(liveFrom(this.pidLive.get(sessionId), w, sessionId));
+  }
+
+  terminalFor(sessionId) {
+    const codex = sessionId.startsWith('codex:');
+    const id = codex ? sessionId.slice(6) : sessionId;
+    return listTerminals().find((t) => t.tool === (codex ? 'codex' : 'claude') && t.sessionId === id && t.running);
   }
 
   /** Where one call is, cached by verb and path for the current map. */
@@ -987,6 +1017,7 @@ class Castle {
 
   /** A launched session's reported state, the transcript ending any tool it never reported finishing (#23). */
   wrapped(entry, now) {
+    if (entry.sessionId.startsWith('codex:')) return null;
     return wrappedFor(entry.sessionId, { now, toolDone: (id) => Boolean(entry.reader?.toolDone(id)) });
   }
 
@@ -1066,15 +1097,19 @@ class Castle {
     const sessions = [...this.entries.values()].map((entry) => {
       const w = this.wrapped(entry, now);
       const live = this.isLive(entry.sessionId, now);
+      const codex = entry.sessionId.startsWith('codex:');
+      const terminal = this.terminalFor(entry.sessionId);
       const lags = [...entry.lags].sort((a, b) => a - b);
       return {
         sessionId: entry.sessionId,
+        tool: codex ? 'codex' : 'claude',
+        terminalId: terminal?.id || null,
         index: entry.index,
-        title: entry.reader ? entry.reader.model.customTitle || entry.reader.model.aiTitle || null : null,
+        title: terminal?.title || entry.reader?.model.customTitle || entry.reader?.model.aiTitle || null,
         // Who named it, so the page can say the title is a name, not an activity (#179).
-        titleBy: entry.reader?.model.customTitle ? 'you' : entry.reader?.model.aiTitle ? 'claude-code' : null,
+        titleBy: terminal?.title || entry.reader?.model.customTitle ? 'you' : entry.reader?.model.aiTitle ? 'claude-code' : null,
         // Launched: its hooks drive it (the transcript only backfills).
-        source: w ? 'hooks' : 'transcript',
+        source: w || codex ? 'hooks' : 'transcript',
         live,
         // Ended by its own report, or a transcript-only session whose process is gone.
         ended: w ? w.ended : !live,
@@ -1188,11 +1223,11 @@ const castles = new Map();
  * log to this subscriber. The returned function unsubscribes; the last one out
  * stops the castle and forgets its state.
  */
-export async function subscribeCastle(projectDir, send) {
-  const key = samePathKey(projectDir);
+export async function subscribeCastle(projectDir, send, tool = 'all') {
+  const key = `${tool}:${samePathKey(projectDir)}`;
   let castle = castles.get(key);
   if (!castle) {
-    castle = new Castle(projectDir);
+    castle = new Castle(projectDir, tool);
     castles.set(key, castle);
   }
   // Counted while it waits, so a stream that opens during another's start
@@ -1226,13 +1261,13 @@ export async function subscribeCastle(projectDir, send) {
 }
 
 /** The open castle for a project, or null (state exists only while a stream is open). */
-export function openCastle(projectDir) {
-  return castles.get(samePathKey(projectDir)) || null;
+export function openCastle(projectDir, tool = 'all') {
+  return castles.get(`${tool}:${samePathKey(projectDir)}`) || null;
 }
 
 /** Re-reads castle.json for an open castle. */
-export async function reloadCastleMap(projectDir) {
-  const castle = openCastle(projectDir);
+export async function reloadCastleMap(projectDir, tool) {
+  const castle = openCastle(projectDir, tool);
   if (!castle) return null;
   await castle.reloadMap();
   castle.recompute();

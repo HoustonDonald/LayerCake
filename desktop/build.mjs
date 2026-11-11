@@ -25,6 +25,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -203,6 +204,21 @@ const assets = listFiles(publicDir);
 if (!assets.includes('index.html')) throw new Error('vite build produced no index.html');
 process.stdout.write(`${assets.length} client files: ${assets.join(', ')}\n`);
 
+// node-pty loads both native code and a worker from disk. Embed the runtime
+// separately from the public assets, using only this build's architecture.
+const ptyRoot = path.join(root, 'node_modules', 'node-pty');
+const prebuild = `prebuilds/win32-${process.arch}`;
+const ptyFiles = [
+  'LICENSE',
+  'package.json',
+  ...listFiles(path.join(ptyRoot, 'lib'), 'lib').filter((name) => name.endsWith('.js') && !name.endsWith('.test.js')),
+  `${prebuild}/conpty.node`,
+  `${prebuild}/conpty/conpty.dll`,
+  `${prebuild}/conpty/OpenConsole.exe`,
+];
+const ptyHash = createHash('sha256');
+for (const name of ptyFiles) ptyHash.update(name).update(fs.readFileSync(path.join(ptyRoot, name)));
+
 step('2/6 bundle the server (esbuild)');
 fs.mkdirSync(workDir, { recursive: true });
 const bundlePath = path.join(workDir, 'main.cjs');
@@ -214,10 +230,15 @@ await esbuild({
   // versions, and a package left external would build cleanly and then fail at
   // launch: a SEA's require() reaches builtins only.
   packages: 'bundle',
+  external: ['node-pty'], // loaded from the embedded runtime by server/terminal.js
   platform: 'node',
   format: 'cjs',
   target: `node${process.versions.node.split('.')[0]}`,
-  define: { __LAYERCAKE_ASSETS__: JSON.stringify(assets) },
+  define: {
+    __LAYERCAKE_ASSETS__: JSON.stringify(assets),
+    __LAYERCAKE_PTY_FILES__: JSON.stringify(ptyFiles),
+    __LAYERCAKE_PTY_VERSION__: JSON.stringify(ptyHash.digest('hex')),
+  },
   logLevel: 'warning',
   // In CommonJS output esbuild replaces import.meta with {} and only warns, so
   // fileURLToPath(import.meta.url) moved into a bundled module would throw at
@@ -244,7 +265,10 @@ fs.writeFileSync(
       disableExperimentalSEAWarning: true,
       useSnapshot: false,
       useCodeCache: false,
-      assets: Object.fromEntries(assets.map((key) => [key, path.join(publicDir, ...key.split('/'))])),
+      assets: Object.fromEntries([
+        ...assets.map((key) => [key, path.join(publicDir, key)]),
+        ...ptyFiles.map((key) => [`terminal-runtime/${key}`, path.join(ptyRoot, key)]),
+      ]),
     },
     null,
     2

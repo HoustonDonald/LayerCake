@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 
-import { followSession, getHistory, getLaunches, getSession, getUsage, launchClaude, listSessions, summarizeSession } from '../api.js';
-import { clock, daysUntil, tokens, usd, when } from '../sessionFormat.js';
+import { followSession, getHistory, getPrefs, getSession, getUsage, listCodexSessions, listSessions, savePrefs, startTerminal, summarizeSession } from '../api.js';
+import { clock, daysUntil, inProject, pathKey, terminalIdentity, terminalTitle, tokens, toolLabel, usd, when } from '../sessionFormat.js';
 import SessionDetail from './SessionDetail.jsx';
+const TerminalPane = lazy(() => import('./TerminalPane.jsx'));
 
 const LIST_REFRESH_MS = 15000;
 /** A live session can write several times a second; the detail is re-read at most this often. */
@@ -19,6 +20,7 @@ function Row({ s, selected, onSelect, kind }) {
       </div>
       <div className="s-row-meta">
         <span>{when(s.lastAt)}</span>
+        <span>Claude Code</span>
         <span>{s.prompts} prompt{s.prompts === 1 ? '' : 's'}</span>
         {kind === 'session' && s.tools > 0 && <span>{s.tools} tools</span>}
         {kind === 'session' && s.errors > 0 && <span className="err">{s.errors} errors</span>}
@@ -47,6 +49,22 @@ function Group({ title, items, kind, selected, onSelect, note }) {
       ))}
     </div>
   );
+}
+
+function TerminalGroup({ title, items, selectedId, onSelect }) {
+  if (!items.length) return null;
+  return <section className="s-group" aria-label={title}>
+    <div className="group-label">{title} <span className="s-count">{items.length}</span></div>
+    {items.map((terminal) => (
+      <button className={`s-row terminal-row${selectedId === terminal.id ? ' selected' : ''}`} key={terminal.id}
+        aria-current={selectedId === terminal.id ? 'true' : undefined} title={terminal.cwd}
+        onClick={() => onSelect('terminal', terminal.id)}>
+        <div className="s-row-title">{terminalTitle(terminal)}</div>
+        <div className="s-row-meta"><span>{terminalIdentity(terminal)}</span><span>{terminal.running ? 'Open' : 'Exited'}</span></div>
+        <div className="s-row-path">{terminal.cwd}</div>
+      </button>
+    ))}
+  </section>;
 }
 
 function KeptCard({ card }) {
@@ -145,14 +163,32 @@ function dockLeft() {
   }
 }
 
-const LAUNCH_POLL_MS = 2000;
-const LAUNCH_WAIT_MS = 10 * 60 * 1000;
-
-export default function SessionsView({ projectDir, scanId }) {
-  const [scope, setScope] = useState(projectDir ? 'project' : 'all');
-  const [launch, setLaunch] = useState(null);
+/**
+ * `terminal` is the open terminal whose tab is chosen, or null: with one, it
+ * takes the whole view and the history below stays mounted but hidden, so its
+ * scope, filter and selection are there when the History tab comes back (#207).
+ */
+export default function SessionsView({ projectDir, scanId, terminal, onOpenTerminal, onShowHistory, terminals, onTerminalUpdate }) {
+  const [scopeOverride, setScope] = useState(null);
+  const [filter, setFilter] = useState('all');
+  const [opening, setOpening] = useState(false);
   const [launchError, setLaunchError] = useState(null);
   const [launchNote, setLaunchNote] = useState(null);
+  const [external, setExternal] = useState(false);
+  // On by default (owner decision 2026-11-10): without it a Codex tab can only say "Not reporting".
+  const [report, setReport] = useState(true);
+  // Whether closing LayerCake asks which sessions to keep (#205). Unset means it asks.
+  const [askOnClose, setAskOnClose] = useState(true);
+  useEffect(() => {
+    getPrefs().then((prefs) => setAskOnClose(prefs.askOnClose !== false)).catch(() => {});
+  }, []);
+  const changeAskOnClose = (ask) => {
+    setAskOnClose(ask);
+    savePrefs({ askOnClose: ask }).catch(() => setAskOnClose(!ask));
+  };
+  const [codex, setCodex] = useState(null);
+  const [codexError, setCodexError] = useState(null);
+  const [codexLoading, setCodexLoading] = useState(false);
   const [list, setList] = useState(null);
   const [listError, setListError] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -165,7 +201,33 @@ export default function SessionsView({ projectDir, scanId }) {
   const lastFetch = useRef(0);
   const pending = useRef(null);
 
+  // An exited terminal chosen in the list below: its scrollback, in the detail pane.
+  const exitedTerminal = selected?.kind === 'terminal' ? terminals?.find((t) => t.id === selected.id) : null;
+  const scope = scopeOverride ?? (projectDir ? 'project' : 'all');
   const dir = scope === 'project' ? projectDir : null;
+  const exitedTerminals = (terminals || []).filter((t) => !t.running && (!dir || inProject(t.cwd, dir)) && (filter === 'all' || t.tool === filter));
+
+  const codexSequence = useRef(0);
+  const codexScan = dir ? scanId : null;
+  const loadCodex = useCallback(async (cursor) => {
+    const seq = ++codexSequence.current;
+    setCodexLoading(true);
+    setCodexError(null);
+    try {
+      const result = await listCodexSessions(codexScan, cursor);
+      if (seq !== codexSequence.current) return;
+      setCodex((old) => cursor && old ? { ...result, sessions: [...old.sessions, ...result.sessions] } : result);
+    } catch (err) {
+      if (seq === codexSequence.current) setCodexError(err.message);
+    } finally {
+      if (seq === codexSequence.current) setCodexLoading(false);
+    }
+  }, [codexScan]);
+  useEffect(() => {
+    setCodex(null);
+    if (filter !== 'claude') loadCodex();
+    return () => { codexSequence.current += 1; };
+  }, [loadCodex, filter]);
 
   // Only the latest listing may land: a slow one for the previous scope would
   // otherwise replace the list the user just switched to.
@@ -192,92 +254,32 @@ export default function SessionsView({ projectDir, scanId }) {
     return () => clearInterval(t);
   }, [loadList]);
 
-  // Land on the running session if there is one, else the most recent.
   useEffect(() => {
-    if (!list || selected) return;
+    if (selected || !list || filter === 'codex') return;
     const first = list.sessions.find((s) => s.live) || list.sessions[0];
     if (first) setSelected({ kind: 'session', id: first.sessionId });
-  }, [list, selected]);
+  }, [list, selected, filter]);
 
-  // A launched session has no transcript until Claude Code writes its first
-  // record, so poll until one of the launch's sessions appears, then switch to
-  // it. By then the launch may carry another id (/resume, /clear), so the ids
-  // come from /api/launches, not only the one assigned at launch. The wait
-  // always ends: on a timeout, or when every session of the launch has ended,
-  // with a note, rather than leaving the button disabled until a reload (#26).
-  useEffect(() => {
-    if (!launch) return undefined;
-    const ids = launch.sessionIds || [launch.sessionId];
-    const found = list?.sessions.find((s) => ids.includes(s.sessionId));
-    if (found) {
-      setSelected({ kind: 'session', id: found.sessionId });
-      setLaunch(null);
-      return undefined;
-    }
-    const startedAt = new Date(launch.at).toISOString();
-    if (launch.over) {
-      setLaunch(null);
-      setLaunchNote(`The Claude Code started at ${clock(startedAt)} ended without writing a transcript, so there is nothing to show.`);
-      return undefined;
-    }
-    if (Date.now() - launch.at > LAUNCH_WAIT_MS) {
-      setLaunch(null);
-      setLaunchNote(
-        `The Claude Code started at ${clock(startedAt)} has not written a transcript in ${LAUNCH_WAIT_MS / 60000} minutes. ` +
-          'If you switched it to another session, find that one in the list.'
-      );
-      return undefined;
-    }
-    const t = setTimeout(() => {
-      getLaunches()
-        .then(({ launches }) => {
-          const mine = launches.find((l) => l.id === launch.launchId);
-          if (!mine) return;
-          // Ended by /clear or /resume is not over: the same terminal goes on
-          // with another session, whose id arrives with its first report (#38).
-          const over = mine.sessions.length > 0 && mine.sessions.every((s) => s.ended && s.endReason !== 'clear' && s.endReason !== 'resume');
-          const same = mine.sessionIds.length === ids.length && mine.sessionIds.every((id) => ids.includes(id));
-          if (!same || over) {
-            setLaunch((cur) => (cur && cur.launchId === launch.launchId ? { ...cur, sessionIds: mine.sessionIds, over } : cur));
-          }
-        })
-        .catch(() => {})
-        .finally(loadList);
-    }, LAUNCH_POLL_MS);
-    return () => clearTimeout(t);
-  }, [launch, list, loadList]);
-
-  const onLaunch = useCallback(async () => {
+  const onLaunch = useCallback(async (tool, resume = null) => {
+    setOpening(true);
     setLaunchError(null);
     setLaunchNote(null);
     try {
-      const r = await launchClaude(scanId);
-      setLaunch({ ...r, at: Date.now() });
-      dockLeft();
+      const result = await startTerminal({ scanId, tool, resume, report, external });
+      if (result.id) {
+        // A new embedded terminal comes to the front as its own tab.
+        onTerminalUpdate(result);
+        onOpenTerminal(result.id);
+      } else {
+        setLaunchNote(`${toolLabel(tool)} opened in ${result.terminal === 'console' ? 'a console window' : 'Windows Terminal'}.`);
+        dockLeft();
+      }
     } catch (e) {
       setLaunchError(e.message);
+    } finally {
+      setOpening(false);
     }
-  }, [scanId]);
-
-  // Continues the selected session in a launched terminal (#204). Nothing to
-  // wait for: the session is already listed, and stays selected.
-  const [resuming, setResuming] = useState(null); // { id, busy }, then { id, note } or { id, error }
-  const onResume = useCallback(async (id) => {
-    setResuming({ id, busy: true });
-    try {
-      const r = await launchClaude(scanId, id);
-      setResuming({
-        id,
-        note:
-          r.terminal === 'console'
-            ? 'Resuming in a console window, because Windows Terminal is not installed here.'
-            : `Resuming in Windows Terminal (tab "Claude: ${projectDir?.split(/[\\/]/).pop()}").`,
-      });
-      dockLeft();
-    } catch (e) {
-      setResuming({ id, error: e.message });
-    }
-  }, [scanId, projectDir]);
+  }, [scanId, report, external, onTerminalUpdate, onOpenTerminal]);
 
   // Responses arrive in any order. One for a session that is no longer
   // selected (a slow session clicked before a fast one, a summary that
@@ -340,11 +342,38 @@ export default function SessionsView({ projectDir, scanId }) {
     }
   }, [detail, loadDetail]);
 
-  const onSelect = (kind, id) => setSelected({ kind, id });
+  const onSelect = (kind, id) => {
+    // A running terminal lives in its tab; only an exited one opens here.
+    if (kind === 'terminal' && terminals?.find((t) => t.id === id)?.running) return onOpenTerminal(id);
+    setSelected({ kind, id });
+  };
   const rowFor = (kind, id) => (kind === 'expired' ? list?.expired : list?.promptOnly)?.find((s) => s.sessionId === id);
+  const codexSession = selected?.kind === 'codex' ? codex?.sessions.find((s) => s.sessionId === selected.id) : null;
+  const openFor = (tool, id) => terminals?.find((t) => t.running && t.tool === tool && t.sessionId === id);
+  const codexTerminal = codexSession && openFor('codex', codexSession.sessionId);
+  const claudeTerminal = selected && ['session', 'expired', 'promptOnly'].includes(selected.kind) && openFor('claude', selected.id);
+  // The saved chat behind a terminal, for its "View transcript" button.
+  const historyOf = (t) => {
+    const kinds = t.tool === 'codex' ? [['codex', codex?.sessions]]
+      : [['session', list?.sessions], ['expired', list?.expired], ['promptOnly', list?.promptOnly]];
+    const kind = t.sessionId && kinds.find(([, items]) => items?.some((s) => s.sessionId === t.sessionId))?.[0];
+    return kind ? { kind, id: t.sessionId } : null;
+  };
+  const pane = (t) => {
+    const linked = historyOf(t);
+    return (
+      <Suspense fallback={<div className="empty-state">Opening terminal…</div>}>
+        <TerminalPane key={t.id} terminal={t} onUpdate={onTerminalUpdate}
+          historyLabel={linked?.kind === 'session' ? 'View transcript' : 'Chat details'}
+          onOpenHistory={linked ? () => { setSelected(linked); onShowHistory(); } : null} />
+      </Suspense>
+    );
+  };
 
   return (
-    <div className="sessions">
+    <>
+    {terminal && <div className="s-terminal">{pane(terminal)}</div>}
+    <div className="sessions" hidden={Boolean(terminal)}>
       <div className="s-list">
         <div className="s-scope">
           <button className={scope === 'project' ? 'active' : ''} disabled={!projectDir} onClick={() => { setScope('project'); setList(null); setSelected(null); }} title={projectDir || 'Scan a directory first'}>
@@ -354,32 +383,47 @@ export default function SessionsView({ projectDir, scanId }) {
             All projects
           </button>
         </div>
-        <div className="s-launch">
-          <button className="btn btn-primary btn-small" onClick={() => onLaunch()} disabled={!scanId || Boolean(launch)} title={projectDir ? `Start a new Claude Code session in Windows Terminal in ${projectDir}` : 'Scan a directory first'}>
-            Start Claude here
-          </button>
-          <span className="muted">
-            Starts a <strong>new</strong> Claude Code session in Windows Terminal beside this window (in a console window
-            where Windows Terminal is not installed), wired to report exact context, cost, limits and when it waits for you.
-            Adds nothing to Claude&apos;s context. To continue an earlier session instead, select it and use Resume in
-            Claude, or type /resume in that terminal.
-          </span>
+        <div className="s-scope" aria-label="Filter sessions by tool">
+          {['all', 'claude', 'codex'].map((tool) => (
+            <button key={tool} className={filter === tool ? 'active' : ''} aria-pressed={filter === tool}
+              onClick={() => { setFilter(tool); setSelected(null); }}>{tool === 'all' ? 'All tools' : toolLabel(tool)}</button>
+          ))}
         </div>
-        {launch && (
-          <div className="launch-note">
-            {launch.terminal === 'console'
-              ? 'Claude Code is starting in a console window, because Windows Terminal is not installed here.'
-              : `Claude Code is starting in Windows Terminal (tab "Claude: ${projectDir?.split(/[\\/]/).pop()}").`}{' '}
-            It shows up here once it writes its first record, usually after your first prompt.
+        <div className="s-launch">
+          <div className="terminal-actions">
+            <button className="btn btn-small" onClick={() => onLaunch('claude')} disabled={!scanId || opening}>New Claude Code</button>
+            <button className="btn btn-small" onClick={() => onLaunch('codex')} disabled={!scanId || opening || codexLoading}>New Codex</button>
           </div>
-        )}
+          <label><input type="checkbox" disabled={!scanId || opening} checked={external} onChange={(e) => setExternal(e.target.checked)} /> Open in Windows Terminal</label>
+          <label><input type="checkbox" disabled={!scanId || opening || external} checked={report && !external} onChange={(e) => setReport(e.target.checked)} /> Share Codex activity with LayerCake (its tab&apos;s state, and the Castle)</label>
+          <label title="When LayerCake closes with sessions running here, a small window asks which to keep. Unticked, the sessions marked Keep on their tabs are kept and the rest end.">
+            <input type="checkbox" id="ask-on-close" checked={askOnClose} onChange={(e) => changeAskOnClose(e.target.checked)} /> Ask which sessions to keep when LayerCake closes</label>
+          {!scanId && <span className="muted">Scan a working directory to start or resume a session.</span>}
+        </div>
         {launchNote && <div className="launch-note">{launchNote}</div>}
         {launchError && <div className="err-item">{launchError}</div>}
-        {listError && <div className="err-item">{listError}</div>}
-        {!list && !listError && <div className="empty-state">Reading sessions…</div>}
-        {list && (
+        {filter !== 'claude' && <div className="s-group">
+          <div className="group-label terminal-actions">Codex history
+            <button className="btn btn-small" disabled={codexLoading} onClick={() => loadCodex()}>Refresh</button>
+          </div>
+          {codexError && <div className="s-group-note">{codexError}</div>}
+          {codexLoading && <div className="s-group-note">Reading Codex history…</div>}
+          {codex && !codex.sessions.length && <div className="s-group-note">No saved Codex chats on this page.</div>}
+          {codex?.sessions.map((s) => (
+            <button key={s.sessionId} className={`s-row${codexSession?.sessionId === s.sessionId ? ' selected' : ''}`}
+              onClick={() => onSelect('codex', s.sessionId)}>
+              <div className="s-row-title">{s.title || s.preview || terminalTitle(s)}</div>
+              <div className="s-row-meta">Codex · {s.branch || s.sessionId.slice(0, 8)}</div>
+              <div className="s-row-path">{s.cwd}</div>
+            </button>
+          ))}
+          {codex?.nextCursor && <button className="btn btn-small" disabled={codexLoading} onClick={() => loadCodex(codex.nextCursor)}>More Codex chats</button>}
+        </div>}
+        {filter !== 'codex' && listError && <div className="err-item">{listError}</div>}
+        {filter !== 'codex' && !list && !listError && <div className="empty-state">Reading Claude Code sessions…</div>}
+        {filter !== 'codex' && list && (
           <>
-            <Group title="Sessions" kind="session" items={list.sessions} selected={selected} onSelect={onSelect}
+            <Group title="Claude Code history" kind="session" items={list.sessions} selected={selected} onSelect={onSelect}
               note={`Full transcripts. Claude Code deletes them after ${list.retentionDays} days without activity.`} />
             <Group title="Kept after deletion" kind="expired" items={list.expired} selected={selected} onSelect={onSelect} />
             <Group title="Prompt history only" kind="promptOnly" items={list.promptOnly} selected={selected} onSelect={onSelect}
@@ -389,6 +433,7 @@ export default function SessionsView({ projectDir, scanId }) {
             )}
           </>
         )}
+        <TerminalGroup title="Exited terminals" items={exitedTerminals} selectedId={exitedTerminal?.id} onSelect={onSelect} />
         {usage && (
           <div className="usage-note" title={`Kept in ${usage.dataRoot}`}>
             LayerCake&apos;s own Claude usage: {usage.totals.runs} AI summar{usage.totals.runs === 1 ? 'y' : 'ies'}
@@ -404,17 +449,35 @@ export default function SessionsView({ projectDir, scanId }) {
       </div>
 
       <div className="s-detail">
+        {selected?.kind === 'terminal' && (exitedTerminal
+          ? pane(exitedTerminal)
+          : <div className="empty-state">{terminals ? 'This terminal has closed. Choose a saved session to resume.' : 'Looking for the terminal…'}</div>)}
+        {codexSession && <section className="terminal-head">
+          <div>
+            <h2>{codexSession.title || codexSession.preview || terminalTitle(codexSession)}</h2>
+            <div>Codex · {codexSession.sessionId.slice(0, 8)}{codexSession.branch ? ` · ${codexSession.branch}` : ''}</div>
+            <code>{codexSession.cwd}</code>
+            {codexSession.preview && codexSession.title && <p>{codexSession.preview}</p>}
+          </div>
+          {codexTerminal
+            ? <button className="btn btn-small" onClick={() => onSelect('terminal', codexTerminal.id)}>Open terminal</button>
+            : <button className="btn btn-small" disabled={opening || codexLoading || !scanId || pathKey(codexSession.cwd) !== pathKey(projectDir || '')}
+                onClick={() => onLaunch('codex', codexSession.sessionId)}>Resume in Codex</button>}
+          {!codexTerminal && pathKey(codexSession.cwd) !== pathKey(projectDir || '') && <div className="muted">Scan this working directory to resume.</div>}
+        </section>}
         {streamError && selected?.kind === 'session' && <div className="err-item">Live updates stopped: {streamError}</div>}
-        {detailError && <div className="err-item">{detailError}</div>}
+        {selected?.kind === 'session' && detailError && <div className="err-item">{detailError}</div>}
+        {claudeTerminal && <button className="btn btn-small" onClick={() => onSelect('terminal', claudeTerminal.id)}>Open terminal</button>}
         {!selected && <div className="empty-state">Pick a session on the left.</div>}
         {selected?.kind === 'session' && !detail && !detailError && <div className="empty-state">Reading transcript…</div>}
         {selected?.kind === 'session' && detail && (
           <SessionDetail detail={detail} onSummarize={onSummarize} summarizing={summarizing} summaryError={summaryError}
-            onResume={() => onResume(detail.sessionId)} resuming={resuming?.id === detail.sessionId ? resuming : null} />
+            onResume={claudeTerminal ? null : () => onLaunch('claude', detail.sessionId)} resuming={opening ? { busy: true } : null} />
         )}
         {selected?.kind === 'expired' && rowFor('expired', selected.id) && <KeptCard card={rowFor('expired', selected.id)} />}
         {selected?.kind === 'promptOnly' && <PromptOnly id={selected.id} row={rowFor('promptOnly', selected.id)} />}
       </div>
     </div>
+    </>
   );
 }

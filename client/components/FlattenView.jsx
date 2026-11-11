@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useId, useState } from 'react';
 import Markdown from 'react-markdown';
 
 import { getFlatten } from '../api.js';
+import { pathKey } from '../sessionFormat.js';
 
 const TABS = [
   { kind: 'claude-md', label: 'CLAUDE.md chain' },
@@ -174,6 +175,16 @@ function KeyPath({ path }) {
 }
 
 function SettingsView({ data }) {
+  const prefix = useId();
+  const sourceId = (levelId, index) => `${prefix}-${levelId}-${index}`;
+  const sourceIds = new Map(data.sections.flatMap((section) => section.files.map((file, index) => [
+    pathKey(file.path), sourceId(section.levelId, index),
+  ])));
+  const openSource = (id) => {
+    const source = document.getElementById(id);
+    source?.focus({ preventScroll: true });
+    source?.scrollIntoView({ block: 'nearest' });
+  };
   return (
     <>
       <div className="flat-section">
@@ -211,7 +222,9 @@ function SettingsView({ data }) {
                         <div className="prov-source" key={s.file}>
                           {s.label}
                           {Array.isArray(s.added) && row.mode !== 'replace' ? ` (+${s.added.length})` : ''}{' '}
-                          <span className="muted">{s.file}</span>
+                          {sourceIds.has(pathKey(s.file))
+                            ? <button type="button" className="source-link" onClick={() => openSource(sourceIds.get(pathKey(s.file)))}>{s.file}</button>
+                            : <span className="muted">{s.file}</span>}
                         </div>
                       ))}
                     </td>
@@ -255,9 +268,9 @@ function SettingsView({ data }) {
               </div>
             </div>
           )}
-          {section.files.map((file) => (
+          {section.files.map((file, index) => (
             <div className={`flat-file${file.notRead ? ' not-read' : ''}`} key={file.path}>
-              <div className="flat-file-head">
+              <div className="flat-file-head" id={sourceId(section.levelId, index)} tabIndex={-1}>
                 {file.path}{' '}
                 {file.registry && <span className="badge">registry value</span>}{' '}
                 {file.sources.length > 0 ? (

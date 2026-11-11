@@ -108,6 +108,11 @@ export function appAddress(port, key) {
   return `http://${HOST}:${port}/#t=${key}`;
 }
 
+/** The same page, told to show only the keep-on-close chooser (#205). Still in the fragment. */
+export function closeAddress(port, key) {
+  return `${appAddress(port, key)}&close=1`;
+}
+
 /* ------------------------------------------------------------ browser location */
 
 /**
@@ -271,11 +276,14 @@ export const APP_FLAGS = [
  * `child` is null when the fallback opener was used, because that process exits
  * as soon as it has handed the URL on and says nothing about the window.
  */
-export function openWindow(url) {
+export function openWindow(url, { size = null } = {}) {
   const browser = findBrowser();
 
   if (browser) {
     const args = [`--app=${url}`, `--user-data-dir=${userDataDir()}`, ...APP_FLAGS];
+    // A size for this one window: the chooser shown as LayerCake closes (#205).
+    // Numbers only, from our own constant, never outside text.
+    if (size && Number.isInteger(size.width) && Number.isInteger(size.height)) args.push(`--window-size=${size.width},${size.height}`);
     const child = spawn(browser.exe, args, { detached: true, stdio: 'ignore' });
     child.unref();
     return { child, description: `${browser.name} (app mode)` };

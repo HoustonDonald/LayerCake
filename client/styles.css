@@ -172,6 +172,154 @@ button {
   color: var(--text);
 }
 
+/* ---------- session tabs (#207) ---------- */
+
+/* One tab per open embedded terminal, under the header in every view. The
+   colour along the top says which session; the dot says what it is doing. */
+.session-tabs {
+  flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 4px 14px 0;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.session-tab {
+  display: flex;
+  align-items: stretch;
+  flex: 0 1 260px;
+  min-width: 150px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-top: 3px solid var(--tab, var(--border-strong));
+  border-radius: 5px 5px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.session-tab.history {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 4px 14px;
+  align-items: center;
+  font-weight: 600;
+}
+
+.session-tab.selected {
+  background: var(--bg);
+  color: var(--text);
+  /* Covers the strip's bottom border, so the tab joins the view below it. */
+  margin-bottom: -1px;
+  padding-bottom: 1px;
+}
+
+.session-tab-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 8px;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: 0;
+}
+
+.session-tab-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.session-tab-name strong,
+.session-tab-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-tab-name strong {
+  color: var(--text);
+}
+
+.session-tab-sub {
+  font-size: 11px;
+}
+
+.tab-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.tab-dot.st-waiting {
+  background: #d98a00;
+}
+
+.tab-dot.st-working {
+  background: var(--ok);
+}
+
+.tab-dot.st-idle {
+  background: var(--border-strong);
+}
+
+/* Not reporting: a ring, so it does not read as idle. */
+.tab-dot.st-unknown {
+  background: transparent;
+  border: 2px solid var(--border-strong);
+}
+
+/* A session waiting for you is the one thing a tab must not let you miss. */
+.session-tab.st-waiting {
+  background: #fff4d6;
+}
+
+.session-tab.st-waiting .session-tab-state {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.tab-keep {
+  flex: none;
+  align-self: center;
+  margin-right: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.tab-keep.on {
+  border-color: var(--ok);
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.s-terminal {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+}
+
+.sessions[hidden] {
+  display: none;
+}
+
 .readonly-badge {
   font-size: 12px;
   color: var(--ok);
@@ -1401,6 +1549,18 @@ pre.code {
   border-left-color: var(--accent);
 }
 
+.terminal-row {
+  border-bottom: 1px solid var(--border);
+}
+
+.terminal-row:focus-visible {
+  outline-offset: -3px;
+}
+
+.terminal-row .s-row-title {
+  display: block;
+}
+
 .s-row-title {
   display: flex;
   align-items: center;
@@ -1446,6 +1606,143 @@ pre.code {
   min-width: 0;
   overflow: auto;
   padding: 14px;
+}
+
+.terminal-actions,
+.terminal-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.terminal-head {
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.terminal-head h2 {
+  margin: 0 0 3px;
+  font-size: 18px;
+}
+
+.terminal-head code,
+.tool-settings code {
+  overflow-wrap: anywhere;
+}
+
+.terminal-pane {
+  height: 100%;
+  min-height: 390px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.terminal-screen {
+  flex: 1 1 0;
+  min-height: 260px;
+  min-width: 0;
+  overflow: hidden;
+  background: #171b21;
+  padding: 8px;
+}
+
+.terminal-screen > .xterm {
+  height: 100%;
+}
+
+.tool-selector {
+  align-self: flex-start;
+}
+
+.tool-settings {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 14px 18px;
+}
+
+.tool-settings.is-explorer {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.tool-settings.is-explorer > .terminal-head {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.is-explorer > .settings-error {
+  margin: 8px 18px;
+}
+
+.codex-tree {
+  width: 310px;
+  min-width: min(220px, 45%);
+}
+
+.codex-tree .level-header.selected {
+  background: var(--bg-raised);
+  box-shadow: inset 2px 0 var(--accent);
+}
+
+.codex-tree button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.codex-entry-path {
+  display: block;
+  color: var(--text-faint);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.codex-detail {
+  padding: 16px 18px;
+  overflow-wrap: anywhere;
+}
+
+.codex-detail h3 {
+  margin: 4px 0 10px;
+}
+
+.tool-settings pre {
+  background: var(--bg-code);
+  padding: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tool-settings details,
+.config-list li {
+  margin: 4px 0;
+}
+
+.config-values {
+  display: grid;
+  grid-template-columns: minmax(8em, max-content) minmax(0, 1fr);
+  gap: 6px 14px;
+}
+
+.config-values dd {
+  margin: 0;
+}
+
+.source-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  text-align: left;
+  text-decoration: underline;
+  overflow-wrap: anywhere;
 }
 
 /* The session pane glows with its health. Colour is never the only signal:
@@ -2915,4 +3212,92 @@ pre.code {
 
 .log-bad {
   color: var(--castle-bad);
+}
+
+/* ---------- the chooser shown as LayerCake closes (#205) ---------- */
+
+.close-chooser {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: auto;
+}
+
+.close-chooser h1 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.close-chooser p {
+  margin: 0;
+}
+
+.close-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.close-list li {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--tab, var(--border-strong));
+  border-radius: 4px;
+  background: var(--bg-panel);
+}
+
+.close-list label,
+.close-dontask {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.close-list label > span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.close-list label.is-refused {
+  cursor: default;
+  color: var(--text-dim);
+}
+
+.close-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.close-sub,
+.close-cost {
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.close-cost {
+  color: var(--text);
+}
+
+.close-dontask {
+  padding: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.close-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
 }

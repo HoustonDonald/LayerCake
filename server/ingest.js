@@ -44,9 +44,12 @@
  */
 
 import crypto from 'node:crypto';
+import path from 'node:path';
 
 import { listLaunchRecords, readLaunch, updateLaunchRecord } from './appdata.js';
+import { samePathKey } from './paths.js';
 import { SESSION_ID_RE } from './sessions.js';
+import { bindTerminalSession } from './terminal.js';
 import { toolSummary, toolTargets, toolVerdict, writeTypeOf } from './transcript.js';
 
 /** How often a launched session's status line re-runs, in seconds; launch.js puts it in the settings. */
@@ -91,6 +94,9 @@ function blankSession(since = null) {
     lastSeenAt: null,
     events: [],
     waiting: null,
+    // null until a prompt, a tool call or a turn's end has been reported.
+    turnOpen: null,
+    turnAt: null,
     running: new Map(),
     toolFailures: 0,
     instructionsLoaded: [],
@@ -169,6 +175,10 @@ function keepForCastle(s, sessionId, h, at) {
     const trigger = str(h.trigger);
     record.trigger = trigger === 'manual' || trigger === 'auto' ? trigger : null;
   }
+  appendCastle(s, sessionId, record);
+}
+
+function appendCastle(s, sessionId, record) {
   s.castle.push(record);
   if (s.castle.length > MAX_CASTLE_RECORDS) s.castle.shift();
   for (const listener of castleListeners) {
@@ -189,7 +199,7 @@ export function castleFeed(sessionId) {
   const found = sessionFor(sessionId);
   if (!found) return null;
   const { l, s } = found;
-  return { launchDir: l.dir, records: s.castle.slice(), ended: s.ended };
+  return { launchDir: l.dir, launchId: l.id, provider: l.provider, records: s.castle.slice(), ended: s.ended };
 }
 
 function blank(record, restored) {
@@ -204,13 +214,14 @@ function blank(record, restored) {
       s.ended = true;
       s.endReason = str(ended[id]) || null;
     }
-    sessions.set(id, s);
+    sessions.set(record.provider === 'codex' ? `codex:${id}` : id, s);
   }
   return {
     id: record.id,
     secret: record.secret,
     dir: record.dir,
     sessionId: record.sessionId,
+    provider: record.provider || 'claude',
     createdAt: record.createdAt,
     sessions,
     // Restored from disk after a restart: what the hooks said before is gone.
@@ -227,6 +238,48 @@ export function registerLaunch(record, { restored = false } = {}) {
   return launches.get(record.id);
 }
 
+/**
+ * Marks every session of a launch ended, because the embedded terminal that
+ * ran it has exited (#205). The process LayerCake started is gone, which is
+ * evidence, not memory; without this a session killed with a wait or a tool
+ * open, or inside the report window, would keep reading as running, and the
+ * resume guard would refuse the hand-off that follows the kill. A later
+ * report (the user resumed it elsewhere) revives it as after any end.
+ */
+export function endLaunchSessions(id, reason) {
+  const l = launches.get(id);
+  if (!l) return;
+  const at = new Date().toISOString();
+  let changed = false;
+  for (const s of l.sessions.values()) {
+    if (s.ended) continue;
+    s.ended = true;
+    s.endReason = reason;
+    s.endedAt = at;
+    s.waiting = null;
+    s.running.clear();
+    changed = true;
+  }
+  // Codex launches are memory only: there is no record to rewrite.
+  if (changed && l.provider !== 'codex') persist(l);
+}
+
+/**
+ * What a Codex launch's hooks last said of one chat, for its terminal tab
+ * (#207), or null when that chat has not reported. Times only: no tool input.
+ */
+export function codexActivity(launchId, sessionId) {
+  const s = launches.get(launchId)?.sessions.get(`codex:${sessionId}`);
+  if (!s) return null;
+  let pendingSince = null;
+  for (const t of s.running.values()) if (!pendingSince || t.at < pendingSince) pendingSince = t.at;
+  return { ended: s.ended, turnOpen: s.turnOpen, turnAt: s.turnAt, pendingSince };
+}
+
+export function unregisterCodexLaunch(id) {
+  if (launches.get(id)?.provider === 'codex') launches.delete(id);
+}
+
 /** Loads every launch record from app data, so a restart does not forget its launches (#24). */
 export async function restoreLaunches() {
   for (const record of await listLaunchRecords()) registerLaunch(record, { restored: true });
@@ -241,6 +294,7 @@ export function listLaunches() {
     const sessions = [...l.sessions.entries()];
     return {
       id: l.id,
+      provider: l.provider,
       dir: l.dir,
       createdAt: l.createdAt,
       sessionIds: sessions.map(([id]) => id),
@@ -371,6 +425,13 @@ const MAX_RUNNING = 200;
 /** A Windows path is at most 32,767 characters; one in a hook post is clipped well below that (#196). */
 const MAX_PATH_CHARS = 1024;
 
+/** Records a turn opening or closing, keeping the time of the change, not of each event. */
+function noteTurn(s, open, at) {
+  if (s.turnOpen === open) return;
+  s.turnOpen = open;
+  s.turnAt = at;
+}
+
 function applyHook(s, h, at) {
   // Every field kept is bounded: a post carries the launch's secret, but its
   // body is still untrusted, and 40 posts of 4 MB paths once grew the heap by
@@ -381,6 +442,11 @@ function applyHook(s, h, at) {
   s.lastHookAt = at;
   if (event in s.hookCounts || Object.keys(s.hookCounts).length < MAX_EVENT_NAMES) s.hookCounts[event] = (s.hookCounts[event] || 0) + 1;
   if (RESUMING.has(event)) s.waiting = null;
+  // Whether a turn is open, for a terminal tab's working/idle (#207): a
+  // prompt or a tool call opens it, the turn's end closes it. An interrupt
+  // (Esc) fires no Stop, so the idle notice that follows closes it too.
+  if (event === 'UserPromptSubmit' || event === 'PreToolUse' || event === 'PostToolUse') noteTurn(s, true, at);
+  else if (event === 'Stop' || event === 'StopFailure' || event === 'SessionEnd' || (event === 'Notification' && str(h.notification_type) === 'idle_prompt')) noteTurn(s, false, at);
 
   const summary = tool ? toolSummary(tool, h.tool_input) : '';
   if (event === 'PreToolUse' && toolUseId) {
@@ -473,6 +539,8 @@ export function wrappedFor(sessionId, { toolDone = () => false, now = Date.now()
     statuslineAt: s.statuslineAt,
     lastHookAt: s.lastHookAt,
     waiting: waiting && { ...waiting, permission: PERMISSION_WAITS.has(waiting.kind) },
+    turnOpen: s.turnOpen,
+    turnAt: s.turnAt,
     running,
     toolFailures: s.toolFailures,
     instructionsLoaded: s.instructionsLoaded,
@@ -570,6 +638,7 @@ function applyPost(l, kind, body, at) {
     }
   }
   if (changed || l.persistError) persist(l);
+  if (event !== 'SessionEnd') bindTerminalSession(l.id, id, kind === 'statusline' || event === 'SessionStart');
   if (kind === 'hook') {
     try {
       keepForCastle(s, id, body, at);
@@ -578,6 +647,84 @@ function applyPost(l, kind, body, at) {
       // session's own state above, or the empty answer below.
     }
   }
+}
+
+function codexVerdict(tool, response) {
+  const summary = typeof response === 'string' ? response.slice(0, 2000) : str(response?.output).slice(0, 2000);
+  const recordedExit = response?.exit_code ?? response?.exitCode;
+  const exitLine = /^(?:Process exited with code\s+|Exit code:\s*)(-?\d+)\s*$/m.exec(summary);
+  const exitCode = Number.isInteger(recordedExit) ? recordedExit : exitLine ? Number(exitLine[1]) : null;
+  if (exitCode !== null) return { ok: exitCode === 0, exitCode };
+  if (tool === 'apply_patch' && /^Success\. Updated the following files:/m.test(summary)) return { ok: true, exitCode: null };
+  if (response?.isError === true) return { ok: false, exitCode: null };
+  return { ok: null, reason: 'Codex supplied no verified result' };
+}
+
+function applyCodexPost(l, body, at) {
+  const rawId = str(body.session_id).toLowerCase();
+  const cwd = str(body.cwd);
+  if (!SESSION_ID_RE.test(rawId) || !path.isAbsolute(cwd) || samePathKey(cwd) !== samePathKey(l.dir)) return;
+  const id = `codex:${rawId}`;
+  let event = str(body.hook_event_name);
+  const started = event === 'SessionStart';
+  if (!started && event !== 'Interrupt' && !CASTLE_EVENTS.has(event)) return;
+  let s = l.sessions.get(id);
+  if (!s) {
+    if (l.sessions.size >= MAX_SESSIONS) return;
+    s = blankSession(at);
+    l.sessions.set(id, s);
+  }
+  s.lastSeenAt = at;
+  s.lastHookAt = at;
+  if (started) {
+    s.ended = false;
+    s.endedAt = null;
+    bindTerminalSession(l.id, rawId, true);
+    appendCastle(s, id, { at, event: 'SessionStart' });
+    return;
+  }
+  if (event !== 'SessionEnd') bindTerminalSession(l.id, rawId);
+  if (event === 'SessionEnd') {
+    s.ended = true;
+    s.endedAt = at;
+  }
+  if (event === 'Interrupt') event = 'Stop';
+  const tool = clip(body.tool_name, 100);
+  const callId = clip(body.tool_use_id, 100);
+  if ((event === 'PreToolUse' || event === 'PostToolUse') && !callId) return;
+  // For a terminal tab's state (#207). Codex reports no approval prompt, so a
+  // call that started and has not finished is all that is known of one.
+  if (event === 'UserPromptSubmit' || event === 'PreToolUse' || event === 'PostToolUse') noteTurn(s, true, at);
+  else if (event === 'Stop' || event === 'SessionEnd') noteTurn(s, false, at);
+  if (event === 'PreToolUse') {
+    s.running.set(callId, { name: tool, summary: '', at });
+    if (s.running.size > MAX_RUNNING) s.running.delete(s.running.keys().next().value);
+  } else if (event === 'PostToolUse') s.running.delete(callId);
+  else if (event === 'UserPromptSubmit' || event === 'Stop' || event === 'SessionEnd') s.running.clear();
+  const input = body.tool_input && typeof body.tool_input === 'object' ? body.tool_input : {};
+  const shell = tool === 'Bash' || tool === 'PowerShell' || tool === 'exec_command';
+  const normalizedTool = shell ? 'Bash' : tool === 'apply_patch' ? 'Edit' : tool;
+  const command = str(input.command);
+  const workdir = str(input.workdir) || cwd;
+  const targets = toolTargets(normalizedTool, input, workdir);
+  // Test proof must come from this checkout. Treat explicit changes of cwd
+  // inside a shell command as unknown rather than awarding proof here.
+  if (shell && (samePathKey(workdir) !== samePathKey(cwd) || /\b(?:cd|pushd|set-location)\b/i.test(command))) targets.heads = [];
+  if (tool === 'apply_patch') {
+    for (const match of command.matchAll(/^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gm)) {
+      const name = match[1].trim();
+      if (name && name.length < 1024) targets.paths.push(path.resolve(cwd, name));
+      if (targets.paths.length >= 16) break;
+    }
+  }
+  appendCastle(s, id, {
+    at, event, tool: normalizedTool || null, toolUseId: callId ? `${id}:${callId}` : null,
+    agentId: AGENT_REF_RE.test(str(body.agent_id)) ? `${id}:${body.agent_id}` : null,
+    agentType: clip(body.agent_type, 80) || null,
+    summary: shell ? 'Shell command' : tool === 'apply_patch' ? 'Apply patch' : normalizedTool,
+    targets, verdict: event === 'PostToolUse' ? codexVerdict(tool, body.tool_response) : null,
+    trigger: body.trigger === 'auto' || body.trigger === 'manual' ? body.trigger : null,
+  });
 }
 
 export function registerIngestRoutes(app) {
@@ -600,6 +747,11 @@ export function registerIngestRoutes(app) {
       if (kind !== 'statusline' && kind !== 'hook') return res.status(404).end();
 
       const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+      if (l.provider === 'codex') {
+        if (kind !== 'hook') return res.status(404).end();
+        applyCodexPost(l, body, new Date().toISOString());
+        return res.status(204).end();
+      }
       applyPost(l, kind, body, new Date().toISOString());
       if (kind === 'statusline') return res.type('text').send(statusText(body));
       // Empty on purpose: see the zero-token contract at the top of this file.

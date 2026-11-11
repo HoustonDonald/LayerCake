@@ -3,24 +3,24 @@
 The full reference: what LayerCake scans, how each view is built, what it writes and how, and every
 limit it knows about. For downloading it and getting started, see the [README](../README.md).
 
-LayerCake is a local tool for seeing and managing the Claude Code configuration inheritance lineage:
-what is inherited, from where, and in what order. Browse every level, edit the files, and snapshot or
-restore the whole environment. Useful mostly when moving between projects, when the answer to "which
-CLAUDE.md is actually winning here" is not obvious.
+LayerCake shows Claude Code and Codex configuration for a selected working directory. Browse
+the Claude Code lineage, edit files, and snapshot or restore that configuration. Codex configuration
+is read only. The Sessions tab can run both tools in embedded Windows terminals.
 
 Built against Claude Code from **2.1.229** onward, **on Windows 11**; the newest version measured
 against it is 2.1.284 (a plain Windows 11 in Windows Sandbox: #11, #157). Windows is the first-class target.
 The smoke test also passes on Linux (Ubuntu under WSL2, Node 22). There, the checks of a
 Windows-only form (UNC paths, drive letters, the libuv watch storm, PowerShell process start times,
 `claude.cmd` shims, Windows project paths) print `SKIP` with their reason and a count, never a quiet
-pass, and the summary line counts the skipped groups. macOS is untested. "Start Claude here" is Windows-only: it
-opens Windows Terminal (or a console window without it), and its status line uses Windows's `curl.exe`.
+pass, and the summary line counts the skipped groups. macOS is untested. The embedded terminal
+and external terminal launch are Windows-only.
 
 ```
 npm install
 npm run app        # build if stale, serve, and open a chromeless app window
 npm start          # same without the window: open the address it prints, key included
 npm run build:exe  # one-file Windows app, no Node needed to run it: dist\LayerCake.exe
+npm run smoke:terminal  # fixture CLIs through the terminal API and mixed Castle
 ```
 
 ## Requirements
@@ -33,9 +33,10 @@ Code.
 | | Needed? | Without it |
 |---|---|---|
 | Windows 11 | Yes | Windows 10 should work but has never been run (#195). The smoke test also passes on Linux; macOS is untested. |
-| Claude Code | For the Sessions tab and "Start Claude here" | The lineage, editing and snapshots need only the files. |
+| Claude Code | To run Claude Code sessions | The lineage, editing and snapshots need only the files. |
+| Codex | For Codex settings, history, and sessions | Use the ChatGPT app from the Microsoft Store or a current Codex CLI on PATH. Castle reports also require Codex hooks. |
 | Edge or Chrome | Recommended | The window opens in the default browser, without the isolation flags (see "Single executable"). |
-| Windows Terminal | Recommended | "Start Claude here" opens a console window: no tab name, no placement beside LayerCake. |
+| Windows Terminal | Optional | An external launch opens a console window when Windows Terminal is missing. |
 | PowerShell 7 | No | LayerCake uses the Windows PowerShell 5.1 every Windows has. Claude Code uses 7 when installed, else 5.1, and the launched status line works under both (#11). |
 | Git Bash | No | Claude Code runs the launched status line through PowerShell instead (#11). |
 | Git, GitHub CLI | No | LayerCake never runs them. Where it needs a project's git facts it reads the `.git` folder as files, and a project with none just shows less. |
@@ -705,7 +706,110 @@ seconds during a session, so it appears in the bar often. It is reported rather 
 because it genuinely is config the tool tracks, and hiding a tracked file would be the worse lie.
 Mute it in the bar to keep it counted without it lighting the bar.
 
+## Codex configuration
+
+Choose **User Settings** and **Codex** to inspect user defaults without a project scan. In
+**Explorer**, scan a folder and choose **Codex** to inspect settings for that working directory.
+Both views group settings, sources, instruction files, skills, hooks, MCP servers, plugins,
+and managed requirements in the left pane. Expand a category and select an item to see its
+details. The window remembers the Codex tree selection separately for user settings and each
+scanned directory when you change views or tools. **Flattened** shows the project configuration
+on one page. When Codex identifies a setting's source and LayerCake can match it to one layer,
+select the source beside the value to open that layer. In Claude Code's flattened settings chain,
+select a source file in the provenance table to jump to its displayed contents.
+LayerCake uses a Codex CLI on PATH when available, then checks the current user's registered
+ChatGPT Store package for its bundled CLI. LayerCake starts App Server over stdio and requests effective values,
+layers, managed requirements, skills, and hooks. The view is read only. It shows selected settings
+and their sources, marks skipped layers, and lists MCP and plugin names without connection details.
+Instruction files are discovered separately. LayerCake honors `CODEX_HOME`, prefers
+`AGENTS.override.md` over `AGENTS.md`, and displays Markdown fallback files and the instruction
+byte limit. The running CLI decides which instructions it actually loads.
+
+The Codex history list requests stored threads through App Server. **More Codex chats** fetches the
+next page. To resume, scan the working directory on the saved chat and choose **Resume in Codex**.
+If the chat already has an embedded terminal, **Open terminal** returns to that process. Close a
+chat running outside LayerCake before resuming it here.
+
 ## Sessions
+
+**New Claude Code** and **New Codex** launch the installed CLI inside LayerCake by default.
+Each terminal shows its tool, working directory, branch when available, and short ID. A **Rename**
+label is stored for a saved chat once LayerCake knows its ID. For a new Codex chat, the opt-in
+activity hook supplies that ID. Terminal output and scrollback are kept in memory with a size limit.
+
+Every open terminal has a **tab** below the main header, in every view. A tab carries the session's
+own colour along its top edge, its name, and one line saying what it is doing, then its tool and
+folder. Click a tab to bring its terminal to the front of **Sessions**, at the full width of the
+window; the **History** tab brings back the saved sessions, with the scope, filter and selection
+left as they were. A new terminal opens in front as its own tab.
+
+The dot on a tab is the session's state. Hover a tab for the detail and for the rule that produced
+it; the rules are served with the states (`/api/terminal-states`).
+
+| State | Dot | When |
+|---|---|---|
+| **Waiting for you** | amber, and the tab is tinted | Claude Code reported a permission request, or that it is waiting for input, with nothing since. |
+| **Working** | green | A turn is open by the session's reports (a prompt or a tool call, with no end of turn since), or Claude Code reports it busy, or its transcript was written in the last 15 seconds. |
+| **Idle** | grey | Running, with no turn open. |
+| **Not reporting** | a ring | A Codex terminal started without **Share Codex activity**, or one that has not reported yet. Only the terminal itself shows what it is doing. |
+
+Codex reports no prompt of its own, so for a Codex tab "waiting" is an inference and reads
+**Likely waiting**: a tool call that started and has not finished while the terminal has printed
+nothing for 5 seconds (most likely an approval prompt), or 60 seconds since its turn ended. The
+5-second rule rests on Codex's interface repainting while a command runs; it has not been measured
+against a real Codex session.
+
+**Move to Windows Terminal** in a terminal's header takes the session out of LayerCake. It is a
+hand-off, not a transfer: a running console program cannot change
+windows, so LayerCake ends the embedded process and starts the tool's own resume of the same chat
+in Windows Terminal, in the terminal's folder. The chat is kept; a step in progress, a prompt it
+was waiting on and any background command are lost. A session with nothing said yet, a Codex chat
+whose ID LayerCake does not know, and a folder with `;` in its name cannot be moved, and are left
+running with the reason shown. If the embedded process has not exited within 5 seconds, nothing is
+started and the session is left alone.
+
+Use **View transcript** or **Chat details** in the terminal header to reach the linked history when
+available. **Exited terminals** keep their available scrollback below history. Reporting sessions
+use the same terminal name and short ID in the Castle.
+Selecting another tab or refreshing the browser leaves the process running. Restarting the app
+brings back saved history for **Resume**.
+
+### Closing LayerCake with sessions running
+
+An embedded session's process belongs to LayerCake, so it ends when LayerCake does, unless it is
+kept. **Keep** on a tab marks a session to be kept; the tab then reads **Kept**. The mark lives in
+memory with the terminal.
+
+When the last LayerCake window closes while embedded sessions are running, `LayerCake.exe`, which
+is still running behind it, opens a small window that lists them. Each row shows the session's
+state and what keeping it costs in that state; the sessions marked **Keep** arrive ticked.
+
+- **Keep N and close** moves the ticked sessions to Windows Terminal, one at a time, and ends the
+  rest. Each move is the hand-off described above, with one difference: a session kept at close is
+  started **without** its reporting settings, because with them every event would print a hook
+  error in its terminal until LayerCake runs again. LayerCake therefore shows it afterwards as it
+  shows any session it did not launch, with no "waiting for you".
+- **End all and close** ends every session. The chats stay in History.
+- **Back to LayerCake** turns that window back into LayerCake and ends nothing.
+- **Don't ask again** stores the choice (`askOnClose` in LayerCake's `prefs.json`). From then on,
+  closing keeps the marked sessions and ends the rest without asking. **Ask which sessions to
+  keep when LayerCake closes**, on the History tab, turns the question back on.
+- Closing the small window without answering keeps the marked sessions and ends the rest.
+
+A session that cannot be kept is listed with the reason and cannot be ticked. If a ticked session
+fails to move, it ends with the others and a window says which and why. A session that has had no
+prompt has no saved chat, so it cannot be kept (observed on Claude Code 2.1.322: a new session had
+no transcript file before its first prompt).
+
+This applies to `LayerCake.exe`. Started from source (`npm start`, `npm run app`), the server does
+not stop when a window closes, so nothing is asked and nothing ends until the server is stopped,
+which ends every embedded session.
+
+**Open in Windows Terminal** is available for external launches. The portable executable embeds
+the Windows ConPTY runtime and loads its native files from LayerCake's data directory. Terminal
+input, resizing, and output use the same page key and loopback API as the rest of the app. A
+terminal view owns input while connected. Opening that terminal in a second window transfers input
+to the new view.
 
 The **Sessions** tab shows Claude Code sessions: every one still on disk for the scanned project
 (or for all projects), newest first, with the running ones marked. For the selected session:
@@ -770,7 +874,10 @@ run is listed in "LayerCake's own Claude usage", kept apart from the sessions it
 
 ### Starting Claude from LayerCake
 
-**Start Claude here** (Sessions tab, after a scan) opens a Windows Terminal tab running a **new**
+The Windows Terminal behavior below applies when **Open in Windows Terminal** is selected.
+Embedded launches reuse the same Claude Code session arguments and reporting settings.
+
+**New Claude Code** with the external terminal selected opens a Windows Terminal tab running a **new**
 Claude Code session in the scanned directory, beside the LayerCake window. It never continues the
 session selected in the list (#203):
 
@@ -795,7 +902,7 @@ when:
   Claude Code on the same session would write into the same transcript.
 
 The detail says which of these stops it, and `/api/launch` checks all three again on the click.
-Typing `/resume` inside a terminal opened by Start Claude here does the same, and that session
+Typing `/resume` inside a terminal opened by New Claude Code does the same, and that session
 reports too.
 
 Where Windows Terminal is not installed (stock Windows 10, or removed from a managed machine), the
@@ -872,6 +979,18 @@ and the Claude data folder read for sessions with `LAYERCAKE_CLAUDE_DATA_DIR`.
 
 ## Castle
 
+The Castle can display Claude Code and Codex CLI workers together for the scanned checkout.
+Use **Tool** to limit the view to either one. Click an embedded session's Mason or its task name
+to open its terminal. Linked worktrees have separate activity and test proof.
+
+A Codex session started here shares its activity by default: **Share Codex activity with
+LayerCake** on the History tab is ticked (owner decision 2026-11-10; untick it before launching to
+start one that reports nothing). Review the reporting hooks in Codex with `/hooks`. The hooks send lifecycle reports to
+LayerCake on loopback using a launch-specific credential. LayerCake reduces them to session and
+tool IDs, paths, activity types, and known outcomes. Codex displays approvals in the terminal.
+The Castle displays Codex activity when the CLI reports it and leaves unverified outcomes open.
+Codex sessions started elsewhere appear in history and can be resumed here.
+
 The **Castle** tab (after a scan) is a live picture of the Claude Code sessions working in the
 scanned project, meant to be read from across the desk: the project's own sections are rooms that
 light up with what Claude does in them, and each session, subagent, skill, MCP call and web call is a
@@ -895,7 +1014,7 @@ the browser's own full screen for the whole window, header included.)
 
 **Where it comes from.**
 
-- **Sessions started with Start Claude here** report through their hooks, as they already do for the
+- **Claude Code sessions started from LayerCake** report through their hooks, as they already do for the
   Sessions tab. A tool call reaches the castle within a second, and only these sessions can say that
   Claude is **waiting for you** (the Herald).
 - **Any other running session in the project** (started in a terminal, an IDE, anywhere) is drawn
@@ -1188,16 +1307,23 @@ that the castle sees.
 ## Network posture
 
 - Binds `127.0.0.1` only, never `0.0.0.0`.
-- LayerCake's own code makes no outbound network requests. It has no telemetry and no update check.
+- LayerCake's own code makes no outbound network requests, and its own HTTP traffic stays on
+  loopback. It has no telemetry and no update check.
   That is a statement about LayerCake, not about everything that runs because of it. Data can still
-  reach a network in three ways, and you decide each one:
+  reach a network in four ways, and you decide each one:
   - **Summarize with AI** runs `claude -p` on your click, and only then. Claude Code sends the
     session's prompts and visible replies to Anthropic, as it does for any session, and the run
     counts against your own Claude usage (see [Sessions](#sessions)). LayerCake opens no connection
     of its own for this.
-  - **Start Claude here** and **Resume in Claude** start an ordinary Claude Code session, which
-    talks to Anthropic as it always does. The only thing LayerCake adds is a status line and hooks
-    that post to `127.0.0.1` (the status line's command is `curl.exe`).
+  - **A session you start, resume, move or keep**, Claude Code or Codex, in an embedded terminal or
+    in Windows Terminal, is an ordinary session of that CLI. It talks to its provider as it always
+    does, with its own account and network settings. What LayerCake adds is reporting to
+    `127.0.0.1`: for Claude Code a status line (its command is `curl.exe`) and hooks; for Codex,
+    hooks, unless you untick **Share Codex activity with LayerCake**. A session kept as LayerCake
+    closes is started without them.
+  - **The Codex view and the Codex history list** start the installed Codex App Server over stdio
+    and ask it for configuration and saved chats. LayerCake gives it no network address. Whether
+    App Server itself contacts OpenAI while answering was not measured.
   - **A project on a network share** (a UNC path or a mapped drive) is read over the network. The
     scan and the watcher make filesystem calls to that server, so that server sees them.
 
@@ -1207,9 +1333,10 @@ that the castle sees.
 - LayerCake starts few processes, each with a fixed command line: the browser for its window;
   `reg.exe` during a scan, to read Claude Code's policy from the registry; and Windows PowerShell
   5.1, to read the start times of running processes so a reused process id cannot pass for a
-  running session. Two more start only on your click: `claude -p` for an AI summary, and Windows
-  Terminal (or, without it, a console window) running `claude` for **Start Claude here** (see
-  [Sessions](#sessions)).
+  running session, and, when Codex is not on PATH, to look for the ChatGPT Store package. The rest
+  start only when you ask: `claude -p` for an AI summary; the Codex App Server for the Codex view
+  and history; and the chosen CLI for a session, in an embedded terminal, or in Windows Terminal
+  (or, without it, a console window) (see [Sessions](#sessions)).
 - `/ingest/<launch>/<secret>/…` accepts the status line and hooks of a session LayerCake launched,
   on a listener of its own at a fixed port, 5177 (`LAYERCAKE_INGEST_PORT` moves it; #200), not on the
   page's port, which changes every run: the session's settings name the port once, and it must reach

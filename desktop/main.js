@@ -34,7 +34,7 @@ import { getAsset, isSea } from 'node:sea';
 import { psQuote } from '../server/powershell.js';
 
 import { trackInflight } from './inflight.js';
-import { appAddress, openWindow, probe, profileInUse, profileLock, showError, verifyServer } from './window.js';
+import { appAddress, closeAddress, openWindow, probe, profileInUse, profileLock, showError, verifyServer } from './window.js';
 
 // server/app.js is imported inside main(), not here. A static import runs every
 // server module's top level before the uncaughtException handler below exists,
@@ -135,9 +135,9 @@ async function stopsAnsweringWithin(port, ms) {
  * window seconds before it knows whether it will serve it, and a hand-off's
  * browser has exited long before then.
  */
-function openAppWindow(url) {
+function openAppWindow(url, options) {
   const launchedAt = Date.now();
-  const { child } = openWindow(url);
+  const { child } = openWindow(url, options);
   if (!child) return { child: null, exitedAt: null };
   // A browser that cannot be started at all (blocked by AppLocker, say) fails
   // asynchronously. Without a listener that is an uncaught exception whose error
@@ -199,17 +199,69 @@ async function watchForLock(appWindow) {
  * never. Staying up is the safe side of not knowing, since a window whose
  * server has vanished is worse than an idle process.
  */
-async function serveUntilWindowsClose(server, inflight, appWindow, ingest = null) {
+async function windowsGone(appWindow) {
   await appWindow.exited;
   if (handedOff(appWindow) && !appWindow.lockSeen) {
     while (!(await profileInUse())) await sleep(PROFILE_POLL_MS);
   }
   while (await profileInUse()) await sleep(PROFILE_POLL_MS);
+}
+
+/** The chooser's window (#205): enough for a handful of sessions without scrolling. */
+const CHOOSER_SIZE = { width: 700, height: 620 };
+
+/**
+ * Which embedded sessions to keep now that no window is left (#205). Closing
+ * ends an embedded terminal's process, so before that happens the user is
+ * asked, in a small window opened for the purpose: this process is still up
+ * and still serving. Returns the terminal ids to move to Windows Terminal, or
+ * `{ window }` when the user chose to go back, and that window is LayerCake
+ * again.
+ *
+ * Not asked when nothing is running, or when the user turned the question off:
+ * then the sessions marked Keep on their tabs are kept. The same marks apply
+ * when the chooser is closed without an answer, or cannot be opened.
+ */
+async function sessionsToKeep(closing, address) {
+  const running = closing.running();
+  if (!running.length) return { keep: [] };
+  const marked = running.filter((t) => t.keep).map((t) => t.id);
+  if (!(await closing.asks())) return { keep: marked };
+  const decision = closing.begin();
+  const chooser = openAppWindow(address, { size: CHOOSER_SIZE });
+  if (!chooser.child) {
+    closing.end();
+    return { keep: marked };
+  }
+  const answer = await Promise.race([decision, windowsGone(chooser).then(() => null)]);
+  closing.end();
+  if (answer?.cancel) return { window: chooser };
+  return { keep: answer ? answer.keep : marked };
+}
+
+async function serveUntilWindowsClose(server, inflight, appWindow, ingest, closeTerminals, closing, chooserAddress) {
+  let keep = [];
+  for (let current = appWindow; ;) {
+    await windowsGone(current);
+    const choice = await sessionsToKeep(closing, chooserAddress);
+    if (!choice.window) {
+      keep = choice.keep;
+      break;
+    }
+    current = choice.window;
+  }
+  // Kept sessions first, while everything they need is still here: each is
+  // ended and then started again in Windows Terminal, one at a time. A session
+  // that could not be moved ends with the rest below, and that is said in a
+  // window, since nothing else is left to say it in.
+  const failed = (await closing.handOff(keep)).filter((r) => !r.ok);
+  if (failed.length) showError('Some sessions could not be kept', failed.map((r) => r.message).join('\n\n'));
   // Stop taking requests, then let the ones already running finish, so a save
   // or restore started just before the window closed is not cut off. The
   // reporting port first (#200): a LayerCake taking over can have it at once.
   ingest?.server?.close();
   server.close();
+  closeTerminals();
   await inflight.idle(DRAIN_MS);
   process.exit(0);
 }
@@ -282,7 +334,7 @@ async function main() {
   }
 
   const key = newRunKey();
-  const { createApp, listen, listenIngest, memoryStatic, retryIngest } = await import('../server/app.js');
+  const { closeTerminals, createApp, listen, listenIngest, memoryStatic, retryIngest } = await import('../server/app.js');
   // Sessions it launches report on a fixed port of their own (#200); without
   // it, only Start Claude here is unavailable, and it says why. Taking over
   // from a LayerCake still draining, the port frees within seconds: retried.
@@ -321,7 +373,7 @@ async function main() {
   appWindow = openAppWindow(appAddress(port, key));
   // No app-mode browser, so no process that tracks the window: stay up.
   if (!appWindow.child) return;
-  await serveUntilWindowsClose(server, inflight, appWindow, ingest);
+  await serveUntilWindowsClose(server, inflight, appWindow, ingest, closeTerminals, app.locals.closing, closeAddress(port, key));
 }
 
 if (!isSea()) {

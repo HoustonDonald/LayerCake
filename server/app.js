@@ -28,7 +28,7 @@ import express from 'express';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { resolveConfigHome, resolveLineage } from './scan.js';
+import { resolveConfigHome, resolveLineage, resolveUserSettings } from './scan.js';
 import { flatten } from './flatten.js';
 import { readForDisplay } from './readfile.js';
 import {
@@ -50,12 +50,17 @@ import {
   readSnapshotFile,
 } from './snapshot.js';
 import { MAX_FILE_BYTES, isSecret, describeError, writePolicy } from './safety.js';
-import { readPrefs, updatePrefs } from './appdata.js';
+import { readPrefs, readTerminalLabel, updatePrefs } from './appdata.js';
 import { hostGuard, keyProof, originGuard, portOf, requireToken } from './security.js';
-import { registerSessionRoutes, resumableSession } from './session-routes.js';
+import { TERMINAL_STATES, registerSessionRoutes, resumableSession, terminalStates } from './session-routes.js';
 import { closeCastleStreamsFor, registerCastleRoutes } from './castle-routes.js';
-import { listLaunches, registerIngestRoutes } from './ingest.js';
-import { launchClaude } from './launch.js';
+import { codexActivity, listLaunches, registerIngestRoutes } from './ingest.js';
+import { launchClaude, launchExternal, prepareClaude } from './launch.js';
+import { codexConfig, codexResume, codexThreads, prepareCodex } from './codex.js';
+import { closeTerminals, endTerminal, findTerminal, listTerminals, registerTerminalRoutes, startTerminal } from './terminal.js';
+
+/** How long a hand-off waits for the embedded process to exit before giving up (#205). */
+const HANDOFF_EXIT_MS = 5000;
 import {
   CLAUDE_DIR_FILE_TARGETS,
   CLAUDE_DIR_TREES,
@@ -75,6 +80,7 @@ import {
 import { registryPolicyKeys } from './policy.js';
 
 export const HOST = '127.0.0.1';
+export { closeTerminals };
 
 /** A non-empty string, and nothing that merely stringifies to one. */
 const isText = (v) => typeof v === 'string' && v.length > 0;
@@ -215,7 +221,7 @@ export function createApp({ staticFiles, key, ingest = { port: null, error: 'not
    * The page's preferences (#198): last and recent folders, mutes, the notify
    * choice. Kept in LayerCake's data folder because each run is a new origin
    * and the browser's storage starts empty; checked field by field in
-   * appdata.js. The server never acts on them: a mute filters nothing (#13).
+   * appdata.js. A mute filters nothing the server sends (#13); askOnClose alone is read by the server, when the executable closes (#205).
    */
   app.get('/api/prefs', async (req, res) => {
     try {
@@ -601,6 +607,193 @@ export function createApp({ staticFiles, key, ingest = { port: null, error: 'not
   // Session history and live sessions. Registered here, after the /api guards,
   // so every one of them is behind the Host, origin and token checks.
   registerSessionRoutes(app, { projectFor: (scanId) => scans.get(scanId)?.lineage.projectDir || null });
+
+  const getScan = (id) => {
+    const scan = typeof id === 'string' ? scans.get(id) : null;
+    if (!scan?.lineage.projectDir) {
+      throw Object.assign(new Error('Scan the working directory first.'), { status: 404, code: 'ESCANGONE' });
+    }
+    return scan.lineage;
+  };
+  app.get('/api/codex/config', async (req, res) => {
+    try {
+      const lineage = req.query.scanId ? getScan(req.query.scanId) : null;
+      res.json(await codexConfig(lineage?.projectDir || null, lineage?.gitRoot?.checkoutDir || lineage?.gitRoot?.dir || null));
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+  app.get('/api/codex/sessions', async (req, res) => {
+    try {
+      const dir = req.query.scanId ? getScan(req.query.scanId).projectDir : null;
+      const cursor = typeof req.query.cursor === 'string' ? req.query.cursor.slice(0, 2048) : null;
+      res.json(await codexThreads(dir, cursor));
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+  app.get('/api/claude/user-config', async (req, res) => {
+    try {
+      const levels = await resolveUserSettings();
+      if (!req.query.file) return res.json(levels);
+      const file = levels.flatMap((level) => level.entries).find((entry) =>
+        entry.type === 'file' && entry.category !== 'home-config' && entry.absPath === req.query.file);
+      if (!file || isSecret(file.absPath)) return res.status(404).json({ message: 'Choose a file from User Settings.' });
+      res.json(await readForDisplay(file.absPath));
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  /**
+   * Why an embedded terminal's chat cannot be continued in Windows Terminal,
+   * or null (#205). Asked before the terminal is ended, so that nothing is
+   * ended for a hand-off that could not happen.
+   */
+  const keepRefusal = async (t) => {
+    if (!t.sessionId) return 'LayerCake does not know this chat\'s ID yet, so it cannot reopen it.';
+    if (t.cwd.includes(';')) return 'Its folder name contains ";", which Windows Terminal treats as a command separator.';
+    if (t.tool !== 'claude') return null;
+    try {
+      await resumableSession(t.sessionId, t.cwd, { ownTerminal: true });
+      return null;
+    } catch (err) {
+      // No transcript yet: Claude Code writes one with the first prompt.
+      if (err.status === 404) return 'Nothing has been said in this session yet, so there is no chat to continue.';
+      return err.message;
+    }
+  };
+
+  /**
+   * Moves an embedded session to Windows Terminal (#205). A running console
+   * program cannot change consoles, so this ends the embedded process and
+   * starts the tool's own resume of the same chat, in the terminal's own
+   * folder. The resume guards run again after the end, unchanged: they are
+   * what stops two processes writing one transcript.
+   */
+  const handOff = async (id, { report = true } = {}) => {
+    const t = findTerminal(id);
+    if (!t?.running) throw Object.assign(new Error('This terminal has closed.'), { status: 409, code: 'ETERMINALCLOSED' });
+    const refusal = await keepRefusal(t);
+    if (refusal) throw Object.assign(new Error(`Not moved: ${refusal}`), { status: 409, code: 'ECANNOTKEEP' });
+    if (!(await endTerminal(id, HANDOFF_EXIT_MS))) {
+      throw Object.assign(new Error('Not moved: the embedded session did not end in time, so it was left alone.'), { status: 504, code: 'ENOEXIT' });
+    }
+    try {
+      if (t.tool === 'claude') {
+        const sessionId = await resumableSession(t.sessionId, t.cwd);
+        // A session kept as LayerCake closes is started without its reporting
+        // settings (owner decision 2026-11-10): with them, every event would
+        // print a hook error in its terminal until LayerCake runs again.
+        return await launchClaude({ dir: t.cwd, port: report ? ingest.port : null, resume: sessionId });
+      }
+      const saved = await codexResume(t.sessionId, t.cwd);
+      return await launchExternal({ ...await prepareCodex({ dir: t.cwd, resume: saved.sessionId }), dir: t.cwd, tool: 'codex' });
+    } catch (err) {
+      throw Object.assign(new Error(`The embedded session was ended, but it could not be reopened in Windows Terminal: ${err.message} Resume it from the history list.`),
+        { status: err.status || 500, code: 'EHANDOFF' });
+    }
+  };
+  app.post('/api/terminals/:id/handoff', async (req, res) => {
+    try {
+      res.json(await handOff(req.params.id));
+    } catch (err) {
+      res.status(err.status || 500).json({ message: err.message, code: err.code || null });
+    }
+  });
+
+  /**
+   * Closing with sessions running (#205). The single executable outlives its
+   * window, so after the last window closes it can still ask which embedded
+   * sessions to keep: it opens a small window on the chooser, which reads
+   * GET /api/close and answers with POST /api/close. `closing` is what the
+   * executable drives; from source (`npm start`) the server does not stop
+   * when a window closes, so nothing here is used.
+   *
+   * One decision at a time. A chooser closed without an answer is no decision,
+   * and the caller then falls back to the keep marks.
+   */
+  let decide = null;
+  const closeSessions = async () => Promise.all(listTerminals().filter((t) => t.running).map(async (t) => ({
+    id: t.id, tool: t.tool, title: t.title, sessionId: t.sessionId, cwd: t.cwd, branch: t.branch, color: t.color, keep: Boolean(t.keep),
+    refusal: await keepRefusal(t).catch((err) => err.message),
+  })));
+  app.locals.closing = {
+    running: () => listTerminals().filter((t) => t.running),
+    /** False once the user ticked "Don't ask again": the marks alone then decide. */
+    asks: async () => (await readPrefs().catch(() => ({}))).askOnClose !== false,
+    /** Starts a decision; resolves with { keep: [ids] }, { cancel: true }, or never (see `end`). */
+    begin: () => new Promise((resolve) => { decide = resolve; }),
+    end: () => { decide = null; },
+    /**
+     * Moves each of these sessions to Windows Terminal, one at a time, without
+     * reporting. Never throws: a session that cannot be moved is left to end
+     * with the rest, and the outcome says which.
+     */
+    handOff: async (ids) => {
+      const out = [];
+      for (const id of ids) {
+        try {
+          out.push({ id, ok: true, result: await handOff(id, { report: false }) });
+        } catch (err) {
+          out.push({ id, ok: false, message: err.message });
+        }
+      }
+      return out;
+    },
+  };
+  app.get('/api/close', async (_req, res) => {
+    try {
+      const states = await terminalStates(listTerminals(), { codexActivity }).catch(() => ({}));
+      res.json({ pending: Boolean(decide), sessions: (await closeSessions()).map((s) => ({ ...s, activity: states[s.id] || null })) });
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+  app.post('/api/close', async (req, res) => {
+    try {
+      const { keep, cancel, dontAsk } = req.body || {};
+      if (!cancel && !(Array.isArray(keep) && keep.length <= 64 && keep.every((id) => typeof id === 'string' && id.length <= 64))) {
+        return res.status(400).json({ message: 'Say which sessions to keep.', code: 'EBADKEEP' });
+      }
+      if (!decide) return res.status(409).json({ message: 'LayerCake is not closing.', code: 'ENOTCLOSING' });
+      if (dontAsk === true && !cancel) await updatePrefs({ askOnClose: false });
+      const answer = decide;
+      decide = null;
+      answer(cancel ? { cancel: true } : { keep });
+      res.status(204).end();
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  registerTerminalRoutes(app, async (body) => {
+    const { scanId, tool, resume, report, external, screen } = body || {};
+    if ((tool !== 'claude' && tool !== 'codex') || (resume != null && (typeof resume !== 'string' || !resume))) {
+      throw Object.assign(new Error('Choose Claude Code or Codex and a valid saved session.'), { status: 400, code: 'EBADREQUEST' });
+    }
+    const dir = getScan(scanId).projectDir;
+    if (external && tool === 'claude') {
+      const sessionId = resume ? await resumableSession(resume, dir) : null;
+      return launchClaude({ dir, port: ingest.port, resume: sessionId, screen });
+    }
+    if (external) {
+      const saved = resume ? await codexResume(resume, dir) : null;
+      return launchExternal({ ...await prepareCodex({ dir, resume: saved?.sessionId }), dir, screen, tool });
+    }
+    const title = resume ? await readTerminalLabel(tool, resume).catch(() => null) : null;
+    return startTerminal({
+      tool, cwd: dir, resume: resume?.toLowerCase(), title,
+      prepare: async () => {
+        if (tool === 'claude') {
+          const id = resume ? await resumableSession(resume, dir) : null;
+          return prepareClaude({ dir, port: ingest.port, resume: id });
+        }
+        const saved = resume ? await codexResume(resume, dir) : null;
+        return prepareCodex({ dir, port: ingest.port, resume: saved?.sessionId, report: report === true });
+      },
+    });
+  }, { states: (list) => terminalStates(list, { codexActivity }), stateRules: TERMINAL_STATES });
 
   // The Castle view (#159, #160), behind the same guards. Its project comes from
   // the scan store, never the request, as for /api/launch below.

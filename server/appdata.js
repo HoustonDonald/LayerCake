@@ -184,6 +184,30 @@ export function dataRoot() {
   return root();
 }
 
+/** Materialize the portable build's bundled terminal runtime in its own data folder. */
+export async function installTerminalRuntime(version, files) {
+  const folder = target('terminal-runtime', version);
+  for (const [name, bytes] of files) {
+    const file = target('terminal-runtime', version, name);
+    const existing = await fs.readFile(file).catch(() => null);
+    if (!existing?.equals(bytes)) await atomicWrite(file, bytes);
+  }
+  return folder;
+}
+
+export async function readTerminalLabel(tool, id) {
+  checkId(id);
+  if (tool !== 'claude' && tool !== 'codex') throw new Error('Unknown tool');
+  const label = (await readJson(target('terminal-labels', tool, `${id}.json`)))?.title;
+  return typeof label === 'string' && label.trim() && label.length <= 80 && !/[\x00-\x1f\x7f]/.test(label) ? label : null;
+}
+
+export function writeTerminalLabel(tool, id, title) {
+  checkId(id);
+  if (tool !== 'claude' && tool !== 'codex') throw new Error('Unknown tool');
+  return atomicWrite(target('terminal-labels', tool, `${id}.json`), JSON.stringify({ title }));
+}
+
 /**
  * The page key for one run of a server (#189, #198): 32 random bytes in hex,
  * new every time a server starts, so a key that ever leaked dies with its run.
@@ -225,7 +249,7 @@ export async function readRunRecord() {
  * The page's preferences (#198): the last and recent folders, muted files and
  * the notification choice. They lived in the browser's storage, which belongs
  * to the page's origin, and every run is a new origin now (a new port), so they
- * are kept here instead. The server stores them and never acts on them: a mute
+ * are kept here instead. The server stores them, and acts on one only (askOnClose, #205): a mute
  * still filters nothing it sends (#13). Each field is checked; anything else
  * is dropped.
  */
@@ -245,6 +269,9 @@ function cleanPrefs(input) {
     );
   }
   if (typeof p.notify === 'boolean') out.notify = p.notify;
+  // The one preference the server reads itself (#205): whether the closing
+  // executable asks which embedded sessions to keep. Unset means ask.
+  if (typeof p.askOnClose === 'boolean') out.askOnClose = p.askOnClose;
   return out;
 }
 
